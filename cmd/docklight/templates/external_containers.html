@@ -1,0 +1,35 @@
+{{define "external_containers.html"}}
+{{template "layout_start" .}}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">outside managed stacks</p>
+      <h1>Standalone / external containers</h1>
+    </div>
+  </section>
+
+  {{if .Containers}}
+    <section class="resource-section">
+      <section class="resource-table" aria-label="Standalone and external containers" data-usage-url="{{base "/usage/containers"}}">
+        <div class="resource-row resource-head resource-row-external-containers">
+          <span>container</span>
+          <span>image</span>
+          <span>state</span>
+          <span>usage</span>
+          <span>owner</span>
+        </div>
+        {{range .Containers}}
+          <article class="resource-row resource-row-external-containers" data-usage-key="{{.ID}}" data-usage-containers="{{if eq .State "running"}}{{.ID}}{{end}}">
+            <div><strong>{{.Name}}</strong><p class="muted">{{.ID}}</p></div>
+            <div class="resource-break">{{.Image}}</div>
+            <div><span class="badge badge-{{.State}}">{{.State}}</span></div>
+            <div class="metric-line" data-usage-target>CPU -<br>Memory -</div>
+            <div>{{.Stack}}{{if .Service}}<p class="muted">svc={{.Service}}</p>{{end}}{{if .Protected}}<p class="muted">protected: Docklight</p>{{end}}</div>
+          </article>
+        {{end}}
+      </section>
+    </section>
+  {{else}}
+    <section class="empty"><h2>No standalone or external containers</h2><p class="muted">Docker did not report containers outside Docklight-managed stacks.</p></section>
+  {{end}}
+{{template "layout_end" .}}
+{{end}}
