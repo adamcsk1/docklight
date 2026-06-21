@@ -1,0 +1,60 @@
+{{define "stack.html"}}
+{{template "layout_start" .}}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">compose target</p>
+      <h1>{{.Stack.Name}}</h1>
+      <p class="muted">{{.Stack.RelativePath}}/{{.Stack.ComposeFile}}</p>
+    </div>
+    <div class="status-cell">
+      <span class="badge badge-{{.Stack.Status}}">{{.Stack.Status}}</span>
+      {{if .Stack.Protected}}<span class="badge badge-muted">protected</span>{{end}}
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Actions</h2>
+    <div class="actions actions-large">
+      {{if not .Stack.Protected}}<a class="button button-primary" href="{{base "/stacks/"}}{{.Stack.Name}}/edit">Edit</a>{{end}}
+      {{if not .Stack.Protected}}
+      <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/start">{{template "csrf" .}}<button class="button" type="submit" data-confirm-action="Start stack {{.Stack.Name}} with docker compose up -d?">Start</button></form>
+      <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/stop">{{template "csrf" .}}<button class="button" type="submit" data-confirm-action="Stop stack {{.Stack.Name}}? This can interrupt running services.">Stop</button></form>
+      <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/restart">{{template "csrf" .}}<button class="button" type="submit" data-confirm-action="Restart stack {{.Stack.Name}}? This can briefly interrupt running services.">Restart</button></form>
+      <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/recreate">{{template "csrf" .}}<button class="button button-secondary" type="submit" data-confirm-action="Recreate stack {{.Stack.Name}} with docker compose down then up -d --force-recreate? This can interrupt running services.">Recreate</button></form>
+      <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/rebuild">{{template "csrf" .}}<button class="button" type="submit" data-confirm-action="Rebuild and start stack {{.Stack.Name}} with docker compose up -d --build?">Rebuild</button></form>
+      <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/upgrade">{{template "csrf" .}}<button class="button button-primary" type="submit" data-confirm-action="Pull images and apply with docker compose up -d for stack {{.Stack.Name}}? Existing containers may keep running if Compose detects no changes.">Pull + apply</button></form>
+      <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/upgrade-recreate">{{template "csrf" .}}<button class="button button-secondary" type="submit" data-confirm-action="Pull images, run docker compose down --remove-orphans, then up -d --force-recreate for stack {{.Stack.Name}}? This restarts all services and resets container uptime.">Pull + force upgrade</button></form>
+      {{end}}
+      {{if not .Stack.Protected}}
+      <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/down">{{template "csrf" .}}<button class="button button-danger" type="submit" data-confirm-action="Run docker compose down for stack {{.Stack.Name}}? This stops and removes stack containers and networks.">Down</button></form>
+      <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/delete">{{template "csrf" .}}<button class="button button-danger" type="submit" data-confirm-delete="stack {{.Stack.Name}}">Delete stack</button></form>
+      {{else}}
+      <span class="muted">Docklight self-protection: stack actions are blocked.</span>
+      {{end}}
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Containers</h2>
+    {{if .Stack.Containers}}
+      <div class="container-list" data-usage-url="{{base "/usage/containers"}}">
+        {{range .Stack.Containers}}
+          <article class="container-row" data-usage-key="{{.Name}}" data-usage-containers="{{if eq .State "running"}}{{.Name}}{{end}}">
+            <div>
+              <strong>{{.Name}}</strong>
+              <p class="muted">{{.Service}} · {{.Image}}</p>
+              <p class="metric-line" data-usage-target>CPU - / Memory -</p>
+            </div>
+            <div>
+              <span class="badge badge-{{.State}}">{{.State}}</span>
+              <p class="muted">{{.Status}}</p>
+            </div>
+          </article>
+        {{end}}
+      </div>
+    {{else}}
+      <p class="muted">No containers reported by Docker Compose.</p>
+    {{end}}
+  </section>
+{{template "layout_end" .}}
+{{end}}

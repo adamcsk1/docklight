@@ -1,0 +1,40 @@
+{{define "dashboard.html"}}
+{{template "layout_start" .}}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">host inventory</p>
+      <h1>Stacks</h1>
+    </div>
+    <div class="actions">
+      <a class="button button-primary" href="{{base "/stacks/new"}}">New stack</a>
+      <form method="post" action="{{base "/rescan"}}">
+        {{template "csrf" .}}
+        <button class="button button-secondary" type="submit">scan</button>
+      </form>
+    </div>
+  </section>
+
+  {{if .Stacks}}
+    <section class="stack-list" aria-label="Stacks" data-usage-url="{{base "/usage/containers"}}">
+      {{range .Stacks}}
+        <article class="stack-row" data-usage-key="{{.Name}}" data-usage-containers="{{usageContainerNames .Containers}}">
+          <div class="stack-main">
+            <a class="stack-name" href="{{base "/stacks/"}}{{.Name}}">{{.Name}}</a>
+            <p class="stack-meta">{{.ContainerCount}} containers / {{.ComposeFile}}</p>
+            <p class="metric-line" data-usage-target>CPU - / Memory -</p>
+          </div>
+          <div class="status-cell">
+            <span class="badge badge-{{.Status}}">{{.Status}}</span>
+            {{if .Protected}}<span class="badge badge-muted">protected</span>{{end}}
+          </div>
+        </article>
+      {{end}}
+    </section>
+  {{else}}
+    <section class="empty">
+      <h2>No stacks found</h2>
+      <p>Mount your compose folders at <code>{{.Config.StacksRoot}}</code> and run a rescan.</p>
+    </section>
+  {{end}}
+{{template "layout_end" .}}
+{{end}}

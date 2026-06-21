@@ -1,0 +1,26 @@
+{{define "activity.html"}}
+{{template "layout_start" .}}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">command log</p>
+      <h1>Activity</h1>
+    </div>
+    <a class="button button-secondary" href="{{base "/activity/download"}}">Download all activity</a>
+  </section>
+
+  <section class="activity-list">
+    {{range .Activities}}
+      <article class="activity-item">
+        <div class="activity-head">
+          <strong>{{.StackName}} / {{.Action}}</strong>
+          <div><span class="badge badge-{{.Status}}">{{.Status}}</span></div>
+        </div>
+        <p class="muted">{{.CreatedAt}}</p>
+        {{if .Output}}<pre>{{.Output}}</pre>{{end}}
+      </article>
+    {{else}}
+      <p class="muted">No activity yet.</p>
+    {{end}}
+  </section>
+{{template "layout_end" .}}
+{{end}}
