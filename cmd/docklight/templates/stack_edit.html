@@ -1,0 +1,47 @@
+{{define "stack_edit.html"}}
+{{template "layout_start" .}}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">compose target</p>
+      <h1>Edit {{.Stack.Name}}</h1>
+      <p class="muted">{{.Stack.RelativePath}}/{{.Stack.ComposeFile}}</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Stack definition</h2>
+    <form class="form stack-form" method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/edit">
+      {{template "csrf" .}}
+      <label>
+        <span>Docker Compose YAML</span>
+        <textarea name="compose_yaml" spellcheck="false" required>{{.StackForm.ComposeYAML}}</textarea>
+      </label>
+      <label>
+        <span>Compose .env</span>
+        <textarea name="env_file" spellcheck="false" placeholder="TAG=latest&#10;DATA_DIR=./data">{{.StackForm.EnvFile}}</textarea>
+      </label>
+      <p class="form-hint">Values here are saved as <code>.env</code> beside the compose file and are used for Compose interpolation.</p>
+      <label>
+        <span>Bind folders to create</span>
+        <textarea name="bind_folders" spellcheck="false" placeholder="data&#10;config&#10;logs">{{.StackForm.BindFolders}}</textarea>
+      </label>
+      <label class="switch-label">
+        <input type="checkbox" name="recreate_folders" {{if .StackForm.RecreateFolders}}checked{{end}}>
+        <span>recreate listed folders</span>
+      </label>
+      <label class="switch-label">
+        <input type="checkbox" name="external_bind_mounts_allowed" {{if .StackForm.ExternalBindMountsAllowed}}checked{{end}}>
+        <span>allow external bind mounts</span>
+      </label>
+      <p class="form-hint">Folder handling: by default, only missing folders from the list are created. If recreate listed folders is enabled, listed folders are removed and recreated before the stack is recreated.</p>
+      <p class="form-hint">External bind mounts allow paths outside the stack folder, such as <code>/etc/localtime</code> or media folders. Docker socket mounts and host-level options remain blocked.</p>
+      <div class="actions actions-large">
+        <button class="button button-secondary" type="submit" name="update_mode" value="save" data-loading-text="Saving...">Save</button>
+        <button class="button button-primary" type="submit" name="update_mode" value="recreate" data-loading-text="Updating..." data-confirm-action="Save and recreate stack {{.Stack.Name}}? This writes the compose file, runs docker compose down, and force recreates services.">Save and recreate</button>
+        <a class="button button-ghost" href="{{base "/stacks/"}}{{.Stack.Name}}">Cancel</a>
+      </div>
+      <p class="form-hint">Save only writes the compose file, folder changes, and stack settings. Save and recreate runs <code>docker compose down --rmi all --remove-orphans</code> and then <code>docker compose up -d --force-recreate</code>.</p>
+    </form>
+  </section>
+{{template "layout_end" .}}
+{{end}}

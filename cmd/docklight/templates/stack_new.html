@@ -1,0 +1,44 @@
+{{define "stack_new.html"}}
+{{template "layout_start" .}}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">compose target</p>
+      <h1>New stack</h1>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Stack definition</h2>
+    <form class="form stack-form" method="post" action="{{base "/stacks/new"}}">
+      {{template "csrf" .}}
+      <label>
+        <span>Stack name</span>
+        <input name="name" value="{{.StackForm.Name}}" placeholder="my-stack" required>
+      </label>
+      <label>
+        <span>Docker Compose YAML</span>
+        <textarea name="compose_yaml" spellcheck="false" required>{{.StackForm.ComposeYAML}}</textarea>
+      </label>
+      <label>
+        <span>Compose .env</span>
+        <textarea name="env_file" spellcheck="false" placeholder="TAG=latest&#10;DATA_DIR=./data">{{.StackForm.EnvFile}}</textarea>
+      </label>
+      <p class="form-hint">Values here are saved as <code>.env</code> beside the compose file and are used for Compose interpolation.</p>
+      <label>
+        <span>Bind folders to create</span>
+        <textarea name="bind_folders" spellcheck="false" placeholder="data&#10;config&#10;logs">{{.StackForm.BindFolders}}</textarea>
+      </label>
+      <label class="switch-label">
+        <input type="checkbox" name="external_bind_mounts_allowed" {{if .StackForm.ExternalBindMountsAllowed}}checked{{end}}>
+        <span>allow external bind mounts</span>
+      </label>
+      <p class="form-hint">External bind mounts allow paths outside the stack folder, such as <code>/etc/localtime</code> or media folders. Docker socket mounts and host-level options remain blocked.</p>
+      <div class="actions actions-large">
+        <button class="button button-primary" type="submit" data-loading-text="Creating...">Create</button>
+        <a class="button button-ghost" href="{{base "/"}}">Cancel</a>
+      </div>
+      <p class="form-hint">Creating a stack can take a while when Docker pulls images and starts services.</p>
+    </form>
+  </section>
+{{template "layout_end" .}}
+{{end}}
