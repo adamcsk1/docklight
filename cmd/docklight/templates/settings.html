@@ -1,0 +1,87 @@
+{{define "settings.html"}}
+{{template "layout_start" .}}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">runtime config</p>
+      <h1>Config</h1>
+    </div>
+  </section>
+
+  <section class="panel settings-grid">
+    <div><span class="muted">Base URL</span><strong>{{.Config.BaseURL}}</strong></div>
+    <div><span class="muted">Stacks root</span><strong>{{.Config.StacksRoot}}</strong></div>
+    <div><span class="muted">Database</span><strong>{{.Config.DBPath}}</strong></div>
+    <div><span class="muted">Listen address</span><strong>{{.Config.Addr}}</strong></div>
+    <div><span class="muted">Build date</span><strong>{{.BuildDate}}</strong></div>
+  </section>
+
+  <section class="panel">
+    <h2>Logging</h2>
+    <form class="settings-form" method="post" action="{{base "/settings"}}">
+      {{template "csrf" .}}
+      <label>
+        Activity retention
+        <select name="activity_retention_days">
+          {{range .RetentionDayOptions}}
+            <option value="{{.}}" {{if eqInt . $.Settings.ActivityRetentionDays}}selected{{end}}>{{if eqInt . 365}}1 year{{else}}{{.}} days{{end}}</option>
+          {{end}}
+        </select>
+      </label>
+      <label>
+        Verbose log retention
+        <select name="verbose_log_retention_days">
+          {{range .RetentionDayOptions}}
+            <option value="{{.}}" {{if eqInt . $.Settings.VerboseLogRetentionDays}}selected{{end}}>{{if eqInt . 365}}1 year{{else}}{{.}} days{{end}}</option>
+          {{end}}
+        </select>
+      </label>
+      <label class="switch-label settings-switch">
+        <input type="checkbox" name="verbose_logging_enabled" {{if .Settings.VerboseLoggingEnabled}}checked{{end}}>
+        Verbose logging
+      </label>
+      <p class="form-hint">Expired activity rows are purged automatically. Verbose logging writes timestamped daily files in the data folder for troubleshooting.</p>
+      <div class="actions actions-large">
+        <button class="button button-secondary" type="submit">Save logging settings</button>
+      </div>
+    </form>
+    <div class="verbose-log-list">
+      <h3>Verbose log files</h3>
+      {{if .VerboseLogFiles}}
+        <form class="settings-form" method="get" action="{{base "/settings/verbose-log/download"}}">
+          <label>
+            Available files
+            <select name="file">
+              {{range .VerboseLogFiles}}
+                <option value="{{.}}">{{.}}</option>
+              {{end}}
+            </select>
+          </label>
+          <div class="actions actions-large">
+            <button class="button button-secondary" type="submit">Download selected log</button>
+          </div>
+        </form>
+      {{else}}
+        <p class="muted">No verbose log files found.</p>
+      {{end}}
+    </div>
+  </section>
+
+  <section class="panel danger-zone">
+    <h2>Maintenance</h2>
+    <div class="actions actions-large">
+      <form class="settings-form" method="post" action="{{base "/settings/docklight/update"}}">
+        {{template "csrf" .}}
+        <input type="hidden" name="auto_remove_helper" value="0">
+        <label class="switch-label settings-switch">
+          <input type="checkbox" name="auto_remove_helper" value="1" checked>
+          Remove update helper automatically
+        </label>
+        <button class="button button-secondary" type="submit" data-confirm-action="Update Docklight now? The app may restart briefly.">Update Docklight</button>
+      </form>
+      <form method="post" action="{{base "/rescan"}}">{{template "csrf" .}}<button class="button button-secondary" type="submit">Scan folders</button></form>
+      <form method="post" action="{{base "/database/rebuild"}}">{{template "csrf" .}}<button class="button button-danger" type="submit" data-confirm-action="Drop the current database and rebuild it from the filesystem?">Rebuild database</button></form>
+    </div>
+    <p class="muted">Update Docklight starts a detached helper for this Docklight Compose service. Rebuild drops the current Docklight database tables, recreates them, scans the mounted compose root from scratch, and signs users out.</p>
+  </section>
+{{template "layout_end" .}}
+{{end}}
