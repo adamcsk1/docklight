@@ -1,0 +1,11 @@
+/data/
+/stacks/
+/docklight
+/docklight.exe
+/cmd/docklight/docklight
+/cmd/docklight/docklight.exe
+*.db
+*.db-shm
+*.db-wal
+coverage
+coverage.out

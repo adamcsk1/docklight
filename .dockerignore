@@ -1,0 +1,13 @@
+.git
+.opencode
+data
+*.db
+*.db-shm
+*.db-wal
+/docklight
+/docklight.exe
+/cmd/docklight/docklight
+/cmd/docklight/docklight.exe
+/stacks/
+/coverage
+/coverage.out
