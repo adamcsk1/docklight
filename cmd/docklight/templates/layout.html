@@ -1,0 +1,51 @@
+{{define "layout_start"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{if .Title}}{{.Title}} · {{end}}Docklight</title>
+  <link rel="icon" href="{{base "/static/logo.ico"}}" type="image/x-icon">
+  <link rel="stylesheet" href="{{base "/static/app.css"}}">
+  <script src="{{base "/static/htmx.min.js"}}" defer></script>
+  <script src="{{base "/static/app.js"}}" defer></script>
+  {{if .UsageScript}}<script src="{{base "/static/usage.js"}}" defer></script>{{end}}
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{base "/"}}">Docklight</a>
+    <button class="menu-toggle" type="button" aria-controls="main-menu" aria-expanded="false">
+      <span></span>
+      <span></span>
+      <span></span>
+      <span class="sr-only">Menu</span>
+    </button>
+    <div class="topbar-menu" id="main-menu">
+    <nav class="nav" aria-label="Main navigation">
+      <a class="{{if active .Path "/"}}active{{end}}" href="{{base "/"}}">stacks</a>
+      <a class="{{if active .Path "/external-containers"}}active{{end}}" href="{{base "/external-containers"}}">standalone / external</a>
+      <a class="{{if active .Path "/containers"}}active{{end}}" href="{{base "/containers"}}">containers</a>
+      <a class="{{if active .Path "/images"}}active{{end}}" href="{{base "/images"}}">images</a>
+      <a class="{{if active .Path "/volumes"}}active{{end}}" href="{{base "/volumes"}}">volumes</a>
+      <a class="{{if active .Path "/networks"}}active{{end}}" href="{{base "/networks"}}">networks</a>
+      <a class="{{if active .Path "/activity"}}active{{end}}" href="{{base "/activity"}}">activity</a>
+      <a class="{{if active .Path "/settings"}}active{{end}}" href="{{base "/settings"}}">config</a>
+    </nav>
+    <form method="post" action="{{base "/logout"}}">
+      {{template "csrf" .}}
+      <button class="button button-ghost" type="submit">Logout</button>
+    </form>
+    </div>
+  </header>
+  <main class="page">
+    {{if .Error}}<section class="alert alert-danger">{{.Error}}</section>{{end}}
+    {{if .Message}}<section class="alert alert-success">{{.Message}}</section>{{end}}
+{{end}}
+
+{{define "csrf"}}{{if .CSRFToken}}<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">{{end}}{{end}}
+
+{{define "layout_end"}}
+  </main>
+</body>
+</html>
+{{end}}
