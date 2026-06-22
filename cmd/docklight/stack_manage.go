@@ -255,5 +255,6 @@ func (app *App) deleteStack(w http.ResponseWriter, r *http.Request) {
 		app.redirectWithError(w, r, "/", "stack files were deleted, but database cleanup failed: "+err.Error())
 		return
 	}
-	app.redirectWithMessage(w, r, "/", "stack deleted: "+name)
+	app.setFlashCookie(w, r, "message", "stack deleted: "+name)
+	http.Redirect(w, r, app.withBase("/"), http.StatusFound)
 }

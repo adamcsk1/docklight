@@ -366,6 +366,44 @@ func TestDeleteStackRemovesComposeVolumesImagesFilesAndDatabaseRow(t *testing.T)
 	}
 }
 
+func TestDeleteStackSuccessRedirectsToDashboardWithFlash(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "victim"))
+	app, _ := newDeleteStackTestApp(t, root)
+
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		if call == "docker container ls -aq" {
+			return "", nil
+		}
+		if strings.Contains(call, "docker compose") && strings.Contains(call, " down --remove-orphans --volumes") {
+			return "stack removed", nil
+		}
+		return "", nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/victim/delete", nil)
+	req.Header.Set("Referer", "http://docklight.local/")
+	req.SetPathValue("name", "victim")
+	rec := httptest.NewRecorder()
+	app.deleteStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
+		t.Fatalf("expected redirect to dashboard, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if !strings.Contains(rec.Header().Get("Set-Cookie"), "docklight_flash") {
+		t.Fatalf("expected success flash cookie after delete, got %q", rec.Header().Get("Set-Cookie"))
+	}
+	flashReq := httptest.NewRequest(http.MethodGet, "http://docklight.local/", nil)
+	for _, cookie := range rec.Result().Cookies() {
+		flashReq.AddCookie(cookie)
+	}
+	key, message, ok := app.readFlashCookie(flashReq)
+	if !ok || key != "message" || message != "stack deleted: victim" {
+		t.Fatalf("expected delete success flash, key=%q message=%q ok=%v", key, message, ok)
+	}
+}
+
 func TestDeleteStackSkipsImageStillUsedByAnotherContainer(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCompose(t, filepath.Join(root, "victim"))
