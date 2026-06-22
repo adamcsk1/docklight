@@ -26,6 +26,8 @@ func (app *App) routes() http.Handler {
 	app.handle(mux, "GET /containers", app.requireAuth(http.HandlerFunc(app.containers)), true)
 	app.handle(mux, "GET /containers/{id}/logs", app.requireAuth(http.HandlerFunc(app.containerLogsPage)), true)
 	app.handle(mux, "GET /containers/{id}/logs/raw", app.requireAuth(http.HandlerFunc(app.containerLogsRaw)), true)
+	app.handle(mux, "GET /containers/{id}/exec", app.requireAuth(http.HandlerFunc(app.containerExecPage)), true)
+	app.handle(mux, "POST /containers/{id}/exec", app.requireAuth(http.HandlerFunc(app.containerExec)), true)
 	app.handle(mux, "POST /containers/delete", app.requireAuth(http.HandlerFunc(app.deleteSelectedContainers)), true)
 	app.handle(mux, "GET /external-containers", app.requireAuth(http.HandlerFunc(app.standaloneExternalContainersPage)), true)
 	app.handle(mux, "GET /images", app.requireAuth(http.HandlerFunc(app.images)), true)

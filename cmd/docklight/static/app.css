@@ -372,6 +372,15 @@ a { color: inherit; }
     color: var(--color-muted);
     background: transparent;
   }
+
+  &.button-disabled,
+  &.button-disabled:hover {
+    cursor: not-allowed;
+    opacity: 0.55;
+    pointer-events: none;
+    border-color: var(--color-line-strong);
+    color: var(--color-faint);
+  }
 }
 
 .badge {
@@ -541,6 +550,24 @@ pre {
   max-height: 65vh;
   overflow: auto;
   white-space: pre;
+}
+
+.container-exec-panel { margin-top: var(--space-4); }
+
+.container-exec-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.exec-output {
+  min-height: 10rem;
+  border-color: color-mix(in srgb, var(--color-green) 35%, var(--color-line-strong));
+}
+
+.exec-output-failed {
+  border-color: color-mix(in srgb, var(--color-red) 45%, var(--color-line-strong));
 }
 
 .settings-grid {

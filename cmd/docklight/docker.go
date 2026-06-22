@@ -102,6 +102,10 @@ func (app *App) dockerContainerLogs(container string) (string, error) {
 	return app.runDocker("logs", "--tail", "300", container)
 }
 
+func (app *App) dockerContainerExec(container, command string) (string, error) {
+	return app.runDocker("exec", container, "sh", "-lc", command)
+}
+
 func (app *App) runCommand(dir, name string, args ...string) (string, error) {
 	start := time.Now()
 	if app.runner != nil {

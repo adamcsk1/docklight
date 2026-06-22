@@ -23,6 +23,68 @@ func (app *App) containerLogsRaw(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(logs))
 }
 
+func (app *App) containerExecPage(w http.ResponseWriter, r *http.Request) {
+	container, found, err := app.findDockerContainer(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	app.render(w, r, "container_exec.html", PageData{Title: container.Name + " command", Container: container})
+}
+
+func (app *App) containerExec(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseForm(); err != nil {
+		app.redirectWithError(w, r, "/containers", "bad form")
+		return
+	}
+	command := strings.TrimSpace(r.FormValue("command"))
+	container, found, err := app.findDockerContainer(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !found {
+		http.NotFound(w, r)
+		return
+	}
+	data := PageData{Title: container.Name + " command", Container: container, ContainerCommand: command}
+	if command == "" {
+		data.Error = "command is required"
+		app.render(w, r, "container_exec.html", data)
+		return
+	}
+	if container.Protected {
+		data.Error = "Docklight cannot run commands against its own container: " + container.Name
+		app.render(w, r, "container_exec.html", data)
+		return
+	}
+	if !strings.EqualFold(container.State, "running") {
+		data.Error = "container is not running"
+		app.render(w, r, "container_exec.html", data)
+		return
+	}
+
+	output, err := app.dockerContainerExec(container.ID, command)
+	status := "success"
+	if err != nil {
+		status = "failed"
+		data.ContainerExecFailed = true
+	}
+	app.logActivity(container.Stack, "container exec", status, fmt.Sprintf("%s\n$ %s\noutput bytes: %d", container.Name, command, len(output)))
+	data.ContainerExecOutput = output
+	if output == "" && err == nil {
+		data.ContainerExecOutput = "command completed with no output"
+	}
+	if err != nil && strings.TrimSpace(output) == "" {
+		data.ContainerExecOutput = "command failed with no output"
+	}
+	app.render(w, r, "container_exec.html", data)
+}
+
 func (app *App) containerLogs(w http.ResponseWriter, r *http.Request) (DockerContainer, string, bool) {
 	container, found, err := app.findDockerContainer(r.PathValue("id"))
 	if err != nil {

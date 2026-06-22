@@ -22,6 +22,9 @@ type PageData struct {
 	Containers          []DockerContainer
 	Container           DockerContainer
 	ContainerLog        string
+	ContainerCommand    string
+	ContainerExecOutput string
+	ContainerExecFailed bool
 	Images              []DockerImage
 	Volumes             []DockerVolume
 	Networks            []DockerNetwork
@@ -44,6 +47,8 @@ func (app *App) loadTemplates() error {
 		"active":              activePath,
 		"metric":              metricValue,
 		"usageContainerNames": usageContainerNames,
+		"canExecContainer":    canExecContainer,
+		"canExecCompose":      canExecComposeContainer,
 	}
 	t, err := template.New("layout.html").Funcs(funcs).ParseFS(webFS, "templates/*.html")
 	if err != nil {
@@ -98,6 +103,14 @@ func activePath(path, target string) bool {
 		return path == "/"
 	}
 	return path == target || strings.HasPrefix(path, target+"/")
+}
+
+func canExecContainer(container DockerContainer) bool {
+	return !container.Protected && strings.EqualFold(container.State, "running")
+}
+
+func canExecComposeContainer(container Container) bool {
+	return strings.EqualFold(container.State, "running")
 }
 
 func (app *App) redirectWithError(w http.ResponseWriter, r *http.Request, fallbackPath, message string) {
