@@ -24,6 +24,7 @@
           <span>started</span>
           <span>owner</span>
           <span>ports</span>
+          <span>actions</span>
         </div>
         {{range .Containers}}
           <article class="resource-row resource-row-containers">
@@ -35,6 +36,7 @@
             <div>{{.Started}}{{if .RunningFor}}<p class="muted">{{.RunningFor}}</p>{{end}}</div>
             <div>{{.Stack}}{{if .Service}}<p class="muted">svc={{.Service}}</p>{{end}}{{if .Protected}}<p class="muted">protected: Docklight</p>{{else if eq .State "running"}}<p class="muted">locked: running container</p>{{end}}</div>
             <div class="resource-break">{{if .Ports}}{{.Ports}}{{else}}-{{end}}</div>
+            <div><a class="button button-ghost" href="{{base "/containers/"}}{{.ID}}/logs">Logs</a></div>
           </article>
         {{end}}
       </section>

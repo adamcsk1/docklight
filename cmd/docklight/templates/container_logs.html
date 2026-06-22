@@ -1,0 +1,27 @@
+{{define "container_logs.html"}}
+{{template "layout_start" .}}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">container log</p>
+      <h1>{{.Container.Name}}</h1>
+      <p class="muted">{{.Container.ID}} · {{.Container.Image}}</p>
+    </div>
+    <div class="status-cell">
+      <span class="badge badge-{{.Container.State}}">{{.Container.State}}</span>
+      <a class="button button-ghost" href="{{base "/containers"}}">Back</a>
+    </div>
+  </section>
+
+  <section class="panel container-log-panel" data-container-log data-log-url="{{base "/containers/"}}{{.Container.ID}}/logs/raw">
+    <div class="log-toolbar">
+      <h2>Logs</h2>
+      <div class="actions">
+        <button class="button" type="button" data-log-refresh>Refresh</button>
+        <label class="switch-label"><input type="checkbox" data-log-auto-refresh><span>auto refresh every 5s</span></label>
+      </div>
+    </div>
+    <p class="muted log-status" data-log-status>Showing last 300 lines.</p>
+    <pre class="log-output" data-log-output>{{.ContainerLog}}</pre>
+  </section>
+{{template "layout_end" .}}
+{{end}}

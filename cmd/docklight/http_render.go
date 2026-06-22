@@ -20,6 +20,8 @@ type PageData struct {
 	StackForm           StackForm
 	Activities          []Activity
 	Containers          []DockerContainer
+	Container           DockerContainer
+	ContainerLog        string
 	Images              []DockerImage
 	Volumes             []DockerVolume
 	Networks            []DockerNetwork
@@ -32,6 +34,7 @@ type PageData struct {
 	Message             string
 	CSRFToken           string
 	UsageScript         bool
+	ContainerLogScript  bool
 }
 
 func (app *App) loadTemplates() error {

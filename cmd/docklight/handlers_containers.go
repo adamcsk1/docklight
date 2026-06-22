@@ -6,6 +6,45 @@ import (
 	"strings"
 )
 
+func (app *App) containerLogsPage(w http.ResponseWriter, r *http.Request) {
+	container, logs, ok := app.containerLogs(w, r)
+	if !ok {
+		return
+	}
+	app.render(w, r, "container_logs.html", PageData{Title: container.Name + " logs", Container: container, ContainerLog: logs, ContainerLogScript: true})
+}
+
+func (app *App) containerLogsRaw(w http.ResponseWriter, r *http.Request) {
+	_, logs, ok := app.containerLogs(w, r)
+	if !ok {
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	_, _ = w.Write([]byte(logs))
+}
+
+func (app *App) containerLogs(w http.ResponseWriter, r *http.Request) (DockerContainer, string, bool) {
+	container, found, err := app.findDockerContainer(r.PathValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return DockerContainer{}, "", false
+	}
+	if !found {
+		http.NotFound(w, r)
+		return DockerContainer{}, "", false
+	}
+	logs, err := app.dockerContainerLogs(container.ID)
+	if err != nil {
+		message := strings.TrimSpace(logs)
+		if message == "" {
+			message = "logs unavailable"
+		}
+		http.Error(w, message, http.StatusInternalServerError)
+		return DockerContainer{}, "", false
+	}
+	return container, logs, true
+}
+
 func (app *App) deleteSelectedContainers(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		app.redirectWithError(w, r, "/containers", "bad form")

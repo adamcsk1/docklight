@@ -35,6 +35,79 @@ func TestDeleteSelectedContainers(t *testing.T) {
 	}
 }
 
+func TestContainerLogsHandlers(t *testing.T) {
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		switch call {
+		case "docker container ls -aq":
+			return "abc123\n", nil
+		case "docker container inspect abc123":
+			return `[{"ID":"abc123456789","Name":"/web","Image":"sha256:image","Config":{"Image":"nginx","Labels":{}},"State":{"Status":"running","StartedAt":"2026-01-01T00:00:00Z"},"NetworkSettings":{"Ports":{},"Networks":{}}}]`, nil
+		case "docker logs --tail 300 abc123456789":
+			return "first line\nsecond line", nil
+		}
+		return "", nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://docklight.local/containers/abc123456789/logs", nil)
+	req.SetPathValue("id", "abc123456789")
+	rec := httptest.NewRecorder()
+	app.containerLogsPage(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "first line") || !strings.Contains(body, "data-log-auto-refresh") {
+		t.Fatalf("expected log page with refresh controls, code=%d body=%s", rec.Code, body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://docklight.local/containers/web/logs/raw", nil)
+	req.SetPathValue("id", "web")
+	rec = httptest.NewRecorder()
+	app.containerLogsRaw(rec, req)
+	if rec.Code != http.StatusOK || rec.Body.String() != "first line\nsecond line" {
+		t.Fatalf("expected raw logs, code=%d body=%q", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(strings.Join(calls, "\n"), "docker logs --tail 300 abc123456789") {
+		t.Fatalf("expected docker logs call, calls=%v", calls)
+	}
+}
+
+func TestContainerLogsRejectsPartialIDAndReportsEmptyFailure(t *testing.T) {
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		switch call {
+		case "docker container ls -aq":
+			return "abc123\n", nil
+		case "docker container inspect abc123":
+			return `[{"ID":"abc123456789","Name":"/web","Image":"sha256:image","Config":{"Image":"nginx","Labels":{}},"State":{"Status":"running","StartedAt":"2026-01-01T00:00:00Z"},"NetworkSettings":{"Ports":{},"Networks":{}}}]`, nil
+		case "docker logs --tail 300 abc123456789":
+			return "", errors.New("logs failed")
+		}
+		return "", nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://docklight.local/containers/abc/logs/raw", nil)
+	req.SetPathValue("id", "abc")
+	rec := httptest.NewRecorder()
+	app.containerLogsRaw(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected partial container ID to be rejected, got %d", rec.Code)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://docklight.local/containers/abc123456789/logs/raw", nil)
+	req.SetPathValue("id", "abc123456789")
+	rec = httptest.NewRecorder()
+	app.containerLogsRaw(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "logs unavailable") {
+		t.Fatalf("expected fallback log error, code=%d body=%q", rec.Code, rec.Body.String())
+	}
+}
+
 func TestProtectedStackActionsAreBlocked(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCompose(t, filepath.Join(root, "docklight"))

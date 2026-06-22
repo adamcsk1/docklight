@@ -98,6 +98,10 @@ func (app *App) runDocker(args ...string) (string, error) {
 	return app.runCommand("", "docker", args...)
 }
 
+func (app *App) dockerContainerLogs(container string) (string, error) {
+	return app.runDocker("logs", "--tail", "300", container)
+}
+
 func (app *App) runCommand(dir, name string, args ...string) (string, error) {
 	start := time.Now()
 	if app.runner != nil {

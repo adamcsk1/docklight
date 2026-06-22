@@ -55,3 +55,17 @@ func (app *App) dockerContainerResources(all bool) ([]DockerContainer, error) {
 	})
 	return containers, nil
 }
+
+func (app *App) findDockerContainer(ref string) (DockerContainer, bool, error) {
+	containers, err := app.dockerContainerResources(true)
+	if err != nil {
+		return DockerContainer{}, false, err
+	}
+	ref = strings.TrimSpace(ref)
+	for _, container := range containers {
+		if ref == container.ID || ref == container.Name {
+			return container, true, nil
+		}
+	}
+	return DockerContainer{}, false, nil
+}

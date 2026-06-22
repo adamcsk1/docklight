@@ -524,6 +524,25 @@ pre {
   font-size: var(--font-size-md);
 }
 
+.log-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+
+  & h2 { margin: 0; }
+}
+
+.log-status { margin: var(--space-3) 0; }
+
+.log-output {
+  min-height: 28rem;
+  max-height: 65vh;
+  overflow: auto;
+  white-space: pre;
+}
+
 .settings-grid {
   display: grid;
   gap: var(--line-width);
@@ -770,7 +789,8 @@ input[type="checkbox"] {
       minmax(var(--resource-min-xl), 1.2fr)
       minmax(var(--resource-min-xs), 0.6fr)
       minmax(var(--resource-min-sm), 0.7fr)
-      minmax(var(--resource-min-lg), 1fr);
+      minmax(var(--resource-min-lg), 1fr)
+      minmax(var(--resource-min-action), 0.5fr);
   }
 
   .resource-row-volumes {
@@ -803,6 +823,7 @@ input[type="checkbox"] {
       minmax(var(--resource-min-xs), 0.6fr)
       minmax(var(--resource-min-md), 0.9fr)
       minmax(var(--resource-min-lg), 1fr)
-      minmax(var(--resource-min-wide), 1fr);
+      minmax(var(--resource-min-wide), 1fr)
+      minmax(var(--resource-min-action), 0.5fr);
   }
 }

@@ -16,6 +16,7 @@
           <span>state</span>
           <span>usage</span>
           <span>owner</span>
+          <span>actions</span>
         </div>
         {{range .Containers}}
           <article class="resource-row resource-row-external-containers" data-usage-key="{{.ID}}" data-usage-containers="{{if eq .State "running"}}{{.ID}}{{end}}">
@@ -24,6 +25,7 @@
             <div><span class="badge badge-{{.State}}">{{.State}}</span></div>
             <div class="metric-line" data-usage-target>CPU -<br>Memory -</div>
             <div>{{.Stack}}{{if .Service}}<p class="muted">svc={{.Service}}</p>{{end}}{{if .Protected}}<p class="muted">protected: Docklight</p>{{end}}</div>
+            <div><a class="button button-ghost" href="{{base "/containers/"}}{{.ID}}/logs">Logs</a></div>
           </article>
         {{end}}
       </section>
