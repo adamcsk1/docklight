@@ -36,7 +36,7 @@
             <div>{{.Started}}{{if .RunningFor}}<p class="muted">{{.RunningFor}}</p>{{end}}</div>
             <div>{{.Stack}}{{if .Service}}<p class="muted">svc={{.Service}}</p>{{end}}{{if .Protected}}<p class="muted">protected: Docklight</p>{{else if eq .State "running"}}<p class="muted">locked: running container</p>{{end}}</div>
             <div class="resource-break">{{if .Ports}}{{.Ports}}{{else}}-{{end}}</div>
-            <div><a class="button button-ghost" href="{{base "/containers/"}}{{.ID}}/logs">Logs</a></div>
+            <div class="actions"><a class="button button-ghost" href="{{base "/containers/"}}{{.ID}}/logs">Logs</a>{{if canExecContainer .}}<a class="button button-ghost" href="{{base "/containers/"}}{{.ID}}/exec">Command</a>{{else}}<span class="button button-ghost button-disabled" aria-disabled="true">Command</span>{{end}}</div>
           </article>
         {{end}}
       </section>

@@ -54,6 +54,58 @@ func TestPageHandlersRenderOperationalInventories(t *testing.T) {
 	}
 }
 
+func TestCommandActionsDisableWhenUnavailable(t *testing.T) {
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://docklight.local/containers", nil)
+	rec := httptest.NewRecorder()
+	app.render(rec, req, "containers.html", PageData{Containers: []DockerContainer{
+		{ID: "run123", Name: "web", State: "running"},
+		{ID: "stop123", Name: "worker", State: "exited"},
+		{ID: "dock123", Name: "docklight", State: "running", Protected: true},
+	}})
+	body := rec.Body.String()
+	if !strings.Contains(body, `/containers/run123/exec`) {
+		t.Fatalf("expected running unprotected container command link: %s", body)
+	}
+	if strings.Contains(body, `/containers/stop123/exec`) || strings.Contains(body, `/containers/dock123/exec`) {
+		t.Fatalf("expected unavailable command actions to avoid links: %s", body)
+	}
+	if strings.Count(body, `aria-disabled="true">Command`) != 2 {
+		t.Fatalf("expected two disabled command actions: %s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://docklight.local/stacks/web", nil)
+	rec = httptest.NewRecorder()
+	app.render(rec, req, "stack.html", PageData{Stack: Stack{Name: "web", Containers: []Container{
+		{Name: "api", State: "running"},
+		{Name: "job", State: "exited"},
+	}}})
+	body = rec.Body.String()
+	if !strings.Contains(body, `/containers/api/exec`) || strings.Contains(body, `/containers/job/exec`) || !strings.Contains(body, `aria-disabled="true">Command`) {
+		t.Fatalf("expected stack command actions to follow running state: %s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://docklight.local/stacks/docklight", nil)
+	rec = httptest.NewRecorder()
+	app.render(rec, req, "stack.html", PageData{Stack: Stack{Name: "docklight", Protected: true, Containers: []Container{{Name: "docklight", State: "running"}}}})
+	body = rec.Body.String()
+	if strings.Contains(body, `/containers/docklight/exec`) || !strings.Contains(body, `aria-disabled="true">Command`) {
+		t.Fatalf("expected protected stack command action to be disabled: %s", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "http://docklight.local/containers/stop123/logs", nil)
+	rec = httptest.NewRecorder()
+	app.render(rec, req, "container_logs.html", PageData{Container: DockerContainer{ID: "stop123", Name: "worker", State: "exited"}})
+	body = rec.Body.String()
+	if strings.Contains(body, `/containers/stop123/exec`) || !strings.Contains(body, `aria-disabled="true">Command`) {
+		t.Fatalf("expected logs page command action to be disabled: %s", body)
+	}
+}
+
 func TestRenderAndFlashRejectInvalidInputs(t *testing.T) {
 	app, _ := newTestApp(t, Config{BaseURL: "/docklight", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
 	app.logger = slog.New(slog.NewTextHandler(io.Discard, nil))

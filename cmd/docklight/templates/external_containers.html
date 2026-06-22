@@ -25,7 +25,7 @@
             <div><span class="badge badge-{{.State}}">{{.State}}</span></div>
             <div class="metric-line" data-usage-target>CPU -<br>Memory -</div>
             <div>{{.Stack}}{{if .Service}}<p class="muted">svc={{.Service}}</p>{{end}}{{if .Protected}}<p class="muted">protected: Docklight</p>{{end}}</div>
-            <div><a class="button button-ghost" href="{{base "/containers/"}}{{.ID}}/logs">Logs</a></div>
+            <div class="actions"><a class="button button-ghost" href="{{base "/containers/"}}{{.ID}}/logs">Logs</a>{{if canExecContainer .}}<a class="button button-ghost" href="{{base "/containers/"}}{{.ID}}/exec">Command</a>{{else}}<span class="button button-ghost button-disabled" aria-disabled="true">Command</span>{{end}}</div>
           </article>
         {{end}}
       </section>

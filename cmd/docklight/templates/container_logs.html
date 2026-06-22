@@ -8,6 +8,7 @@
     </div>
     <div class="status-cell">
       <span class="badge badge-{{.Container.State}}">{{.Container.State}}</span>
+      {{if canExecContainer .Container}}<a class="button button-ghost" href="{{base "/containers/"}}{{.Container.ID}}/exec">Command</a>{{else}}<span class="button button-ghost button-disabled" aria-disabled="true">Command</span>{{end}}
       <a class="button button-ghost" href="{{base "/containers"}}">Back</a>
     </div>
   </section>

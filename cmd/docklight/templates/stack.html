@@ -44,7 +44,7 @@
               <strong>{{.Name}}</strong>
               <p class="muted">{{.Service}} · {{.Image}}</p>
               <p class="metric-line" data-usage-target>CPU - / Memory -</p>
-              <p><a class="button button-ghost" href="{{base "/containers/"}}{{.Name}}/logs">Logs</a></p>
+              <p class="actions"><a class="button button-ghost" href="{{base "/containers/"}}{{.Name}}/logs">Logs</a>{{if and (not $.Stack.Protected) (canExecCompose .)}}<a class="button button-ghost" href="{{base "/containers/"}}{{.Name}}/exec">Command</a>{{else}}<span class="button button-ghost button-disabled" aria-disabled="true">Command</span>{{end}}</p>
             </div>
             <div>
               <span class="badge badge-{{.State}}">{{.State}}</span>
