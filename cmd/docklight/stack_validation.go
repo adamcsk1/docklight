@@ -48,9 +48,9 @@ func parseBindFolders(input string) ([]string, error) {
 	return folders, nil
 }
 
-func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, envFile string, allowExternalBinds bool) error {
+func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, envFile string, allowExternalBinds, allowDockerSocketMounts bool) error {
 	if !composeNeedsInterpolation(composeYAML, envFile) {
-		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds)
+		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts)
 	}
 	if err := app.ensureStackPathSafe(stackDir); err != nil {
 		return err
@@ -98,9 +98,9 @@ func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, en
 	}
 	resolved := strings.TrimSpace(output)
 	if resolved == "" {
-		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds)
+		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts)
 	}
-	return validateResolvedComposeYAML(resolved, stackDir, allowExternalBinds)
+	return validateResolvedComposeYAML(resolved, stackDir, allowExternalBinds, allowDockerSocketMounts)
 }
 
 func composeNeedsInterpolation(composeYAML, envFile string) bool {
@@ -108,30 +108,30 @@ func composeNeedsInterpolation(composeYAML, envFile string) bool {
 }
 
 func validateComposeYAML(input string) error {
-	return validateComposeYAMLWithExternalBinds(input, false)
+	return validateComposeYAMLWithExternalBinds(input, false, false)
 }
 
-func validateComposeYAMLWithExternalBinds(input string, allowExternalBinds bool) error {
+func validateComposeYAMLWithExternalBinds(input string, allowExternalBinds, allowDockerSocketMounts bool) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(input), &root); err != nil {
 		return err
 	}
-	return validateComposeNode(&root, "", allowExternalBinds)
+	return validateComposeNode(&root, "", allowExternalBinds, allowDockerSocketMounts)
 }
 
-func validateResolvedComposeYAML(input, stackDir string, allowExternalBinds bool) error {
+func validateResolvedComposeYAML(input, stackDir string, allowExternalBinds, allowDockerSocketMounts bool) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(input), &root); err != nil {
 		return err
 	}
-	return validateComposeNode(&root, stackDir, allowExternalBinds)
+	return validateComposeNode(&root, stackDir, allowExternalBinds, allowDockerSocketMounts)
 }
 
-func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds bool) error {
+func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds, allowDockerSocketMounts bool) error {
 	if node == nil {
 		return nil
 	}
-	if node.Kind == yaml.ScalarNode && strings.Contains(node.Value, "/var/run/docker.sock") {
+	if node.Kind == yaml.ScalarNode && !allowDockerSocketMounts && strings.Contains(node.Value, "/var/run/docker.sock") {
 		return errors.New("compose yaml contains blocked docker socket mount")
 	}
 	if node.Kind == yaml.MappingNode {
@@ -150,25 +150,25 @@ func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds bo
 			case "cap_add", "devices", "security_opt":
 				return fmt.Errorf("compose yaml contains blocked host-level option: %s", key)
 			case "volumes":
-				if err := validateComposeVolumes(value, stackDir, allowExternalBinds); err != nil {
+				if err := validateComposeVolumes(value, stackDir, allowExternalBinds, allowDockerSocketMounts); err != nil {
 					return err
 				}
 			}
-			if err := validateComposeNode(value, stackDir, allowExternalBinds); err != nil {
+			if err := validateComposeNode(value, stackDir, allowExternalBinds, allowDockerSocketMounts); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for _, child := range node.Content {
-		if err := validateComposeNode(child, stackDir, allowExternalBinds); err != nil {
+		if err := validateComposeNode(child, stackDir, allowExternalBinds, allowDockerSocketMounts); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateComposeVolumes(node *yaml.Node, stackDir string, allowExternalBinds bool) error {
+func validateComposeVolumes(node *yaml.Node, stackDir string, allowExternalBinds, allowDockerSocketMounts bool) error {
 	if node == nil || node.Kind != yaml.SequenceNode {
 		return nil
 	}
@@ -176,8 +176,13 @@ func validateComposeVolumes(node *yaml.Node, stackDir string, allowExternalBinds
 		switch item.Kind {
 		case yaml.ScalarNode:
 			value := strings.Trim(item.Value, `"'`)
-			if source, _, ok := splitVolumeSpec(value); ok && bindSourceExposesDockerSocket(source) {
-				return fmt.Errorf("compose yaml contains blocked docker socket mount: %s", source)
+			if source, _, ok := splitVolumeSpec(value); ok {
+				if bindSourceExposesDockerSocket(source, allowDockerSocketMounts) {
+					return fmt.Errorf("compose yaml contains blocked docker socket mount: %s", source)
+				}
+				if dockerSocketMountAllowed(source, allowDockerSocketMounts) {
+					continue
+				}
 			}
 			if looksLikeUnsafeHostBind(value) && !allowExternalBinds && !composeBindSourceInsideStack(value, stackDir) {
 				source, _, _ := splitVolumeSpec(value)
@@ -193,8 +198,11 @@ func validateComposeVolumes(node *yaml.Node, stackDir string, allowExternalBinds
 				if sourceNode == nil {
 					return errors.New("compose yaml contains unsafe host bind mount")
 				}
-				if bindSourceExposesDockerSocket(sourceNode.Value) {
+				if bindSourceExposesDockerSocket(sourceNode.Value, allowDockerSocketMounts) {
 					return fmt.Errorf("compose yaml contains blocked docker socket mount: %s", sourceNode.Value)
+				}
+				if dockerSocketMountAllowed(sourceNode.Value, allowDockerSocketMounts) {
+					continue
 				}
 				if !allowExternalBinds && !pathInsideOrEqual(stackDir, sourceNode.Value) {
 					return fmt.Errorf("compose yaml contains unsafe host bind mount: %s", sourceNode.Value)
@@ -205,7 +213,15 @@ func validateComposeVolumes(node *yaml.Node, stackDir string, allowExternalBinds
 	return nil
 }
 
-func bindSourceExposesDockerSocket(source string) bool {
+func dockerSocketMountAllowed(source string, allowExactSocket bool) bool {
+	if !allowExactSocket {
+		return false
+	}
+	cleaned := filepath.ToSlash(path.Clean(filepath.ToSlash(strings.TrimSpace(source))))
+	return cleaned == "/var/run/docker.sock" || cleaned == "/run/docker.sock"
+}
+
+func bindSourceExposesDockerSocket(source string, allowExactSocket bool) bool {
 	source = strings.TrimSpace(source)
 	if source == "" || strings.HasPrefix(source, "${") {
 		return false
@@ -213,7 +229,7 @@ func bindSourceExposesDockerSocket(source string) bool {
 	cleaned := filepath.ToSlash(path.Clean(filepath.ToSlash(source)))
 	for _, socket := range []string{"/var/run/docker.sock", "/run/docker.sock"} {
 		if cleaned == socket {
-			return true
+			return !allowExactSocket
 		}
 		if cleaned == path.Dir(socket) || strings.HasPrefix(socket, cleaned+"/") {
 			return true

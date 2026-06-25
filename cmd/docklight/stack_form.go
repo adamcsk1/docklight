@@ -12,6 +12,7 @@ type StackForm struct {
 	BindFolders               string
 	RecreateFolders           bool
 	ExternalBindMountsAllowed bool
+	DockerSocketMountsAllowed bool
 }
 
 func newStackFormFromRequest(r *http.Request) StackForm {
@@ -21,6 +22,7 @@ func newStackFormFromRequest(r *http.Request) StackForm {
 		EnvFile:                   strings.TrimRight(r.FormValue("env_file"), "\r\n"),
 		BindFolders:               strings.TrimSpace(r.FormValue("bind_folders")),
 		ExternalBindMountsAllowed: r.FormValue("external_bind_mounts_allowed") == "on",
+		DockerSocketMountsAllowed: r.FormValue("docker_socket_mounts_allowed") == "on",
 	}
 }
 
@@ -32,5 +34,6 @@ func updateStackFormFromRequest(r *http.Request, name string) StackForm {
 		BindFolders:               strings.TrimSpace(r.FormValue("bind_folders")),
 		RecreateFolders:           r.FormValue("update_mode") != "save" && r.FormValue("recreate_folders") == "on",
 		ExternalBindMountsAllowed: r.FormValue("external_bind_mounts_allowed") == "on",
+		DockerSocketMountsAllowed: r.FormValue("docker_socket_mounts_allowed") == "on",
 	}
 }

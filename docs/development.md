@@ -24,7 +24,7 @@ If the GHCR package should allow unauthenticated pulls, make it public in GitHub
 
 For private GHCR packages, host-side `docker login ghcr.io` is required before Docker can pull the Docklight image itself. Docklight image pulls run Docker CLI commands inside the Docklight container through the mounted Docker socket, so they need credentials in the container's Docker config path.
 
-The example compose file mounts a dedicated config directory for this:
+Mount a dedicated config directory for this in the Docklight Compose service:
 
 ```yaml
 volumes:

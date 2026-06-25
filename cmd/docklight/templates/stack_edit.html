@@ -33,8 +33,13 @@
         <input type="checkbox" name="external_bind_mounts_allowed" {{if .StackForm.ExternalBindMountsAllowed}}checked{{end}}>
         <span>allow external bind mounts</span>
       </label>
+      <label class="switch-label">
+        <input type="checkbox" name="docker_socket_mounts_allowed" {{if .StackForm.DockerSocketMountsAllowed}}checked{{end}}>
+        <span>allow Docker socket mount</span>
+      </label>
       <p class="form-hint">Folder handling: by default, only missing folders from the list are created. If recreate listed folders is enabled, listed folders are removed and recreated before the stack is recreated.</p>
-      <p class="form-hint">External bind mounts allow paths outside the stack folder, such as <code>/etc/localtime</code> or media folders. Docker socket mounts and host-level options remain blocked.</p>
+      <p class="form-hint">External bind mounts allow paths outside the stack folder, such as <code>/etc/localtime</code> or media folders. Host-level options remain blocked.</p>
+      <p class="form-hint">Docker socket mounts allow exact socket file mounts for <code>/var/run/docker.sock</code> or <code>/run/docker.sock</code>. This gives containers powerful control over the Docker host. Enable only for trusted stacks.</p>
       <div class="actions actions-large">
         <button class="button button-secondary" type="submit" name="update_mode" value="save" data-loading-text="Saving...">Save</button>
         <button class="button button-primary" type="submit" name="update_mode" value="recreate" data-loading-text="Updating..." data-confirm-action="Save and recreate stack {{.Stack.Name}}? This writes the compose file, runs docker compose down, and force recreates services.">Save and recreate</button>

@@ -32,7 +32,12 @@
         <input type="checkbox" name="external_bind_mounts_allowed" {{if .StackForm.ExternalBindMountsAllowed}}checked{{end}}>
         <span>allow external bind mounts</span>
       </label>
-      <p class="form-hint">External bind mounts allow paths outside the stack folder, such as <code>/etc/localtime</code> or media folders. Docker socket mounts and host-level options remain blocked.</p>
+      <p class="form-hint">External bind mounts allow paths outside the stack folder, such as <code>/etc/localtime</code> or media folders. Host-level options remain blocked.</p>
+      <label class="switch-label">
+        <input type="checkbox" name="docker_socket_mounts_allowed" {{if .StackForm.DockerSocketMountsAllowed}}checked{{end}}>
+        <span>allow Docker socket mount</span>
+      </label>
+      <p class="form-hint">Allows exact socket file mounts for <code>/var/run/docker.sock</code> or <code>/run/docker.sock</code>. This gives containers powerful control over the Docker host. Enable only for trusted stacks.</p>
       <div class="actions actions-large">
         <button class="button button-primary" type="submit" data-loading-text="Creating...">Create</button>
         <a class="button button-ghost" href="{{base "/"}}">Cancel</a>

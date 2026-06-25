@@ -56,12 +56,6 @@ services:
     restart: unless-stopped
 ```
 
-Or use the included example:
-
-```bash
-docker compose -f docker-compose.example.yml up -d
-```
-
 Open `http://localhost:7070/`.
 
 For deployment options, image tags, Windows paths, private registries, reverse proxies, and self-update setup, see [Docker Deployment](docs/docker.md).

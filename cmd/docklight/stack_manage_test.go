@@ -84,6 +84,34 @@ func TestCreateStackDockerStartFailureRedirectsToStackDetail(t *testing.T) {
 	}
 }
 
+func TestCreateStackPersistsDockerSocketMountPermission(t *testing.T) {
+	root := t.TempDir()
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		return "ok", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "socket-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest\n    volumes:\n      - /var/run/docker.sock:/var/run/docker.sock")
+	values.Set("docker_socket_mounts_allowed", "on")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected create redirect, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var externalBinds, dockerSocketMounts int
+	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed FROM stacks WHERE name = 'socket-stack'`).Scan(&externalBinds, &dockerSocketMounts); err != nil {
+		t.Fatal(err)
+	}
+	if externalBinds != 0 || dockerSocketMounts != 1 {
+		t.Fatalf("expected only docker socket permission to be saved, external_binds=%d docker_socket_mounts=%d", externalBinds, dockerSocketMounts)
+	}
+}
+
 func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	root := t.TempDir()
 	stackDir := filepath.Join(root, "editable")
@@ -110,6 +138,7 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	values.Set("bind_folders", "config\ndata")
 	values.Set("recreate_folders", "on")
 	values.Set("external_bind_mounts_allowed", "on")
+	values.Set("docker_socket_mounts_allowed", "on")
 	values.Set("update_mode", "save")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -127,12 +156,12 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	if !strings.Contains(string(composeBytes), "nginx:1.28") {
 		t.Fatalf("compose file was not updated: %s", string(composeBytes))
 	}
-	var externalBinds int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed FROM stacks WHERE name = 'editable'`).Scan(&externalBinds); err != nil {
+	var externalBinds, dockerSocketMounts int
+	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed FROM stacks WHERE name = 'editable'`).Scan(&externalBinds, &dockerSocketMounts); err != nil {
 		t.Fatal(err)
 	}
-	if externalBinds != 1 {
-		t.Fatalf("expected external bind setting to be saved, got %d", externalBinds)
+	if externalBinds != 1 || dockerSocketMounts != 1 {
+		t.Fatalf("expected mount settings to be saved, external_binds=%d docker_socket_mounts=%d", externalBinds, dockerSocketMounts)
 	}
 	if _, err := os.Stat(filepath.Join(stackDir, "config")); err != nil {
 		t.Fatalf("expected new bind folder to be created: %v", err)

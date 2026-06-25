@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS stacks (
   relative_path TEXT NOT NULL,
   compose_file TEXT NOT NULL,
   external_bind_mounts_allowed INTEGER NOT NULL DEFAULT 0,
+  docker_socket_mounts_allowed INTEGER NOT NULL DEFAULT 0,
   ignored INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -48,6 +49,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 	}
 	for _, stmt := range []string{
 		`ALTER TABLE stacks ADD COLUMN external_bind_mounts_allowed INTEGER NOT NULL DEFAULT 0`,
+		`ALTER TABLE stacks ADD COLUMN docker_socket_mounts_allowed INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE stacks ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0`,
 	} {
 		if _, err := app.db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
@@ -90,12 +92,13 @@ CREATE TABLE stacks_new (
   relative_path TEXT NOT NULL,
   compose_file TEXT NOT NULL,
   external_bind_mounts_allowed INTEGER NOT NULL DEFAULT 0,
+  docker_socket_mounts_allowed INTEGER NOT NULL DEFAULT 0,
   ignored INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-INSERT INTO stacks_new (name, relative_path, compose_file, external_bind_mounts_allowed, ignored, created_at, updated_at)
-SELECT name, relative_path, compose_file, external_bind_mounts_allowed, ignored, created_at, updated_at FROM stacks;
+INSERT INTO stacks_new (name, relative_path, compose_file, external_bind_mounts_allowed, docker_socket_mounts_allowed, ignored, created_at, updated_at)
+SELECT name, relative_path, compose_file, external_bind_mounts_allowed, docker_socket_mounts_allowed, ignored, created_at, updated_at FROM stacks;
 DROP TABLE stacks;
 ALTER TABLE stacks_new RENAME TO stacks;
 `); err != nil {

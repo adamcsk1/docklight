@@ -24,8 +24,6 @@ services:
     restart: unless-stopped
 ```
 
-The repository also includes [`docker-compose.example.yml`](../docker-compose.example.yml), which adds optional registry credential and self-update mounts.
-
 ## Published Image
 
 Docklight images are published to GitHub Container Registry:
@@ -173,4 +171,9 @@ Docklight does not store container IDs or live Docker state. If the user changes
 - `Pull + force upgrade` runs `docker compose pull`, `docker compose down --remove-orphans`, and then `docker compose up -d --force-recreate`. This restarts all services and should be used when a guaranteed recreation is needed.
 - `Update Docklight` on the Config page starts a detached helper container that pulls and recreates only the running Docklight Compose service.
 
-`Update Docklight` requires Docklight itself to be started by Docker Compose with the Docker socket mounted and the Docklight compose project directory mounted into the container at the same absolute path used on the host. The example compose file includes this optional mount as a commented line.
+`Update Docklight` requires Docklight itself to be started by Docker Compose with the Docker socket mounted and the Docklight compose project directory mounted into the container at the same absolute path used on the host. Add a read-only bind mount for that project directory when you want to use this action:
+
+```yaml
+volumes:
+  - /absolute/host/path/to/docklight:/absolute/host/path/to/docklight:ro
+```

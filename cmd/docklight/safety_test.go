@@ -125,7 +125,7 @@ func TestRebuildDatabaseStartsFreshFromFilesystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
-INSERT INTO stacks (name, relative_path, compose_file, external_bind_mounts_allowed) VALUES ('web', 'old-web', 'compose.yml', 1);
+INSERT INTO stacks (name, relative_path, compose_file, external_bind_mounts_allowed, docker_socket_mounts_allowed) VALUES ('web', 'old-web', 'compose.yml', 1, 1);
 INSERT INTO activity_log (stack_name, action, status, output) VALUES ('old', 'test', 'success', 'old row');
 INSERT INTO app_settings (key, value) VALUES ('verbose_logging_enabled', 'true') ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'admin', '2099-01-01T00:00:00Z');
@@ -141,12 +141,12 @@ INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'adm
 	}
 
 	var relativePath string
-	var externalBindsAllowed int
-	if err := db.QueryRow(`SELECT relative_path, external_bind_mounts_allowed FROM stacks WHERE name = 'web'`).Scan(&relativePath, &externalBindsAllowed); err != nil {
+	var externalBindsAllowed, dockerSocketMountsAllowed int
+	if err := db.QueryRow(`SELECT relative_path, external_bind_mounts_allowed, docker_socket_mounts_allowed FROM stacks WHERE name = 'web'`).Scan(&relativePath, &externalBindsAllowed, &dockerSocketMountsAllowed); err != nil {
 		t.Fatal(err)
 	}
-	if relativePath != "web" || externalBindsAllowed != 0 {
-		t.Fatalf("expected fresh filesystem stack row, path=%q external_binds=%d", relativePath, externalBindsAllowed)
+	if relativePath != "web" || externalBindsAllowed != 0 || dockerSocketMountsAllowed != 0 {
+		t.Fatalf("expected fresh filesystem stack row, path=%q external_binds=%d docker_socket_mounts=%d", relativePath, externalBindsAllowed, dockerSocketMountsAllowed)
 	}
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM activity_log WHERE stack_name = 'old'`).Scan(&count); err != nil {
@@ -170,7 +170,7 @@ INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'adm
 	}
 }
 
-func TestRescanResetsExternalBindPermissionForResurrectedStack(t *testing.T) {
+func TestRescanResetsMountPermissionsForResurrectedStack(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCompose(t, filepath.Join(root, "web"))
 
@@ -183,19 +183,19 @@ func TestRescanResetsExternalBindPermissionForResurrectedStack(t *testing.T) {
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file, ignored, external_bind_mounts_allowed) VALUES ('web', 'old-web', 'compose.yml', 1, 1)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file, ignored, external_bind_mounts_allowed, docker_socket_mounts_allowed) VALUES ('web', 'old-web', 'compose.yml', 1, 1, 1)`); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := app.rescanStacks(); err != nil {
 		t.Fatal(err)
 	}
-	var allowed int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed FROM stacks WHERE name = 'web'`).Scan(&allowed); err != nil {
+	var externalBindsAllowed, dockerSocketMountsAllowed int
+	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed FROM stacks WHERE name = 'web'`).Scan(&externalBindsAllowed, &dockerSocketMountsAllowed); err != nil {
 		t.Fatal(err)
 	}
-	if allowed != 0 {
-		t.Fatalf("expected resurrected stack to reset external bind permission, got %d", allowed)
+	if externalBindsAllowed != 0 || dockerSocketMountsAllowed != 0 {
+		t.Fatalf("expected resurrected stack to reset mount permissions, external_binds=%d docker_socket_mounts=%d", externalBindsAllowed, dockerSocketMountsAllowed)
 	}
 }
 
