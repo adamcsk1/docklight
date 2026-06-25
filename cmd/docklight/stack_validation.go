@@ -48,9 +48,9 @@ func parseBindFolders(input string) ([]string, error) {
 	return folders, nil
 }
 
-func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, envFile string, allowExternalBinds, allowDockerSocketMounts bool) error {
+func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, envFile string, allowExternalBinds, allowDockerSocketMounts, allowHostPID bool) error {
 	if !composeNeedsInterpolation(composeYAML, envFile) {
-		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts)
+		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts, allowHostPID)
 	}
 	if err := app.ensureStackPathSafe(stackDir); err != nil {
 		return err
@@ -98,9 +98,9 @@ func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, en
 	}
 	resolved := strings.TrimSpace(output)
 	if resolved == "" {
-		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts)
+		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts, allowHostPID)
 	}
-	return validateResolvedComposeYAML(resolved, stackDir, allowExternalBinds, allowDockerSocketMounts)
+	return validateResolvedComposeYAML(resolved, stackDir, allowExternalBinds, allowDockerSocketMounts, allowHostPID)
 }
 
 func composeNeedsInterpolation(composeYAML, envFile string) bool {
@@ -108,26 +108,26 @@ func composeNeedsInterpolation(composeYAML, envFile string) bool {
 }
 
 func validateComposeYAML(input string) error {
-	return validateComposeYAMLWithExternalBinds(input, false, false)
+	return validateComposeYAMLWithExternalBinds(input, false, false, false)
 }
 
-func validateComposeYAMLWithExternalBinds(input string, allowExternalBinds, allowDockerSocketMounts bool) error {
+func validateComposeYAMLWithExternalBinds(input string, allowExternalBinds, allowDockerSocketMounts, allowHostPID bool) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(input), &root); err != nil {
 		return err
 	}
-	return validateComposeNode(&root, "", allowExternalBinds, allowDockerSocketMounts)
+	return validateComposeNode(&root, "", allowExternalBinds, allowDockerSocketMounts, allowHostPID)
 }
 
-func validateResolvedComposeYAML(input, stackDir string, allowExternalBinds, allowDockerSocketMounts bool) error {
+func validateResolvedComposeYAML(input, stackDir string, allowExternalBinds, allowDockerSocketMounts, allowHostPID bool) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(input), &root); err != nil {
 		return err
 	}
-	return validateComposeNode(&root, stackDir, allowExternalBinds, allowDockerSocketMounts)
+	return validateComposeNode(&root, stackDir, allowExternalBinds, allowDockerSocketMounts, allowHostPID)
 }
 
-func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds, allowDockerSocketMounts bool) error {
+func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds, allowDockerSocketMounts, allowHostPID bool) error {
 	if node == nil {
 		return nil
 	}
@@ -143,8 +143,15 @@ func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds, a
 				if yamlBool(value) {
 					return errors.New("compose yaml contains blocked host-level option: privileged")
 				}
-			case "network_mode", "pid", "ipc", "cgroup", "userns_mode":
+			case "network_mode", "ipc", "cgroup", "userns_mode":
 				if strings.EqualFold(strings.TrimSpace(value.Value), "host") {
+					return fmt.Errorf("compose yaml contains blocked host-level option: %s", key)
+				}
+			case "pid":
+				if strings.EqualFold(strings.TrimSpace(value.Value), "host") {
+					if allowHostPID {
+						continue
+					}
 					return fmt.Errorf("compose yaml contains blocked host-level option: %s", key)
 				}
 			case "cap_add", "devices", "security_opt":
@@ -154,14 +161,14 @@ func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds, a
 					return err
 				}
 			}
-			if err := validateComposeNode(value, stackDir, allowExternalBinds, allowDockerSocketMounts); err != nil {
+			if err := validateComposeNode(value, stackDir, allowExternalBinds, allowDockerSocketMounts, allowHostPID); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for _, child := range node.Content {
-		if err := validateComposeNode(child, stackDir, allowExternalBinds, allowDockerSocketMounts); err != nil {
+		if err := validateComposeNode(child, stackDir, allowExternalBinds, allowDockerSocketMounts, allowHostPID); err != nil {
 			return err
 		}
 	}

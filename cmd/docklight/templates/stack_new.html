@@ -38,6 +38,11 @@
         <span>allow Docker socket mount</span>
       </label>
       <p class="form-hint">Allows exact socket file mounts for <code>/var/run/docker.sock</code> or <code>/run/docker.sock</code>. This gives containers powerful control over the Docker host. Enable only for trusted stacks.</p>
+      <label class="switch-label">
+        <input type="checkbox" name="host_pid_allowed" {{if .StackForm.HostPIDAllowed}}checked{{end}}>
+        <span>allow host PID namespace</span>
+      </label>
+      <p class="form-hint">Allows <code>pid: host</code>. This exposes host process IDs to the container. Enable only for trusted stacks.</p>
       <div class="actions actions-large">
         <button class="button button-primary" type="submit" data-loading-text="Creating...">Create</button>
         <a class="button button-ghost" href="{{base "/"}}">Cancel</a>

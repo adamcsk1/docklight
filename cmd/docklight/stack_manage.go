@@ -45,7 +45,7 @@ func (app *App) createStack(w http.ResponseWriter, r *http.Request) {
 		app.render(w, r, "stack_new.html", PageData{Title: "New stack", Error: err.Error(), StackForm: form})
 		return
 	}
-	if err := app.validateComposeDefinition(name, stackDir, form.ComposeYAML, form.EnvFile, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed); err != nil {
+	if err := app.validateComposeDefinition(name, stackDir, form.ComposeYAML, form.EnvFile, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed, form.HostPIDAllowed); err != nil {
 		_ = os.RemoveAll(stackDir)
 		app.render(w, r, "stack_new.html", PageData{Title: "New stack", Error: err.Error(), StackForm: form})
 		return
@@ -66,13 +66,14 @@ func (app *App) createStack(w http.ResponseWriter, r *http.Request) {
 		app.renderStackCreateError(w, r, form, "stack files were created, but loading the stack failed: "+err.Error())
 		return
 	}
-	if err := app.saveStackMountSettings(stack.Name, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed); err != nil {
+	if err := app.saveStackMountSettings(stack.Name, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed, form.HostPIDAllowed); err != nil {
 		app.logActivity(name, "create stack", "failed", err.Error())
 		app.renderStackCreateError(w, r, form, "stack files were created, but saving stack settings failed: "+err.Error())
 		return
 	}
 	stack.ExternalBindMountsAllowed = form.ExternalBindMountsAllowed
 	stack.DockerSocketMountsAllowed = form.DockerSocketMountsAllowed
+	stack.HostPIDAllowed = form.HostPIDAllowed
 	unlock := app.lockStack(stack.Name)
 	defer unlock()
 	output, err := app.runCompose(stack, "up", "-d")
@@ -106,7 +107,7 @@ func (app *App) editStackPage(w http.ResponseWriter, r *http.Request) {
 		app.redirectWithError(w, r, "/stacks/"+name, err.Error())
 		return
 	}
-	app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, StackForm: StackForm{Name: stack.Name, ComposeYAML: strings.TrimRight(string(composeYAML), "\r\n"), EnvFile: strings.TrimRight(string(envFile), "\r\n"), ExternalBindMountsAllowed: stack.ExternalBindMountsAllowed, DockerSocketMountsAllowed: stack.DockerSocketMountsAllowed}})
+	app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, StackForm: StackForm{Name: stack.Name, ComposeYAML: strings.TrimRight(string(composeYAML), "\r\n"), EnvFile: strings.TrimRight(string(envFile), "\r\n"), ExternalBindMountsAllowed: stack.ExternalBindMountsAllowed, DockerSocketMountsAllowed: stack.DockerSocketMountsAllowed, HostPIDAllowed: stack.HostPIDAllowed}})
 }
 
 func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +138,7 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
 	}
-	if err := app.validateComposeDefinition(stack.Name, stack.AbsolutePath, form.ComposeYAML, form.EnvFile, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed); err != nil {
+	if err := app.validateComposeDefinition(stack.Name, stack.AbsolutePath, form.ComposeYAML, form.EnvFile, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed, form.HostPIDAllowed); err != nil {
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
 	}
@@ -150,12 +151,13 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
 	}
-	if err := app.saveStackMountSettings(stack.Name, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed); err != nil {
+	if err := app.saveStackMountSettings(stack.Name, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed, form.HostPIDAllowed); err != nil {
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
 	}
 	stack.ExternalBindMountsAllowed = form.ExternalBindMountsAllowed
 	stack.DockerSocketMountsAllowed = form.DockerSocketMountsAllowed
+	stack.HostPIDAllowed = form.HostPIDAllowed
 	if r.FormValue("update_mode") == "save" {
 		app.logActivity(name, "save stack", "success", "stack definition saved without recreate")
 		app.redirectWithMessage(w, r, "/stacks/"+name, "stack changes saved")
@@ -188,7 +190,7 @@ func (app *App) renderStackCreateError(w http.ResponseWriter, r *http.Request, f
 	app.render(w, r, "stack_new.html", PageData{Title: "New stack", Error: message, StackForm: form})
 }
 
-func (app *App) saveStackMountSettings(name string, externalBindsAllowed, dockerSocketMountsAllowed bool) error {
+func (app *App) saveStackMountSettings(name string, externalBindsAllowed, dockerSocketMountsAllowed, hostPIDAllowed bool) error {
 	externalBinds := 0
 	if externalBindsAllowed {
 		externalBinds = 1
@@ -197,7 +199,11 @@ func (app *App) saveStackMountSettings(name string, externalBindsAllowed, docker
 	if dockerSocketMountsAllowed {
 		dockerSocketMounts = 1
 	}
-	_, err := app.db.Exec(`UPDATE stacks SET external_bind_mounts_allowed = ?, docker_socket_mounts_allowed = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?`, externalBinds, dockerSocketMounts, name)
+	hostPID := 0
+	if hostPIDAllowed {
+		hostPID = 1
+	}
+	_, err := app.db.Exec(`UPDATE stacks SET external_bind_mounts_allowed = ?, docker_socket_mounts_allowed = ?, host_pid_allowed = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?`, externalBinds, dockerSocketMounts, hostPID, name)
 	return err
 }
 

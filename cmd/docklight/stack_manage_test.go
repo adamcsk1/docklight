@@ -103,12 +103,70 @@ func TestCreateStackPersistsDockerSocketMountPermission(t *testing.T) {
 		t.Fatalf("expected create redirect, code=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var externalBinds, dockerSocketMounts int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed FROM stacks WHERE name = 'socket-stack'`).Scan(&externalBinds, &dockerSocketMounts); err != nil {
+	var externalBinds, dockerSocketMounts, hostPID int
+	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = 'socket-stack'`).Scan(&externalBinds, &dockerSocketMounts, &hostPID); err != nil {
 		t.Fatal(err)
 	}
-	if externalBinds != 0 || dockerSocketMounts != 1 {
-		t.Fatalf("expected only docker socket permission to be saved, external_binds=%d docker_socket_mounts=%d", externalBinds, dockerSocketMounts)
+	if externalBinds != 0 || dockerSocketMounts != 1 || hostPID != 0 {
+		t.Fatalf("expected only docker socket permission to be saved, external_binds=%d docker_socket_mounts=%d host_pid=%d", externalBinds, dockerSocketMounts, hostPID)
+	}
+}
+
+func TestCreateStackPersistsHostPIDPermission(t *testing.T) {
+	root := t.TempDir()
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		return "ok", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "pid-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest\n    pid: host")
+	values.Set("host_pid_allowed", "on")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected create redirect, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	var hostPID int
+	if err := db.QueryRow(`SELECT host_pid_allowed FROM stacks WHERE name = 'pid-stack'`).Scan(&hostPID); err != nil {
+		t.Fatal(err)
+	}
+	if hostPID != 1 {
+		t.Fatalf("expected host PID permission to be saved, got %d", hostPID)
+	}
+}
+
+func TestCreateStackRejectsHostPIDByDefault(t *testing.T) {
+	root := t.TempDir()
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		t.Fatalf("runner should not be called when validation fails")
+		return "", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "pid-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest\n    pid: host")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "blocked host-level option: pid") {
+		t.Fatalf("expected validation error, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM stacks WHERE name = 'pid-stack'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected rejected stack not to be persisted, got count %d", count)
 	}
 }
 
@@ -139,6 +197,7 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	values.Set("recreate_folders", "on")
 	values.Set("external_bind_mounts_allowed", "on")
 	values.Set("docker_socket_mounts_allowed", "on")
+	values.Set("host_pid_allowed", "on")
 	values.Set("update_mode", "save")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -156,12 +215,12 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	if !strings.Contains(string(composeBytes), "nginx:1.28") {
 		t.Fatalf("compose file was not updated: %s", string(composeBytes))
 	}
-	var externalBinds, dockerSocketMounts int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed FROM stacks WHERE name = 'editable'`).Scan(&externalBinds, &dockerSocketMounts); err != nil {
+	var externalBinds, dockerSocketMounts, hostPID int
+	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = 'editable'`).Scan(&externalBinds, &dockerSocketMounts, &hostPID); err != nil {
 		t.Fatal(err)
 	}
-	if externalBinds != 1 || dockerSocketMounts != 1 {
-		t.Fatalf("expected mount settings to be saved, external_binds=%d docker_socket_mounts=%d", externalBinds, dockerSocketMounts)
+	if externalBinds != 1 || dockerSocketMounts != 1 || hostPID != 1 {
+		t.Fatalf("expected stack settings to be saved, external_binds=%d docker_socket_mounts=%d host_pid=%d", externalBinds, dockerSocketMounts, hostPID)
 	}
 	if _, err := os.Stat(filepath.Join(stackDir, "config")); err != nil {
 		t.Fatalf("expected new bind folder to be created: %v", err)

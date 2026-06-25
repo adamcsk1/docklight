@@ -59,9 +59,9 @@ INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:
 	if count != 0 {
 		t.Fatalf("expected update settings removed, got %d", count)
 	}
-	var externalBinds int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed FROM stacks WHERE name = 'web'`).Scan(&externalBinds); err != nil || externalBinds != 1 {
-		t.Fatalf("expected stack settings preserved, externalBinds=%d err=%v", externalBinds, err)
+	var externalBinds, dockerSocketMounts, hostPID int
+	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = 'web'`).Scan(&externalBinds, &dockerSocketMounts, &hostPID); err != nil || externalBinds != 1 || dockerSocketMounts != 0 || hostPID != 0 {
+		t.Fatalf("expected stack settings preserved with safe defaults, externalBinds=%d dockerSocketMounts=%d hostPID=%d err=%v", externalBinds, dockerSocketMounts, hostPID, err)
 	}
 }
 

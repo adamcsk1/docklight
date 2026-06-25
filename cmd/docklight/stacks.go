@@ -25,6 +25,7 @@ type Stack struct {
 	Protected                 bool
 	ExternalBindMountsAllowed bool
 	DockerSocketMountsAllowed bool
+	HostPIDAllowed            bool
 	Containers                []Container
 	ContainerCount            int
 }
@@ -78,7 +79,7 @@ func (app *App) rescanStacksWith(store stackStore) error {
 		found[name] = true
 		_, err := store.Exec(`
 INSERT INTO stacks (name, relative_path, compose_file, ignored) VALUES (?, ?, ?, 0)
-ON CONFLICT(name) DO UPDATE SET relative_path = excluded.relative_path, compose_file = excluded.compose_file, ignored = 0, external_bind_mounts_allowed = CASE WHEN stacks.ignored = 1 THEN 0 ELSE stacks.external_bind_mounts_allowed END, docker_socket_mounts_allowed = CASE WHEN stacks.ignored = 1 THEN 0 ELSE stacks.docker_socket_mounts_allowed END, updated_at = CURRENT_TIMESTAMP
+ON CONFLICT(name) DO UPDATE SET relative_path = excluded.relative_path, compose_file = excluded.compose_file, ignored = 0, external_bind_mounts_allowed = CASE WHEN stacks.ignored = 1 THEN 0 ELSE stacks.external_bind_mounts_allowed END, docker_socket_mounts_allowed = CASE WHEN stacks.ignored = 1 THEN 0 ELSE stacks.docker_socket_mounts_allowed END, host_pid_allowed = CASE WHEN stacks.ignored = 1 THEN 0 ELSE stacks.host_pid_allowed END, updated_at = CURRENT_TIMESTAMP
 `, name, rel, composeFile)
 		if err != nil {
 			return err
@@ -129,7 +130,7 @@ func sanitizeStackName(name string) string {
 }
 
 func (app *App) loadStacks(withLive bool) ([]Stack, error) {
-	rows, err := app.db.Query(`SELECT name, relative_path, compose_file, external_bind_mounts_allowed, docker_socket_mounts_allowed FROM stacks WHERE ignored = 0 ORDER BY name`)
+	rows, err := app.db.Query(`SELECT name, relative_path, compose_file, external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE ignored = 0 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -140,11 +141,13 @@ func (app *App) loadStacks(withLive bool) ([]Stack, error) {
 		var stack Stack
 		var externalBinds int
 		var dockerSocketMounts int
-		if err := rows.Scan(&stack.Name, &stack.RelativePath, &stack.ComposeFile, &externalBinds, &dockerSocketMounts); err != nil {
+		var hostPID int
+		if err := rows.Scan(&stack.Name, &stack.RelativePath, &stack.ComposeFile, &externalBinds, &dockerSocketMounts, &hostPID); err != nil {
 			return nil, err
 		}
 		stack.ExternalBindMountsAllowed = externalBinds == 1
 		stack.DockerSocketMountsAllowed = dockerSocketMounts == 1
+		stack.HostPIDAllowed = hostPID == 1
 		stack.Protected = app.protectedStackName(stack.Name)
 		stack.AbsolutePath = filepath.Join(app.cfg.StacksRoot, stack.RelativePath)
 		stack.Status = "unknown"
@@ -169,12 +172,14 @@ func (app *App) loadStack(name string, withLive bool) (Stack, error) {
 	var stack Stack
 	var externalBinds int
 	var dockerSocketMounts int
-	err := app.db.QueryRow(`SELECT name, relative_path, compose_file, external_bind_mounts_allowed, docker_socket_mounts_allowed FROM stacks WHERE name = ? AND ignored = 0`, name).Scan(&stack.Name, &stack.RelativePath, &stack.ComposeFile, &externalBinds, &dockerSocketMounts)
+	var hostPID int
+	err := app.db.QueryRow(`SELECT name, relative_path, compose_file, external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = ? AND ignored = 0`, name).Scan(&stack.Name, &stack.RelativePath, &stack.ComposeFile, &externalBinds, &dockerSocketMounts, &hostPID)
 	if err != nil {
 		return stack, err
 	}
 	stack.ExternalBindMountsAllowed = externalBinds == 1
 	stack.DockerSocketMountsAllowed = dockerSocketMounts == 1
+	stack.HostPIDAllowed = hostPID == 1
 	stack.Protected = app.protectedStackName(stack.Name)
 	stack.AbsolutePath = filepath.Join(app.cfg.StacksRoot, stack.RelativePath)
 	stack.Status = "unknown"
