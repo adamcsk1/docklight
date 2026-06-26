@@ -59,7 +59,7 @@ func pathEscapesRoot(rel string) bool {
 	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel)
 }
 
-func (app *App) writeStackFiles(name, composeYAML, envFile string, folders []string) error {
+func (app *App) writeStackFiles(name, composeYAML, envFile string, folders []string, managedFiles []managedFileWrite, settings StackManagedSettings) error {
 	stackDir, err := app.safeStackPath(name)
 	if err != nil {
 		return err
@@ -76,14 +76,23 @@ func (app *App) writeStackFiles(name, composeYAML, envFile string, folders []str
 			return err
 		}
 	}
+	if err := validateManagedFileParents(stackDir, folders, managedFiles); err != nil {
+		return err
+	}
 	composePath := filepath.Join(stackDir, "docker-compose.yml")
 	if err := os.WriteFile(composePath, []byte(composeYAML+"\n"), 0o644); err != nil {
 		return err
 	}
-	return writeStackEnvFile(stackDir, envFile)
+	if err := writeStackEnvFile(stackDir, envFile); err != nil {
+		return err
+	}
+	if err := writeManagedFiles(stackDir, folders, managedFiles); err != nil {
+		return err
+	}
+	return writeManagedStackConfig(stackDir, folders, managedFiles, settings)
 }
 
-func (app *App) updateStackFiles(stack Stack, composeYAML, envFile string, folders []string, recreateFolders bool) error {
+func (app *App) updateStackFiles(stack Stack, composeYAML, envFile string, folders []string, managedFiles []managedFileWrite, settings StackManagedSettings) error {
 	if err := app.ensureStackPathSafe(stack.AbsolutePath); err != nil {
 		return err
 	}
@@ -96,19 +105,23 @@ func (app *App) updateStackFiles(stack Stack, composeYAML, envFile string, folde
 		if err := app.ensureStackPathSafe(folderPath); err != nil {
 			return err
 		}
-		if recreateFolders {
-			if err := os.RemoveAll(folderPath); err != nil {
-				return err
-			}
-		}
 		if err := os.MkdirAll(folderPath, 0o755); err != nil {
 			return err
 		}
 	}
+	if err := validateManagedFileParents(stack.AbsolutePath, folders, managedFiles); err != nil {
+		return err
+	}
 	if err := os.WriteFile(composePath, []byte(composeYAML+"\n"), 0o644); err != nil {
 		return err
 	}
-	return writeStackEnvFile(stack.AbsolutePath, envFile)
+	if err := writeStackEnvFile(stack.AbsolutePath, envFile); err != nil {
+		return err
+	}
+	if err := writeManagedFiles(stack.AbsolutePath, folders, managedFiles); err != nil {
+		return err
+	}
+	return writeManagedStackConfig(stack.AbsolutePath, folders, managedFiles, settings)
 }
 
 func writeStackEnvFile(stackDir, envFile string) error {

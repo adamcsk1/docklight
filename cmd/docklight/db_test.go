@@ -10,6 +10,8 @@ import (
 )
 
 func TestMigrationRemovesUpdateMetadata(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -25,22 +27,24 @@ CREATE TABLE stacks (
   update_checked_at TEXT NOT NULL DEFAULT '',
   update_fingerprint TEXT NOT NULL DEFAULT '',
   external_bind_mounts_allowed INTEGER NOT NULL DEFAULT 0,
+  docker_socket_mounts_allowed INTEGER NOT NULL DEFAULT 0,
+  host_pid_allowed INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE image_updates (image_ref TEXT PRIMARY KEY, image_id TEXT NOT NULL);
-INSERT INTO stacks (name, relative_path, compose_file, auto_update_enabled, update_status, external_bind_mounts_allowed) VALUES ('web', 'web', 'compose.yml', 1, 'available', 1);
+INSERT INTO stacks (name, relative_path, compose_file, auto_update_enabled, update_status, external_bind_mounts_allowed, docker_socket_mounts_allowed) VALUES ('web', 'web', 'compose.yml', 1, 'available', 1, 1);
 INSERT INTO app_settings (key, value) VALUES ('update_check_interval', '1h'), ('auto_update_interval', '6h');
 INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:old');
 `); err != nil {
 		t.Fatal(err)
 	}
-	app := &App{db: db}
+	app := &App{cfg: Config{StacksRoot: root}, db: db}
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}
-	for _, column := range []string{"auto_update_enabled", "update_status", "update_checked_at", "update_fingerprint"} {
+	for _, column := range []string{"auto_update_enabled", "update_status", "update_checked_at", "update_fingerprint", "external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed"} {
 		exists, err := app.tableHasColumn("stacks", column)
 		if err != nil {
 			t.Fatal(err)
@@ -59,9 +63,42 @@ INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:
 	if count != 0 {
 		t.Fatalf("expected update settings removed, got %d", count)
 	}
-	var externalBinds, dockerSocketMounts, hostPID int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = 'web'`).Scan(&externalBinds, &dockerSocketMounts, &hostPID); err != nil || externalBinds != 1 || dockerSocketMounts != 0 || hostPID != 0 {
-		t.Fatalf("expected stack settings preserved with safe defaults, externalBinds=%d dockerSocketMounts=%d hostPID=%d err=%v", externalBinds, dockerSocketMounts, hostPID, err)
+	managedConfig, err := app.loadManagedStackConfig(filepath.Join(root, "web"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.HostPIDAllowed {
+		t.Fatalf("expected stack settings migrated to config: %#v", managedConfig.Settings)
+	}
+}
+
+func TestMigrationRejectsUnsafeStackSettingPath(t *testing.T) {
+	root := t.TempDir()
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+CREATE TABLE stacks (
+  name TEXT PRIMARY KEY,
+  relative_path TEXT NOT NULL,
+  compose_file TEXT NOT NULL,
+  external_bind_mounts_allowed INTEGER NOT NULL DEFAULT 0,
+  docker_socket_mounts_allowed INTEGER NOT NULL DEFAULT 0,
+  host_pid_allowed INTEGER NOT NULL DEFAULT 0,
+  ignored INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO stacks (name, relative_path, compose_file, external_bind_mounts_allowed) VALUES ('unsafe', '../outside', 'compose.yml', 1);
+`); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{StacksRoot: root}, db: db}
+	if err := app.initDB(); err == nil || !strings.Contains(err.Error(), "outside stacks root") {
+		t.Fatalf("expected unsafe migration path to fail, got %v", err)
 	}
 }
 

@@ -700,6 +700,32 @@ textarea {
   min-height: var(--compose-textarea-min-height);
 }
 
+.managed-files {
+  display: grid;
+  gap: var(--space-3);
+
+  & h3 {
+    margin: 0 0 var(--space-2);
+    color: var(--color-muted);
+    font-family: var(--font-family);
+    font-size: var(--font-size-md);
+    letter-spacing: var(--letter-ui);
+    text-transform: uppercase;
+  }
+}
+
+.managed-file-row {
+  display: grid;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  border: var(--line-width) solid var(--color-line);
+  background: color-mix(in srgb, var(--color-surface-2) 65%, transparent);
+}
+
+.managed-file-row textarea[name="managed_file_content"] {
+  min-height: 8rem;
+}
+
 input[type="checkbox"] {
   width: var(--checkbox-size);
   height: var(--checkbox-size);

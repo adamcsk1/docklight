@@ -3,6 +3,17 @@ document.addEventListener("click", (event) => {
   if (!(target instanceof Element)) return;
 
   const toggle = target.closest(".menu-toggle");
+  if (target.closest("[data-managed-file-add]")) {
+    addManagedFileRow(target);
+    return;
+  }
+
+  const removeManagedFile = target.closest("[data-managed-file-remove]");
+  if (removeManagedFile) {
+    removeManagedFile.closest(".managed-file-row")?.remove();
+    return;
+  }
+
   if (!(toggle instanceof HTMLButtonElement)) return;
 
   const menuID = toggle.getAttribute("aria-controls");
@@ -13,6 +24,15 @@ document.addEventListener("click", (event) => {
   toggle.setAttribute("aria-expanded", String(!expanded));
   menu.classList.toggle("is-open", !expanded);
 });
+
+function addManagedFileRow(target) {
+  const form = target.closest("form");
+  const list = form?.querySelector("[data-managed-file-list]");
+  const template = form?.querySelector("template[data-managed-file-template]");
+  if (!(list instanceof HTMLElement) || !(template instanceof HTMLTemplateElement)) return;
+
+  list.append(template.content.cloneNode(true));
+}
 
 document.addEventListener("change", (event) => {
   const target = event.target;

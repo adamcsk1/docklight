@@ -43,6 +43,22 @@ func TestParseBindFoldersStaysRelative(t *testing.T) {
 	}
 }
 
+func TestParseManagedFilesStaysRelative(t *testing.T) {
+	files, err := parseManagedFiles([]ManagedFileForm{{Path: "test.conf", Content: "root"}, {Path: "data/file.conf", Content: "child"}, {Path: "test.conf", Content: "duplicate"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != 2 || files[0].Path != "test.conf" || files[1].Path != "data/file.conf" {
+		t.Fatalf("unexpected managed files: %#v", files)
+	}
+
+	for _, value := range []string{"../test.conf", "/test.conf", `C:\test.conf`, `data\file.conf`, stackManagedConfigFile} {
+		if _, err := parseManagedFiles([]ManagedFileForm{{Path: value}}); err == nil {
+			t.Fatalf("expected %q to be rejected", value)
+		}
+	}
+}
+
 func TestEnsureStackPathSafe(t *testing.T) {
 	root := t.TempDir()
 	app := &App{cfg: Config{StacksRoot: root}}
@@ -125,7 +141,7 @@ func TestRebuildDatabaseStartsFreshFromFilesystem(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
-INSERT INTO stacks (name, relative_path, compose_file, external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed) VALUES ('web', 'old-web', 'compose.yml', 1, 1, 1);
+INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'old-web', 'compose.yml');
 INSERT INTO activity_log (stack_name, action, status, output) VALUES ('old', 'test', 'success', 'old row');
 INSERT INTO app_settings (key, value) VALUES ('verbose_logging_enabled', 'true') ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'admin', '2099-01-01T00:00:00Z');
@@ -141,12 +157,18 @@ INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'adm
 	}
 
 	var relativePath string
-	var externalBindsAllowed, dockerSocketMountsAllowed, hostPIDAllowed int
-	if err := db.QueryRow(`SELECT relative_path, external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = 'web'`).Scan(&relativePath, &externalBindsAllowed, &dockerSocketMountsAllowed, &hostPIDAllowed); err != nil {
+	if err := db.QueryRow(`SELECT relative_path FROM stacks WHERE name = 'web'`).Scan(&relativePath); err != nil {
 		t.Fatal(err)
 	}
-	if relativePath != "web" || externalBindsAllowed != 0 || dockerSocketMountsAllowed != 0 || hostPIDAllowed != 0 {
-		t.Fatalf("expected fresh filesystem stack row, path=%q external_binds=%d docker_socket_mounts=%d host_pid=%d", relativePath, externalBindsAllowed, dockerSocketMountsAllowed, hostPIDAllowed)
+	if relativePath != "web" {
+		t.Fatalf("expected fresh filesystem stack row, path=%q", relativePath)
+	}
+	stack, err := app.loadStack("web", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.HostPIDAllowed {
+		t.Fatalf("expected fresh stack settings to default false: %#v", stack)
 	}
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM activity_log WHERE stack_name = 'old'`).Scan(&count); err != nil {
@@ -170,9 +192,12 @@ INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'adm
 	}
 }
 
-func TestRescanResetsMountPermissionsForResurrectedStack(t *testing.T) {
+func TestRescanLoadsMountPermissionsFromConfig(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCompose(t, filepath.Join(root, "web"))
+	if err := writeStackManagedConfig(filepath.Join(root, "web"), StackManagedConfig{Settings: StackManagedSettings{ExternalBindMountsAllowed: true, DockerSocketMountsAllowed: true}}); err != nil {
+		t.Fatal(err)
+	}
 
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -183,19 +208,19 @@ func TestRescanResetsMountPermissionsForResurrectedStack(t *testing.T) {
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file, ignored, external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed) VALUES ('web', 'old-web', 'compose.yml', 1, 1, 1, 1)`); err != nil {
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file, ignored) VALUES ('web', 'old-web', 'compose.yml', 1)`); err != nil {
 		t.Fatal(err)
 	}
 
 	if err := app.rescanStacks(); err != nil {
 		t.Fatal(err)
 	}
-	var externalBindsAllowed, dockerSocketMountsAllowed, hostPIDAllowed int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = 'web'`).Scan(&externalBindsAllowed, &dockerSocketMountsAllowed, &hostPIDAllowed); err != nil {
+	stack, err := app.loadStack("web", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if externalBindsAllowed != 0 || dockerSocketMountsAllowed != 0 || hostPIDAllowed != 0 {
-		t.Fatalf("expected resurrected stack to reset safety permissions, external_binds=%d docker_socket_mounts=%d host_pid=%d", externalBindsAllowed, dockerSocketMountsAllowed, hostPIDAllowed)
+	if !stack.ExternalBindMountsAllowed || !stack.DockerSocketMountsAllowed || stack.HostPIDAllowed {
+		t.Fatalf("expected stack settings loaded from config: %#v", stack)
 	}
 }
 

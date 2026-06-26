@@ -84,9 +84,9 @@ func TestCreateStackDockerStartFailureRedirectsToStackDetail(t *testing.T) {
 	}
 }
 
-func TestCreateStackPersistsDockerSocketMountPermission(t *testing.T) {
+func TestCreateStackPersistsDockerSocketMountPermissionInConfig(t *testing.T) {
 	root := t.TempDir()
-	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
 	app.runner = func(dir, name string, args ...string) (string, error) {
 		return "ok", nil
 	}
@@ -103,18 +103,18 @@ func TestCreateStackPersistsDockerSocketMountPermission(t *testing.T) {
 		t.Fatalf("expected create redirect, code=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var externalBinds, dockerSocketMounts, hostPID int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = 'socket-stack'`).Scan(&externalBinds, &dockerSocketMounts, &hostPID); err != nil {
+	managedConfig, err := app.loadManagedStackConfig(filepath.Join(root, "socket-stack"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if externalBinds != 0 || dockerSocketMounts != 1 || hostPID != 0 {
-		t.Fatalf("expected only docker socket permission to be saved, external_binds=%d docker_socket_mounts=%d host_pid=%d", externalBinds, dockerSocketMounts, hostPID)
+	if managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.HostPIDAllowed {
+		t.Fatalf("expected only docker socket permission in managed config: %#v", managedConfig.Settings)
 	}
 }
 
-func TestCreateStackPersistsHostPIDPermission(t *testing.T) {
+func TestCreateStackPersistsHostPIDPermissionInConfig(t *testing.T) {
 	root := t.TempDir()
-	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
 	app.runner = func(dir, name string, args ...string) (string, error) {
 		return "ok", nil
 	}
@@ -131,12 +131,85 @@ func TestCreateStackPersistsHostPIDPermission(t *testing.T) {
 		t.Fatalf("expected create redirect, code=%d body=%s", rec.Code, rec.Body.String())
 	}
 
-	var hostPID int
-	if err := db.QueryRow(`SELECT host_pid_allowed FROM stacks WHERE name = 'pid-stack'`).Scan(&hostPID); err != nil {
+	managedConfig, err := app.loadManagedStackConfig(filepath.Join(root, "pid-stack"))
+	if err != nil {
 		t.Fatal(err)
 	}
-	if hostPID != 1 {
-		t.Fatalf("expected host PID permission to be saved, got %d", hostPID)
+	if !managedConfig.Settings.HostPIDAllowed {
+		t.Fatalf("expected host PID permission in managed config: %#v", managedConfig.Settings)
+	}
+}
+
+func TestCreateStackWritesManagedFiles(t *testing.T) {
+	root := t.TempDir()
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		return "ok", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "managed-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest")
+	values.Set("bind_folders", "data\ndata/subfolder")
+	values.Add("managed_file_path", "test.conf")
+	values.Add("managed_file_content", "root=true\n")
+	values.Add("managed_file_path", "data/file.conf")
+	values.Add("managed_file_content", "child=true\n")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected create redirect, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	stackDir := filepath.Join(root, "managed-stack")
+	if content, err := os.ReadFile(filepath.Join(stackDir, "test.conf")); err != nil || string(content) != "root=true\n" {
+		t.Fatalf("expected managed root file, content=%q err=%v", string(content), err)
+	}
+	if content, err := os.ReadFile(filepath.Join(stackDir, "data", "file.conf")); err != nil || string(content) != "child=true\n" {
+		t.Fatalf("expected managed nested file, content=%q err=%v", string(content), err)
+	}
+	if _, err := os.Stat(filepath.Join(stackDir, "data", "subfolder")); err != nil {
+		t.Fatalf("expected managed nested folder: %v", err)
+	}
+	managedConfig, err := os.ReadFile(filepath.Join(stackDir, stackManagedConfigFile))
+	if err != nil || !strings.Contains(string(managedConfig), "data/file.conf") {
+		t.Fatalf("expected managed config to list data/file.conf, content=%s err=%v", string(managedConfig), err)
+	}
+}
+
+func TestCreateStackRejectsManagedFileMissingParent(t *testing.T) {
+	root := t.TempDir()
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		t.Fatalf("runner should not be called when managed file validation fails")
+		return "", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "managed-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest")
+	values.Add("managed_file_path", "missing/file.conf")
+	values.Add("managed_file_content", "child=true\n")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "managed file parent folder does not exist: missing") {
+		t.Fatalf("expected missing parent error, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM stacks WHERE name = 'managed-stack'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected rejected managed stack not to be persisted, got count %d", count)
+	}
+	if _, err := os.Stat(filepath.Join(root, "managed-stack", "docker-compose.yml")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected rejected managed stack not to write compose file, stat err=%v", err)
 	}
 }
 
@@ -194,7 +267,6 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	values := url.Values{}
 	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:1.28\n    volumes:\n      - /etc/localtime:/etc/localtime:ro")
 	values.Set("bind_folders", "config\ndata")
-	values.Set("recreate_folders", "on")
 	values.Set("external_bind_mounts_allowed", "on")
 	values.Set("docker_socket_mounts_allowed", "on")
 	values.Set("host_pid_allowed", "on")
@@ -215,12 +287,12 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	if !strings.Contains(string(composeBytes), "nginx:1.28") {
 		t.Fatalf("compose file was not updated: %s", string(composeBytes))
 	}
-	var externalBinds, dockerSocketMounts, hostPID int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = 'editable'`).Scan(&externalBinds, &dockerSocketMounts, &hostPID); err != nil {
+	managedConfig, err := app.loadManagedStackConfig(stackDir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if externalBinds != 1 || dockerSocketMounts != 1 || hostPID != 1 {
-		t.Fatalf("expected stack settings to be saved, external_binds=%d docker_socket_mounts=%d host_pid=%d", externalBinds, dockerSocketMounts, hostPID)
+	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || !managedConfig.Settings.HostPIDAllowed {
+		t.Fatalf("expected stack settings in managed config: %#v", managedConfig.Settings)
 	}
 	if _, err := os.Stat(filepath.Join(stackDir, "config")); err != nil {
 		t.Fatalf("expected new bind folder to be created: %v", err)
@@ -230,7 +302,7 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	}
 }
 
-func TestEditStackRecreateFoldersRemovesListedFolderContents(t *testing.T) {
+func TestEditStackPreservesListedFolderContents(t *testing.T) {
 	root := t.TempDir()
 	stackDir := filepath.Join(root, "editable")
 	mustWriteCompose(t, stackDir)
@@ -251,7 +323,6 @@ func TestEditStackRecreateFoldersRemovesListedFolderContents(t *testing.T) {
 	values := url.Values{}
 	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:1.27")
 	values.Set("bind_folders", "data")
-	values.Set("recreate_folders", "on")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetPathValue("name", "editable")
@@ -261,18 +332,53 @@ func TestEditStackRecreateFoldersRemovesListedFolderContents(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected redirect, got %d", rec.Code)
 	}
-	if _, err := os.Stat(filepath.Join(stackDir, "data")); err != nil {
-		t.Fatalf("expected recreated folder to exist: %v", err)
+	if _, err := os.Stat(filepath.Join(stackDir, "data", "old.txt")); err != nil {
+		t.Fatalf("expected existing listed folder contents to be preserved: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(stackDir, "data", "old.txt")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected old file to be removed when recreate is true, stat error: %v", err)
+}
+
+func TestEditStackRejectsManagedFileMissingParentBeforeWritingCompose(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "editable")
+	mustWriteCompose(t, stackDir)
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('editable', 'editable', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(filepath.Join(stackDir, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	values := url.Values{}
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:changed")
+	values.Add("managed_file_path", "missing/file.conf")
+	values.Add("managed_file_content", "child=true\n")
+	values.Set("update_mode", "save")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "editable")
+	rec := httptest.NewRecorder()
+	app.updateStack(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "managed file parent folder does not exist: missing") {
+		t.Fatalf("expected missing parent error, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	current, err := os.ReadFile(filepath.Join(stackDir, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != string(original) {
+		t.Fatalf("expected compose file to remain unchanged, got %q", string(current))
 	}
 }
 
 func TestStackEnvFilePersistence(t *testing.T) {
 	root := t.TempDir()
 	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
-	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx:${TAG}", "TAG=1.27", nil); err != nil {
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx:${TAG}", "TAG=1.27", nil, nil, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(root, "web", ".env"))
@@ -283,7 +389,7 @@ func TestStackEnvFilePersistence(t *testing.T) {
 		t.Fatalf("unexpected env file content %q", string(content))
 	}
 	stack := Stack{Name: "web", AbsolutePath: filepath.Join(root, "web"), ComposeFile: "docker-compose.yml"}
-	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx", "", nil, false); err != nil {
+	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx", "", nil, nil, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "web", ".env")); !errors.Is(err, os.ErrNotExist) {
@@ -319,12 +425,23 @@ func TestCreateStackValidationAndFileHelpers(t *testing.T) {
 		})
 	}
 
-	if err := app.writeStackFiles("files", "services:\n  app:\n    image: nginx", "", []string{"data", "config/logs"}); err != nil {
+	if err := app.writeStackFiles("files", "services:\n  app:\n    image: nginx", "", []string{"data", "data/subfolder"}, []managedFileWrite{{Path: "test.conf", Content: "root=true\n"}, {Path: "data/file.conf", Content: "child=true\n"}}, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	stack := Stack{Name: "files", AbsolutePath: filepath.Join(root, "files"), ComposeFile: "docker-compose.yml"}
-	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx:1.27", "", []string{"data"}, true); err != nil {
+	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx:1.27", "", []string{"data"}, []managedFileWrite{{Path: "test.conf", Content: "root=false\n"}}, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "files", "test.conf"))
+	if err != nil || string(content) != "root=false\n" {
+		t.Fatalf("expected managed test.conf to be updated, content=%q err=%v", string(content), err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "files", "data", "subfolder")); err != nil {
+		t.Fatalf("expected nested managed folder: %v", err)
+	}
+	managedConfig, err := os.ReadFile(filepath.Join(root, "files", stackManagedConfigFile))
+	if err != nil || !strings.Contains(string(managedConfig), "test.conf") {
+		t.Fatalf("expected managed config with test.conf, content=%s err=%v", string(managedConfig), err)
 	}
 	if err := ensurePathInside(filepath.Join(root, "files"), filepath.Join(root, "files", "docker-compose.yml")); err != nil {
 		t.Fatal(err)

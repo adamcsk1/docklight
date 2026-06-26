@@ -15,6 +15,7 @@ The goal is to keep common stack-based workflows straightforward: see what is ru
 - Show live Docker Compose container state.
 - Start, stop, restart, rebuild, upgrade, and down compose stacks.
 - Store stack preferences, sessions, and activity logs in SQLite.
+- Create and edit stack-local managed folders, files, and stack safety options tracked in `.docklight.config.yml`.
 - Configurable activity retention, with a 30 day default.
 - Optional verbose troubleshooting logs in the data folder.
 - One admin user from environment variables.
@@ -89,6 +90,8 @@ SQLite stores durable app data only:
 Activity retention defaults to 30 days and can be changed on the Config page. The Activity page can download all retained activity as CSV.
 
 Verbose logging is off by default. When enabled on the Config page, Docklight writes timestamped troubleshooting logs to the data folder.
+
+When Docklight creates or edits extra stack-local folders, files, or stack safety checkboxes, it stores those stack-specific settings in `.docklight.config.yml` inside that stack folder. Only files listed there are editable in Docklight; manual files in old or hand-created stacks are left untouched unless added through the stack edit UI.
 
 It does not store container IDs or live Docker state. If the user changes containers with the Docker CLI, Docklight reads the live state again.
 

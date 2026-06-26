@@ -10,10 +10,15 @@ type StackForm struct {
 	ComposeYAML               string
 	EnvFile                   string
 	BindFolders               string
-	RecreateFolders           bool
+	ManagedFiles              []ManagedFileForm
 	ExternalBindMountsAllowed bool
 	DockerSocketMountsAllowed bool
 	HostPIDAllowed            bool
+}
+
+type ManagedFileForm struct {
+	Path    string
+	Content string
 }
 
 func newStackFormFromRequest(r *http.Request) StackForm {
@@ -22,6 +27,7 @@ func newStackFormFromRequest(r *http.Request) StackForm {
 		ComposeYAML:               strings.TrimSpace(r.FormValue("compose_yaml")),
 		EnvFile:                   strings.TrimRight(r.FormValue("env_file"), "\r\n"),
 		BindFolders:               strings.TrimSpace(r.FormValue("bind_folders")),
+		ManagedFiles:              managedFilesFromRequest(r),
 		ExternalBindMountsAllowed: r.FormValue("external_bind_mounts_allowed") == "on",
 		DockerSocketMountsAllowed: r.FormValue("docker_socket_mounts_allowed") == "on",
 		HostPIDAllowed:            r.FormValue("host_pid_allowed") == "on",
@@ -34,9 +40,26 @@ func updateStackFormFromRequest(r *http.Request, name string) StackForm {
 		ComposeYAML:               strings.TrimSpace(r.FormValue("compose_yaml")),
 		EnvFile:                   strings.TrimRight(r.FormValue("env_file"), "\r\n"),
 		BindFolders:               strings.TrimSpace(r.FormValue("bind_folders")),
-		RecreateFolders:           r.FormValue("update_mode") != "save" && r.FormValue("recreate_folders") == "on",
+		ManagedFiles:              managedFilesFromRequest(r),
 		ExternalBindMountsAllowed: r.FormValue("external_bind_mounts_allowed") == "on",
 		DockerSocketMountsAllowed: r.FormValue("docker_socket_mounts_allowed") == "on",
 		HostPIDAllowed:            r.FormValue("host_pid_allowed") == "on",
 	}
+}
+
+func managedFilesFromRequest(r *http.Request) []ManagedFileForm {
+	paths := r.Form["managed_file_path"]
+	contents := r.Form["managed_file_content"]
+	files := make([]ManagedFileForm, 0, len(paths))
+	for i, rawPath := range paths {
+		file := ManagedFileForm{Path: strings.TrimSpace(rawPath)}
+		if i < len(contents) {
+			file.Content = contents[i]
+		}
+		if file.Path == "" && strings.TrimSpace(file.Content) == "" {
+			continue
+		}
+		files = append(files, file)
+	}
+	return files
 }

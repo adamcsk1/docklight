@@ -299,29 +299,29 @@ func TestStackUpdateAndDeleteRejectUnsafeDatabasePaths(t *testing.T) {
 func TestStackSafetyPermissionsDefaultFalse(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCompose(t, filepath.Join(root, "web"))
-	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
 	if err := app.rescanStacks(); err != nil {
 		t.Fatal(err)
 	}
-	var externalBinds, dockerSocketMounts, hostPID int
-	if err := db.QueryRow(`SELECT external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE name = 'web'`).Scan(&externalBinds, &dockerSocketMounts, &hostPID); err != nil {
+	stack, err := app.loadStack("web", false)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if externalBinds != 0 {
-		t.Fatalf("expected external bind mounts to default false, got %d", externalBinds)
+	if stack.ExternalBindMountsAllowed {
+		t.Fatal("expected external bind mounts to default false")
 	}
-	if dockerSocketMounts != 0 {
-		t.Fatalf("expected docker socket mounts to default false, got %d", dockerSocketMounts)
+	if stack.DockerSocketMountsAllowed {
+		t.Fatal("expected docker socket mounts to default false")
 	}
-	if hostPID != 0 {
-		t.Fatalf("expected host PID namespace to default false, got %d", hostPID)
+	if stack.HostPIDAllowed {
+		t.Fatal("expected host PID namespace to default false")
 	}
 }
 
 func TestStackFileHelpersRejectUnsafePaths(t *testing.T) {
 	root := t.TempDir()
 	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret"}}
-	if err := app.writeStackFiles("Bad Name", "services:\n  app:\n    image: nginx", "", nil); err == nil {
+	if err := app.writeStackFiles("Bad Name", "services:\n  app:\n    image: nginx", "", nil, nil, StackManagedSettings{}); err == nil {
 		t.Fatal("expected invalid stack name to be rejected before writing files")
 	}
 	stackDir := filepath.Join(root, "web")
@@ -329,7 +329,7 @@ func TestStackFileHelpersRejectUnsafePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	unsafe := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "../compose.yml"}
-	if err := app.updateStackFiles(unsafe, "services:\n  app:\n    image: nginx", "", nil, false); err == nil {
+	if err := app.updateStackFiles(unsafe, "services:\n  app:\n    image: nginx", "", nil, nil, StackManagedSettings{}); err == nil {
 		t.Fatal("expected unsafe compose path to be rejected")
 	}
 }
