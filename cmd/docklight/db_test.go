@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -99,6 +100,48 @@ INSERT INTO stacks (name, relative_path, compose_file, external_bind_mounts_allo
 	app := &App{cfg: Config{StacksRoot: root}, db: db}
 	if err := app.initDB(); err == nil || !strings.Contains(err.Error(), "outside stacks root") {
 		t.Fatalf("expected unsafe migration path to fail, got %v", err)
+	}
+}
+
+func TestMigrationRewritesInvalidManagedConfig(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	mustWriteCompose(t, stackDir)
+	if err := os.WriteFile(filepath.Join(stackDir, stackManagedConfigFile), []byte("folder data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`
+CREATE TABLE stacks (
+  name TEXT PRIMARY KEY,
+  relative_path TEXT NOT NULL,
+  compose_file TEXT NOT NULL,
+  external_bind_mounts_allowed INTEGER NOT NULL DEFAULT 0,
+  docker_socket_mounts_allowed INTEGER NOT NULL DEFAULT 0,
+  host_pid_allowed INTEGER NOT NULL DEFAULT 0,
+  ignored INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+INSERT INTO stacks (name, relative_path, compose_file, docker_socket_mounts_allowed) VALUES ('web', 'web', 'compose.yml', 1);
+`); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{StacksRoot: root}, db: db}
+	if err := app.initDB(); err != nil {
+		t.Fatal(err)
+	}
+	managedConfig, err := app.loadManagedStackConfig(stackDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managedConfig.Settings.DockerSocketMountsAllowed {
+		t.Fatalf("expected migrated docker socket setting in rewritten config: %#v", managedConfig)
 	}
 }
 

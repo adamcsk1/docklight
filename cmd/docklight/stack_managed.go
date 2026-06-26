@@ -63,6 +63,17 @@ func (app *App) loadManagedStackConfig(stackDir string) (StackManagedConfig, err
 	return cfg, nil
 }
 
+func (app *App) loadManagedStackConfigOrDefault(stackDir string) StackManagedConfig {
+	cfg, err := app.loadManagedStackConfig(stackDir)
+	if err != nil {
+		if app.logger != nil {
+			app.logger.Warn("ignoring invalid stack managed config", "path", filepath.Join(stackDir, stackManagedConfigFile), "error", err)
+		}
+		return StackManagedConfig{}
+	}
+	return cfg
+}
+
 func writeManagedStackConfig(stackDir string, folders []string, files []managedFileWrite, settings StackManagedSettings) error {
 	cfg := StackManagedConfig{Folders: folders, Settings: settings}
 	for _, file := range files {

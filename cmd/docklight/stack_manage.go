@@ -107,11 +107,7 @@ func (app *App) editStackPage(w http.ResponseWriter, r *http.Request) {
 		app.redirectWithError(w, r, "/stacks/"+name, err.Error())
 		return
 	}
-	managedConfig, err := app.loadManagedStackConfig(stack.AbsolutePath)
-	if err != nil {
-		app.redirectWithError(w, r, "/stacks/"+name, err.Error())
-		return
-	}
+	managedConfig := app.loadManagedStackConfigOrDefault(stack.AbsolutePath)
 	managedFiles, err := app.managedFileForms(stack.AbsolutePath, managedConfig.Files)
 	if err != nil {
 		app.redirectWithError(w, r, "/stacks/"+name, err.Error())

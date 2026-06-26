@@ -213,6 +213,108 @@ func TestCreateStackRejectsManagedFileMissingParent(t *testing.T) {
 	}
 }
 
+func TestInvalidManagedConfigDoesNotBreakStackLoading(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "legacy")
+	mustWriteCompose(t, stackDir)
+	if err := os.WriteFile(filepath.Join(stackDir, stackManagedConfigFile), []byte("folder data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('legacy', 'legacy', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+
+	stack, err := app.loadStack("legacy", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.HostPIDAllowed {
+		t.Fatalf("expected invalid managed config to use safe defaults: %#v", stack)
+	}
+	stacks, err := app.loadStacks(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stacks) != 1 || stacks[0].Name != "legacy" {
+		t.Fatalf("expected legacy stack to load, got %#v", stacks)
+	}
+}
+
+func TestEditStackRewritesInvalidManagedConfig(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "legacy")
+	mustWriteCompose(t, stackDir)
+	if err := os.WriteFile(filepath.Join(stackDir, stackManagedConfigFile), []byte("folder data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('legacy', 'legacy', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+
+	pageReq := httptest.NewRequest(http.MethodGet, "http://docklight.local/stacks/legacy/edit", nil)
+	pageReq.SetPathValue("name", "legacy")
+	pageRec := httptest.NewRecorder()
+	app.editStackPage(pageRec, pageReq)
+	if pageRec.Code != http.StatusOK || !strings.Contains(pageRec.Body.String(), "No extra files are currently managed") {
+		t.Fatalf("expected edit page to tolerate invalid managed config, code=%d body=%s", pageRec.Code, pageRec.Body.String())
+	}
+
+	values := url.Values{}
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:changed")
+	values.Set("bind_folders", "data")
+	values.Set("update_mode", "save")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/legacy/edit", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "legacy")
+	rec := httptest.NewRecorder()
+	app.updateStack(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected edit save redirect, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	managedConfig, err := app.loadManagedStackConfig(stackDir)
+	if err != nil {
+		t.Fatalf("expected invalid config to be rewritten as valid YAML: %v", err)
+	}
+	if len(managedConfig.Folders) != 1 || managedConfig.Folders[0] != "data" {
+		t.Fatalf("expected managed folder saved in rewritten config: %#v", managedConfig)
+	}
+}
+
+func TestEditStackCreatesMissingManagedConfig(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "legacy")
+	mustWriteCompose(t, stackDir)
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('legacy', 'legacy', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+
+	values := url.Values{}
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:changed")
+	values.Set("external_bind_mounts_allowed", "on")
+	values.Set("update_mode", "save")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/legacy/edit", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "legacy")
+	rec := httptest.NewRecorder()
+	app.updateStack(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected edit save redirect, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	managedConfig, err := app.loadManagedStackConfig(stackDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managedConfig.Settings.ExternalBindMountsAllowed {
+		t.Fatalf("expected missing managed config to be created with settings: %#v", managedConfig)
+	}
+}
+
 func TestCreateStackRejectsHostPIDByDefault(t *testing.T) {
 	root := t.TempDir()
 	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})

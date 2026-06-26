@@ -144,10 +144,7 @@ func (app *App) loadStacks(withLive bool) ([]Stack, error) {
 		}
 		stack.Protected = app.protectedStackName(stack.Name)
 		stack.AbsolutePath = filepath.Join(app.cfg.StacksRoot, stack.RelativePath)
-		managedConfig, err := app.loadManagedStackConfig(stack.AbsolutePath)
-		if err != nil {
-			return nil, err
-		}
+		managedConfig := app.loadManagedStackConfigOrDefault(stack.AbsolutePath)
 		applyManagedSettingsToStack(&stack, managedConfig.Settings)
 		stack.Status = "unknown"
 		stacks = append(stacks, stack)
@@ -175,10 +172,7 @@ func (app *App) loadStack(name string, withLive bool) (Stack, error) {
 	}
 	stack.Protected = app.protectedStackName(stack.Name)
 	stack.AbsolutePath = filepath.Join(app.cfg.StacksRoot, stack.RelativePath)
-	managedConfig, err := app.loadManagedStackConfig(stack.AbsolutePath)
-	if err != nil {
-		return stack, err
-	}
+	managedConfig := app.loadManagedStackConfigOrDefault(stack.AbsolutePath)
 	applyManagedSettingsToStack(&stack, managedConfig.Settings)
 	stack.Status = "unknown"
 	if withLive {
