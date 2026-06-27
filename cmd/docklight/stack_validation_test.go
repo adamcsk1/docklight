@@ -70,12 +70,44 @@ func TestValidateComposeDefinitionUsesResolvedEnvValues(t *testing.T) {
 		return "services:\n  app:\n    image: nginx:1.27\n    ports:\n      - mode: ingress\n        target: 80\n        published: \"8080\"\n", nil
 	}
 
-	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    ports:\n      - ${HOST_PORT}:80", "TAG=1.27\nHOST_PORT=8080", false, false, false)
+	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    ports:\n      - ${HOST_PORT}:80", "TAG=1.27\nHOST_PORT=8080", true, false, false, false, false)
 	if err != nil {
 		t.Fatalf("expected resolved compose to pass: %v", err)
 	}
 	if !called {
 		t.Fatal("expected docker compose config to be called")
+	}
+}
+
+func TestValidateComposeDefinitionUsesManagedEmptyEnvFile(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stackDir, ".env"), []byte("TAG=old\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		for i, arg := range args {
+			if arg == "--env-file" && i+1 < len(args) {
+				content, err := os.ReadFile(args[i+1])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(content) != "\n" {
+					t.Fatalf("expected managed empty .env temp file, content=%q", string(content))
+				}
+				return "services:\n  app:\n    image: nginx\n", nil
+			}
+		}
+		t.Fatal("expected validation to pass an explicit --env-file for managed empty .env")
+		return "", nil
+	}
+
+	if err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG:-latest}", "", true, false, false, false, false); err != nil {
+		t.Fatalf("expected managed empty .env to validate with explicit env file: %v", err)
 	}
 }
 
@@ -90,7 +122,7 @@ func TestValidateComposeDefinitionRejectsUnsafeResolvedEnvValues(t *testing.T) {
 		return "services:\n  app:\n    image: nginx\n    network_mode: host\n", nil
 	}
 
-	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx\n    network_mode: ${NETWORK_MODE}", "NETWORK_MODE=host", false, false, false)
+	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx\n    network_mode: ${NETWORK_MODE}", "NETWORK_MODE=host", true, false, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "network_mode") {
 		t.Fatalf("expected resolved host network mode to be rejected, got %v", err)
 	}
@@ -107,21 +139,21 @@ func TestValidateComposeDefinitionAllowsHostPIDWhenEnabled(t *testing.T) {
 		return "services:\n  app:\n    image: nginx\n    pid: host\n", nil
 	}
 
-	if err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx\n    pid: ${PID_MODE}", "PID_MODE=host", false, false, true); err != nil {
+	if err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx\n    pid: ${PID_MODE}", "PID_MODE=host", true, false, false, false, true); err != nil {
 		t.Fatalf("expected host PID mode to pass when enabled: %v", err)
 	}
-	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx\n    pid: ${PID_MODE}", "PID_MODE=host", false, false, false)
+	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx\n    pid: ${PID_MODE}", "PID_MODE=host", true, false, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "pid") {
 		t.Fatalf("expected host PID mode to be rejected when disabled, got %v", err)
 	}
 }
 
 func TestValidateComposeYAMLHostPIDAllowanceDoesNotAllowOtherHostOptions(t *testing.T) {
-	if err := validateComposeYAMLWithExternalBinds("services:\n  app:\n    image: nginx\n    pid: host", false, false, true); err != nil {
+	if err := validateComposeYAMLWithExternalBinds("services:\n  app:\n    image: nginx\n    pid: host", false, false, false, true); err != nil {
 		t.Fatalf("expected host PID mode to pass when enabled: %v", err)
 	}
 	for _, value := range []string{"network_mode: host", "ipc: host", "cgroup: host", "userns_mode: host"} {
-		if err := validateComposeYAMLWithExternalBinds(value, false, false, true); err == nil {
+		if err := validateComposeYAMLWithExternalBinds(value, false, false, false, true); err == nil {
 			t.Fatalf("expected %q to stay rejected", value)
 		}
 	}
@@ -138,7 +170,7 @@ func TestValidateComposeDefinitionAllowsResolvedBindInsideStack(t *testing.T) {
 		return fmt.Sprintf("services:\n  app:\n    image: nginx:1.27\n    volumes:\n      - type: bind\n        source: %s\n        target: /data\n", filepath.ToSlash(filepath.Join(stackDir, "data"))), nil
 	}
 
-	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - ./data:/data", "TAG=1.27", false, false, false)
+	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - ./data:/data", "TAG=1.27", true, false, false, false, false)
 	if err != nil {
 		t.Fatalf("expected resolved bind inside stack to pass: %v", err)
 	}
@@ -155,7 +187,7 @@ func TestValidateComposeDefinitionRejectsResolvedBindOutsideStack(t *testing.T) 
 		return fmt.Sprintf("services:\n  app:\n    image: nginx\n    volumes:\n      - type: bind\n        source: %s\n        target: /data\n", filepath.ToSlash(filepath.Join(root, "outside"))), nil
 	}
 
-	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx\n    volumes:\n      - ${DATA_DIR}:/data", "DATA_DIR=../outside", false, false, false)
+	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx\n    volumes:\n      - ${DATA_DIR}:/data", "DATA_DIR=../outside", true, false, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "unsafe host bind mount") || !strings.Contains(err.Error(), "outside") {
 		t.Fatalf("expected resolved bind outside stack to be rejected, got %v", err)
 	}
@@ -175,10 +207,10 @@ func TestValidateComposeDefinitionAllowsImmichExternalBindsWhenEnabled(t *testin
 	compose := "services:\n  immich-server:\n    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-v2}\n    volumes:\n      - ${UPLOAD_LOCATION}:/usr/src/app/upload\n      - /etc/localtime:/etc/localtime:ro\n    env_file:\n      - .env\n  database:\n    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0\n    environment:\n      POSTGRES_PASSWORD: ${DB_PASSWORD}\n    volumes:\n      - ${DB_DATA_LOCATION}:/var/lib/postgresql/data\nvolumes:\n  model-cache:\n"
 	envFile := "UPLOAD_LOCATION=/srv/immich/upload\nDB_DATA_LOCATION=/srv/immich/db\nDB_PASSWORD=secret\n"
 
-	if err := app.validateComposeDefinition("immich", stackDir, compose, envFile, true, false, false); err != nil {
+	if err := app.validateComposeDefinition("immich", stackDir, compose, envFile, true, true, false, false, false); err != nil {
 		t.Fatalf("expected Immich-style external binds to pass when enabled: %v", err)
 	}
-	err := app.validateComposeDefinition("immich", stackDir, compose, envFile, false, false, false)
+	err := app.validateComposeDefinition("immich", stackDir, compose, envFile, true, false, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "/srv/immich/upload") {
 		t.Fatalf("expected external bind path to be reported when disabled, got %v", err)
 	}
@@ -197,7 +229,7 @@ func TestValidateComposeDefinitionBlocksDockerSocketEvenWithExternalBinds(t *tes
 				return fmt.Sprintf("services:\n  app:\n    image: nginx\n    volumes:\n      - type: bind\n        source: %s\n        target: /sock\n", source), nil
 			}
 
-			err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - "+source+":/sock", "TAG=latest", true, false, false)
+			err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - "+source+":/sock", "TAG=latest", true, true, false, false, false)
 			if err == nil || !strings.Contains(err.Error(), "docker socket") {
 				t.Fatalf("expected docker socket exposure to stay blocked for %q, got %v", source, err)
 			}
@@ -218,8 +250,50 @@ func TestValidateComposeDefinitionAllowsExactDockerSocketWhenEnabled(t *testing.
 				return fmt.Sprintf("services:\n  app:\n    image: nginx\n    volumes:\n      - type: bind\n        source: %s\n        target: /sock\n", source), nil
 			}
 
-			if err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - "+source+":/sock", "TAG=latest", false, true, false); err != nil {
+			if err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - "+source+":/sock", "TAG=latest", true, false, true, false, false); err != nil {
 				t.Fatalf("expected exact docker socket mount to pass for %q: %v", source, err)
+			}
+		})
+	}
+}
+
+func TestValidateComposeDefinitionAllowsExactUSBDeviceBindWhenEnabled(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		return "services:\n  app:\n    image: nginx\n    volumes:\n      - type: bind\n        source: /dev/bus/usb\n        target: /dev/bus/usb\n", nil
+	}
+
+	compose := "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - /dev/bus/usb:/dev/bus/usb"
+	if err := app.validateComposeDefinition("web", stackDir, compose, "TAG=latest", true, false, false, true, false); err != nil {
+		t.Fatalf("expected exact USB bind mount to pass when enabled: %v", err)
+	}
+	err := app.validateComposeDefinition("web", stackDir, compose, "TAG=latest", true, false, false, false, false)
+	if err == nil || !strings.Contains(err.Error(), "unsafe host bind mount") {
+		t.Fatalf("expected USB bind mount to be rejected when disabled, got %v", err)
+	}
+}
+
+func TestValidateComposeDefinitionUSBDeviceBindDoesNotAllowOtherDeviceBinds(t *testing.T) {
+	for _, source := range []string{"/dev", "/dev/bus", "/dev/ttyUSB0"} {
+		t.Run(source, func(t *testing.T) {
+			root := t.TempDir()
+			stackDir := filepath.Join(root, "web")
+			if err := os.MkdirAll(stackDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+			app.runner = func(dir, name string, args ...string) (string, error) {
+				return fmt.Sprintf("services:\n  app:\n    image: nginx\n    volumes:\n      - type: bind\n        source: %s\n        target: /device\n", source), nil
+			}
+
+			err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - "+source+":/device", "TAG=latest", true, false, false, true, false)
+			if err == nil || !strings.Contains(err.Error(), "unsafe host bind mount") {
+				t.Fatalf("expected unsafe device bind to stay blocked for %q, got %v", source, err)
 			}
 		})
 	}
@@ -238,7 +312,7 @@ func TestValidateComposeDefinitionBlocksDockerSocketDirectoriesWhenEnabled(t *te
 				return fmt.Sprintf("services:\n  app:\n    image: nginx\n    volumes:\n      - type: bind\n        source: %s\n        target: /sock\n", source), nil
 			}
 
-			err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - "+source+":/sock", "TAG=latest", true, true, false)
+			err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG}\n    volumes:\n      - "+source+":/sock", "TAG=latest", true, true, true, false, false)
 			if err == nil || !strings.Contains(err.Error(), "docker socket") {
 				t.Fatalf("expected docker socket directory exposure to stay blocked for %q, got %v", source, err)
 			}
@@ -257,7 +331,7 @@ func TestValidateComposeDefinitionReportsComposeConfigErrors(t *testing.T) {
 		return "required variable TAG is missing", errors.New("compose failed")
 	}
 
-	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG:?required}", "", false, false, false)
+	err := app.validateComposeDefinition("web", stackDir, "services:\n  app:\n    image: nginx:${TAG:?required}", "", false, false, false, false, false)
 	if err == nil || !strings.Contains(err.Error(), "required variable TAG is missing") {
 		t.Fatalf("expected compose config error to be reported, got %v", err)
 	}
@@ -313,6 +387,9 @@ func TestStackSafetyPermissionsDefaultFalse(t *testing.T) {
 	if stack.DockerSocketMountsAllowed {
 		t.Fatal("expected docker socket mounts to default false")
 	}
+	if stack.USBDeviceBindMountsAllowed {
+		t.Fatal("expected USB device bind mounts to default false")
+	}
 	if stack.HostPIDAllowed {
 		t.Fatal("expected host PID namespace to default false")
 	}
@@ -321,7 +398,7 @@ func TestStackSafetyPermissionsDefaultFalse(t *testing.T) {
 func TestStackFileHelpersRejectUnsafePaths(t *testing.T) {
 	root := t.TempDir()
 	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret"}}
-	if err := app.writeStackFiles("Bad Name", "services:\n  app:\n    image: nginx", "", nil, nil, StackManagedSettings{}); err == nil {
+	if err := app.writeStackFiles("Bad Name", "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}); err == nil {
 		t.Fatal("expected invalid stack name to be rejected before writing files")
 	}
 	stackDir := filepath.Join(root, "web")
@@ -329,7 +406,7 @@ func TestStackFileHelpersRejectUnsafePaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	unsafe := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "../compose.yml"}
-	if err := app.updateStackFiles(unsafe, "services:\n  app:\n    image: nginx", "", nil, nil, StackManagedSettings{}); err == nil {
+	if err := app.updateStackFiles(unsafe, "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}); err == nil {
 		t.Fatal("expected unsafe compose path to be rejected")
 	}
 }

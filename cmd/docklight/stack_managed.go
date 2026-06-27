@@ -24,9 +24,10 @@ type StackManagedConfigFile struct {
 }
 
 type StackManagedSettings struct {
-	ExternalBindMountsAllowed bool `yaml:"external_bind_mounts_allowed,omitempty"`
-	DockerSocketMountsAllowed bool `yaml:"docker_socket_mounts_allowed,omitempty"`
-	HostPIDAllowed            bool `yaml:"host_pid_allowed,omitempty"`
+	ExternalBindMountsAllowed  bool `yaml:"external_bind_mounts_allowed,omitempty"`
+	DockerSocketMountsAllowed  bool `yaml:"docker_socket_mounts_allowed,omitempty"`
+	USBDeviceBindMountsAllowed bool `yaml:"usb_device_bind_mounts_allowed,omitempty"`
+	HostPIDAllowed             bool `yaml:"host_pid_allowed,omitempty"`
 }
 
 type managedFileWrite struct {
@@ -92,15 +93,17 @@ func writeStackManagedConfig(stackDir string, cfg StackManagedConfig) error {
 
 func stackManagedSettingsFromForm(form StackForm) StackManagedSettings {
 	return StackManagedSettings{
-		ExternalBindMountsAllowed: form.ExternalBindMountsAllowed,
-		DockerSocketMountsAllowed: form.DockerSocketMountsAllowed,
-		HostPIDAllowed:            form.HostPIDAllowed,
+		ExternalBindMountsAllowed:  form.ExternalBindMountsAllowed,
+		DockerSocketMountsAllowed:  form.DockerSocketMountsAllowed,
+		USBDeviceBindMountsAllowed: form.USBDeviceBindMountsAllowed,
+		HostPIDAllowed:             form.HostPIDAllowed,
 	}
 }
 
 func applyManagedSettingsToStack(stack *Stack, settings StackManagedSettings) {
 	stack.ExternalBindMountsAllowed = settings.ExternalBindMountsAllowed
 	stack.DockerSocketMountsAllowed = settings.DockerSocketMountsAllowed
+	stack.USBDeviceBindMountsAllowed = settings.USBDeviceBindMountsAllowed
 	stack.HostPIDAllowed = settings.HostPIDAllowed
 }
 
@@ -142,6 +145,33 @@ func parseManagedFiles(files []ManagedFileForm) ([]managedFileWrite, error) {
 		result = append(result, managedFileWrite{Path: filePath, Content: file.Content})
 	}
 	return result, nil
+}
+
+func managedEnvFile(files []managedFileWrite) (string, bool) {
+	for _, file := range files {
+		if file.Path == ".env" {
+			return strings.TrimRight(file.Content, "\r\n"), true
+		}
+	}
+	return "", false
+}
+
+func managedFilesTrackEnv(files []managedFileWrite) bool {
+	for _, file := range files {
+		if file.Path == ".env" {
+			return true
+		}
+	}
+	return false
+}
+
+func managedConfigTracksEnv(cfg StackManagedConfig) bool {
+	for _, file := range cfg.Files {
+		if file.Path == ".env" {
+			return true
+		}
+	}
+	return false
 }
 
 func parseManagedFilePaths(paths []string) ([]string, error) {
@@ -198,8 +228,17 @@ func writeManagedFiles(stackDir string, folders []string, files []managedFileWri
 		if err := ensurePathInside(stackDir, filePath); err != nil {
 			return err
 		}
-		if err := os.WriteFile(filePath, []byte(file.Content), 0o644); err != nil {
+		mode := os.FileMode(0o644)
+		if file.Path == ".env" {
+			mode = 0o600
+		}
+		if err := os.WriteFile(filePath, []byte(file.Content), mode); err != nil {
 			return err
+		}
+		if file.Path == ".env" {
+			if err := os.Chmod(filePath, mode); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

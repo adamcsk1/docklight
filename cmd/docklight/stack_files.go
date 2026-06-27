@@ -59,7 +59,7 @@ func pathEscapesRoot(rel string) bool {
 	return rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel)
 }
 
-func (app *App) writeStackFiles(name, composeYAML, envFile string, folders []string, managedFiles []managedFileWrite, settings StackManagedSettings) error {
+func (app *App) writeStackFiles(name, composeYAML string, folders []string, managedFiles []managedFileWrite, settings StackManagedSettings) error {
 	stackDir, err := app.safeStackPath(name)
 	if err != nil {
 		return err
@@ -83,19 +83,17 @@ func (app *App) writeStackFiles(name, composeYAML, envFile string, folders []str
 	if err := os.WriteFile(composePath, []byte(composeYAML+"\n"), 0o644); err != nil {
 		return err
 	}
-	if err := writeStackEnvFile(stackDir, envFile); err != nil {
-		return err
-	}
 	if err := writeManagedFiles(stackDir, folders, managedFiles); err != nil {
 		return err
 	}
 	return writeManagedStackConfig(stackDir, folders, managedFiles, settings)
 }
 
-func (app *App) updateStackFiles(stack Stack, composeYAML, envFile string, folders []string, managedFiles []managedFileWrite, settings StackManagedSettings) error {
+func (app *App) updateStackFiles(stack Stack, composeYAML string, folders []string, managedFiles []managedFileWrite, settings StackManagedSettings) error {
 	if err := app.ensureStackPathSafe(stack.AbsolutePath); err != nil {
 		return err
 	}
+	previousConfig := app.loadManagedStackConfigOrDefault(stack.AbsolutePath)
 	composePath := filepath.Join(stack.AbsolutePath, stack.ComposeFile)
 	if err := ensurePathInside(stack.AbsolutePath, composePath); err != nil {
 		return err
@@ -115,23 +113,14 @@ func (app *App) updateStackFiles(stack Stack, composeYAML, envFile string, folde
 	if err := os.WriteFile(composePath, []byte(composeYAML+"\n"), 0o644); err != nil {
 		return err
 	}
-	if err := writeStackEnvFile(stack.AbsolutePath, envFile); err != nil {
-		return err
-	}
 	if err := writeManagedFiles(stack.AbsolutePath, folders, managedFiles); err != nil {
 		return err
 	}
-	return writeManagedStackConfig(stack.AbsolutePath, folders, managedFiles, settings)
-}
-
-func writeStackEnvFile(stackDir, envFile string) error {
-	path := filepath.Join(stackDir, ".env")
-	if strings.TrimSpace(envFile) == "" {
-		err := os.Remove(path)
-		if errors.Is(err, os.ErrNotExist) {
-			return nil
+	if managedConfigTracksEnv(previousConfig) && !managedFilesTrackEnv(managedFiles) {
+		err := os.Remove(filepath.Join(stack.AbsolutePath, ".env"))
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
 		}
-		return err
 	}
-	return os.WriteFile(path, []byte(envFile+"\n"), 0o600)
+	return writeManagedStackConfig(stack.AbsolutePath, folders, managedFiles, settings)
 }

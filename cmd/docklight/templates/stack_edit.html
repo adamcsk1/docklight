@@ -17,11 +17,6 @@
         <textarea name="compose_yaml" spellcheck="false" required>{{.StackForm.ComposeYAML}}</textarea>
       </label>
       <label>
-        <span>Compose .env</span>
-        <textarea name="env_file" spellcheck="false" placeholder="TAG=latest&#10;DATA_DIR=./data">{{.StackForm.EnvFile}}</textarea>
-      </label>
-      <p class="form-hint">Values here are saved as <code>.env</code> beside the compose file and are used for Compose interpolation.</p>
-      <label>
         <span>Managed folders</span>
         <textarea name="bind_folders" spellcheck="false" placeholder="data&#10;data/subfolder">{{.StackForm.BindFolders}}</textarea>
       </label>
@@ -29,7 +24,7 @@
       <div class="managed-files" data-managed-file-list>
         <div>
           <h3>Managed files</h3>
-          <p class="form-hint">Only files listed in <code>.docklight.config.yml</code> are shown here. Manual files are left untouched unless added as managed files.</p>
+          <p class="form-hint">Only files listed in <code>.docklight.config.yml</code> are shown here. Add <code>.env</code> to manage Compose interpolation values. Manual files are left untouched unless added as managed files.</p>
         </div>
         {{if .StackForm.ManagedFiles}}
           {{range .StackForm.ManagedFiles}}
@@ -72,12 +67,17 @@
         <span>allow Docker socket mount</span>
       </label>
       <label class="switch-label">
+        <input type="checkbox" name="usb_device_bind_mounts_allowed" {{if .StackForm.USBDeviceBindMountsAllowed}}checked{{end}}>
+        <span>allow USB device bind mount</span>
+      </label>
+      <label class="switch-label">
         <input type="checkbox" name="host_pid_allowed" {{if .StackForm.HostPIDAllowed}}checked{{end}}>
         <span>allow host PID namespace</span>
       </label>
       <p class="form-hint">Folder handling: only missing managed folders are created. Existing folders and contents are preserved.</p>
       <p class="form-hint">External bind mounts allow paths outside the stack folder, such as <code>/etc/localtime</code> or media folders. Host-level options remain blocked.</p>
       <p class="form-hint">Docker socket mounts allow exact socket file mounts for <code>/var/run/docker.sock</code> or <code>/run/docker.sock</code>. This gives containers powerful control over the Docker host. Enable only for trusted stacks.</p>
+      <p class="form-hint">USB device bind mounts allow the exact host bind mount <code>/dev/bus/usb</code>, exposing USB devices to the container. Enable only for trusted stacks.</p>
       <p class="form-hint">Host PID namespace allows <code>pid: host</code>, exposing host process IDs to the container. Enable only for trusted stacks.</p>
       <div class="actions actions-large">
         <button class="button button-secondary" type="submit" name="update_mode" value="save" data-loading-text="Saving...">Save</button>

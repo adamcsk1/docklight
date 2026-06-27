@@ -15,19 +15,20 @@ type stackStore interface {
 }
 
 type Stack struct {
-	Name                      string
-	RelativePath              string
-	ComposeFile               string
-	AbsolutePath              string
-	Status                    string
-	CPUPercent                string
-	MemoryUsage               string
-	Protected                 bool
-	ExternalBindMountsAllowed bool
-	DockerSocketMountsAllowed bool
-	HostPIDAllowed            bool
-	Containers                []Container
-	ContainerCount            int
+	Name                       string
+	RelativePath               string
+	ComposeFile                string
+	AbsolutePath               string
+	Status                     string
+	CPUPercent                 string
+	MemoryUsage                string
+	Protected                  bool
+	ExternalBindMountsAllowed  bool
+	DockerSocketMountsAllowed  bool
+	USBDeviceBindMountsAllowed bool
+	HostPIDAllowed             bool
+	Containers                 []Container
+	ContainerCount             int
 }
 
 type Container struct {

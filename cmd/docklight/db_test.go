@@ -68,7 +68,7 @@ INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.HostPIDAllowed {
+	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.USBDeviceBindMountsAllowed || managedConfig.Settings.HostPIDAllowed {
 		t.Fatalf("expected stack settings migrated to config: %#v", managedConfig.Settings)
 	}
 }

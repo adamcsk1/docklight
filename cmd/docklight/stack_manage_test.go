@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -107,8 +108,36 @@ func TestCreateStackPersistsDockerSocketMountPermissionInConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.HostPIDAllowed {
+	if managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.USBDeviceBindMountsAllowed || managedConfig.Settings.HostPIDAllowed {
 		t.Fatalf("expected only docker socket permission in managed config: %#v", managedConfig.Settings)
+	}
+}
+
+func TestCreateStackPersistsUSBDeviceBindPermissionInConfig(t *testing.T) {
+	root := t.TempDir()
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		return "ok", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "usb-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest\n    volumes:\n      - /dev/bus/usb:/dev/bus/usb")
+	values.Set("usb_device_bind_mounts_allowed", "on")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected create redirect, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	managedConfig, err := app.loadManagedStackConfig(filepath.Join(root, "usb-stack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managedConfig.Settings.USBDeviceBindMountsAllowed {
+		t.Fatalf("expected USB device bind permission in managed config: %#v", managedConfig.Settings)
 	}
 }
 
@@ -229,7 +258,7 @@ func TestInvalidManagedConfigDoesNotBreakStackLoading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.HostPIDAllowed {
+	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.USBDeviceBindMountsAllowed || stack.HostPIDAllowed {
 		t.Fatalf("expected invalid managed config to use safe defaults: %#v", stack)
 	}
 	stacks, err := app.loadStacks(false)
@@ -371,6 +400,7 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	values.Set("bind_folders", "config\ndata")
 	values.Set("external_bind_mounts_allowed", "on")
 	values.Set("docker_socket_mounts_allowed", "on")
+	values.Set("usb_device_bind_mounts_allowed", "on")
 	values.Set("host_pid_allowed", "on")
 	values.Set("update_mode", "save")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
@@ -393,7 +423,7 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || !managedConfig.Settings.HostPIDAllowed {
+	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || !managedConfig.Settings.USBDeviceBindMountsAllowed || !managedConfig.Settings.HostPIDAllowed {
 		t.Fatalf("expected stack settings in managed config: %#v", managedConfig.Settings)
 	}
 	if _, err := os.Stat(filepath.Join(stackDir, "config")); err != nil {
@@ -477,10 +507,10 @@ func TestEditStackRejectsManagedFileMissingParentBeforeWritingCompose(t *testing
 	}
 }
 
-func TestStackEnvFilePersistence(t *testing.T) {
+func TestStackManagedEnvFilePersistence(t *testing.T) {
 	root := t.TempDir()
 	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
-	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx:${TAG}", "TAG=1.27", nil, nil, StackManagedSettings{}); err != nil {
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx:${TAG}", nil, []managedFileWrite{{Path: ".env", Content: "TAG=1.27\n"}}, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(root, "web", ".env"))
@@ -490,12 +520,93 @@ func TestStackEnvFilePersistence(t *testing.T) {
 	if string(content) != "TAG=1.27\n" {
 		t.Fatalf("unexpected env file content %q", string(content))
 	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(filepath.Join(root, "web", ".env"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("expected managed .env to be private, mode=%v", info.Mode().Perm())
+		}
+	}
 	stack := Stack{Name: "web", AbsolutePath: filepath.Join(root, "web"), ComposeFile: "docker-compose.yml"}
-	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx", "", nil, nil, StackManagedSettings{}); err != nil {
+	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "web", ".env")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected empty env editor to remove .env, got %v", err)
+		t.Fatalf("expected previously managed .env to be removed when untracked, got %v", err)
+	}
+}
+
+func TestStackManualEnvFilePreservedWhenUnmanaged(t *testing.T) {
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "web", ".env"), []byte("TAG=manual\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stack := Stack{Name: "web", AbsolutePath: filepath.Join(root, "web"), ComposeFile: "docker-compose.yml"}
+	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx:latest", nil, nil, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "web", ".env"))
+	if err != nil || string(content) != "TAG=manual\n" {
+		t.Fatalf("expected unmanaged .env to be preserved, content=%q err=%v", string(content), err)
+	}
+}
+
+func TestEditStackValidationIgnoresRemovedManagedEnvFile(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	mustWriteCompose(t, stackDir)
+	if err := os.WriteFile(filepath.Join(stackDir, ".env"), []byte("TAG=1.27\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStackManagedConfig(stackDir, StackManagedConfig{Files: []StackManagedConfigFile{{Path: ".env"}}}); err != nil {
+		t.Fatal(err)
+	}
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		if strings.Contains(strings.Join(args, " "), "container ls") {
+			return "", nil
+		}
+		for i, arg := range args {
+			if arg == "--env-file" && i+1 < len(args) {
+				content, err := os.ReadFile(args[i+1])
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(content) != "\n" {
+					t.Fatalf("expected validation to ignore removed managed .env, content=%q", string(content))
+				}
+				return "required variable TAG is missing", errors.New("compose failed")
+			}
+		}
+		t.Fatal("expected validation to pass an explicit empty --env-file")
+		return "", nil
+	}
+
+	values := url.Values{}
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:${TAG:?required}")
+	values.Set("update_mode", "save")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/web/edit", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "web")
+	rec := httptest.NewRecorder()
+	app.updateStack(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "required variable TAG is missing") {
+		t.Fatalf("expected validation failure before stale .env removal, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if content, err := os.ReadFile(filepath.Join(stackDir, ".env")); err != nil || string(content) != "TAG=1.27\n" {
+		t.Fatalf("expected failed validation to preserve old .env, content=%q err=%v", string(content), err)
 	}
 }
 
@@ -527,11 +638,11 @@ func TestCreateStackValidationAndFileHelpers(t *testing.T) {
 		})
 	}
 
-	if err := app.writeStackFiles("files", "services:\n  app:\n    image: nginx", "", []string{"data", "data/subfolder"}, []managedFileWrite{{Path: "test.conf", Content: "root=true\n"}, {Path: "data/file.conf", Content: "child=true\n"}}, StackManagedSettings{}); err != nil {
+	if err := app.writeStackFiles("files", "services:\n  app:\n    image: nginx", []string{"data", "data/subfolder"}, []managedFileWrite{{Path: "test.conf", Content: "root=true\n"}, {Path: "data/file.conf", Content: "child=true\n"}}, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	stack := Stack{Name: "files", AbsolutePath: filepath.Join(root, "files"), ComposeFile: "docker-compose.yml"}
-	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx:1.27", "", []string{"data"}, []managedFileWrite{{Path: "test.conf", Content: "root=false\n"}}, StackManagedSettings{}); err != nil {
+	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx:1.27", []string{"data"}, []managedFileWrite{{Path: "test.conf", Content: "root=false\n"}}, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(root, "files", "test.conf"))

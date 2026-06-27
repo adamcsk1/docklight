@@ -6,14 +6,14 @@ import (
 )
 
 type StackForm struct {
-	Name                      string
-	ComposeYAML               string
-	EnvFile                   string
-	BindFolders               string
-	ManagedFiles              []ManagedFileForm
-	ExternalBindMountsAllowed bool
-	DockerSocketMountsAllowed bool
-	HostPIDAllowed            bool
+	Name                       string
+	ComposeYAML                string
+	BindFolders                string
+	ManagedFiles               []ManagedFileForm
+	ExternalBindMountsAllowed  bool
+	DockerSocketMountsAllowed  bool
+	USBDeviceBindMountsAllowed bool
+	HostPIDAllowed             bool
 }
 
 type ManagedFileForm struct {
@@ -23,27 +23,27 @@ type ManagedFileForm struct {
 
 func newStackFormFromRequest(r *http.Request) StackForm {
 	return StackForm{
-		Name:                      strings.TrimSpace(r.FormValue("name")),
-		ComposeYAML:               strings.TrimSpace(r.FormValue("compose_yaml")),
-		EnvFile:                   strings.TrimRight(r.FormValue("env_file"), "\r\n"),
-		BindFolders:               strings.TrimSpace(r.FormValue("bind_folders")),
-		ManagedFiles:              managedFilesFromRequest(r),
-		ExternalBindMountsAllowed: r.FormValue("external_bind_mounts_allowed") == "on",
-		DockerSocketMountsAllowed: r.FormValue("docker_socket_mounts_allowed") == "on",
-		HostPIDAllowed:            r.FormValue("host_pid_allowed") == "on",
+		Name:                       strings.TrimSpace(r.FormValue("name")),
+		ComposeYAML:                strings.TrimSpace(r.FormValue("compose_yaml")),
+		BindFolders:                strings.TrimSpace(r.FormValue("bind_folders")),
+		ManagedFiles:               managedFilesFromRequest(r),
+		ExternalBindMountsAllowed:  r.FormValue("external_bind_mounts_allowed") == "on",
+		DockerSocketMountsAllowed:  r.FormValue("docker_socket_mounts_allowed") == "on",
+		USBDeviceBindMountsAllowed: r.FormValue("usb_device_bind_mounts_allowed") == "on",
+		HostPIDAllowed:             r.FormValue("host_pid_allowed") == "on",
 	}
 }
 
 func updateStackFormFromRequest(r *http.Request, name string) StackForm {
 	return StackForm{
-		Name:                      name,
-		ComposeYAML:               strings.TrimSpace(r.FormValue("compose_yaml")),
-		EnvFile:                   strings.TrimRight(r.FormValue("env_file"), "\r\n"),
-		BindFolders:               strings.TrimSpace(r.FormValue("bind_folders")),
-		ManagedFiles:              managedFilesFromRequest(r),
-		ExternalBindMountsAllowed: r.FormValue("external_bind_mounts_allowed") == "on",
-		DockerSocketMountsAllowed: r.FormValue("docker_socket_mounts_allowed") == "on",
-		HostPIDAllowed:            r.FormValue("host_pid_allowed") == "on",
+		Name:                       name,
+		ComposeYAML:                strings.TrimSpace(r.FormValue("compose_yaml")),
+		BindFolders:                strings.TrimSpace(r.FormValue("bind_folders")),
+		ManagedFiles:               managedFilesFromRequest(r),
+		ExternalBindMountsAllowed:  r.FormValue("external_bind_mounts_allowed") == "on",
+		DockerSocketMountsAllowed:  r.FormValue("docker_socket_mounts_allowed") == "on",
+		USBDeviceBindMountsAllowed: r.FormValue("usb_device_bind_mounts_allowed") == "on",
+		HostPIDAllowed:             r.FormValue("host_pid_allowed") == "on",
 	}
 }
 
