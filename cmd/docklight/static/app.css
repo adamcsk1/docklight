@@ -700,17 +700,21 @@ textarea {
   min-height: var(--compose-textarea-min-height);
 }
 
+.stack-form h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--color-muted);
+  font-family: var(--font-family);
+  font-size: var(--font-size-md);
+  letter-spacing: var(--letter-ui);
+  text-transform: uppercase;
+}
+
 .managed-files {
   display: grid;
   gap: var(--space-3);
 
   & h3 {
-    margin: 0 0 var(--space-2);
-    color: var(--color-muted);
-    font-family: var(--font-family);
-    font-size: var(--font-size-md);
-    letter-spacing: var(--letter-ui);
-    text-transform: uppercase;
+    margin-bottom: var(--space-2);
   }
 }
 

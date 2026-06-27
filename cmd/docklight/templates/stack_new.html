@@ -23,7 +23,7 @@
         <span>Managed folders</span>
         <textarea name="bind_folders" spellcheck="false" placeholder="data&#10;data/subfolder">{{.StackForm.BindFolders}}</textarea>
       </label>
-      <p class="form-hint">Managed folders and stack safety checkboxes are tracked in <code>.docklight.config.yml</code>. Existing folders are kept; missing listed folders are created.</p>
+      <p class="form-hint">Tracked in <code>.docklight.config.yml</code>. Existing folders are kept; missing listed folders are created.</p>
       <div class="managed-files" data-managed-file-list>
         <div>
           <h3>Managed files</h3>
@@ -71,6 +71,10 @@
           <button class="button button-ghost" type="button" data-managed-file-remove>Remove file</button>
         </div>
       </template>
+      <div>
+        <h3>Safety permissions</h3>
+        <p class="form-hint">Tracked in <code>.docklight.config.yml</code>. Keep these off unless the compose file is trusted.</p>
+      </div>
       <label class="switch-label">
         <input type="checkbox" name="external_bind_mounts_allowed" {{if .StackForm.ExternalBindMountsAllowed}}checked{{end}}>
         <span>allow external bind mounts</span>
