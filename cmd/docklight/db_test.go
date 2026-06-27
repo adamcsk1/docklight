@@ -13,6 +13,13 @@ import (
 func TestMigrationRemovesUpdateMetadata(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCompose(t, filepath.Join(root, "web"))
+	mustWriteCompose(t, filepath.Join(root, "priv-db"))
+	if err := writeStackManagedConfig(filepath.Join(root, "web"), StackManagedConfig{Settings: StackManagedSettings{PrivilegedAllowed: true}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStackManagedConfig(filepath.Join(root, "priv-db"), StackManagedConfig{Settings: StackManagedSettings{ExternalBindMountsAllowed: true}}); err != nil {
+		t.Fatal(err)
+	}
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -30,12 +37,14 @@ CREATE TABLE stacks (
   external_bind_mounts_allowed INTEGER NOT NULL DEFAULT 0,
   docker_socket_mounts_allowed INTEGER NOT NULL DEFAULT 0,
   host_pid_allowed INTEGER NOT NULL DEFAULT 0,
+  privileged_allowed INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE image_updates (image_ref TEXT PRIMARY KEY, image_id TEXT NOT NULL);
 INSERT INTO stacks (name, relative_path, compose_file, auto_update_enabled, update_status, external_bind_mounts_allowed, docker_socket_mounts_allowed) VALUES ('web', 'web', 'compose.yml', 1, 'available', 1, 1);
+INSERT INTO stacks (name, relative_path, compose_file, privileged_allowed) VALUES ('priv-db', 'priv-db', 'compose.yml', 1);
 INSERT INTO app_settings (key, value) VALUES ('update_check_interval', '1h'), ('auto_update_interval', '6h');
 INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:old');
 `); err != nil {
@@ -45,7 +54,7 @@ INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}
-	for _, column := range []string{"auto_update_enabled", "update_status", "update_checked_at", "update_fingerprint", "external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed"} {
+	for _, column := range []string{"auto_update_enabled", "update_status", "update_checked_at", "update_fingerprint", "external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed", "privileged_allowed"} {
 		exists, err := app.tableHasColumn("stacks", column)
 		if err != nil {
 			t.Fatal(err)
@@ -68,8 +77,15 @@ INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.USBDeviceBindMountsAllowed || managedConfig.Settings.DBusBindMountAllowed || managedConfig.Settings.HostPIDAllowed {
+	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.USBDeviceBindMountsAllowed || managedConfig.Settings.DBusBindMountAllowed || managedConfig.Settings.HostPIDAllowed || !managedConfig.Settings.PrivilegedAllowed {
 		t.Fatalf("expected stack settings migrated to config: %#v", managedConfig.Settings)
+	}
+	managedConfig, err = app.loadManagedStackConfig(filepath.Join(root, "priv-db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managedConfig.Settings.ExternalBindMountsAllowed || managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.USBDeviceBindMountsAllowed || managedConfig.Settings.DBusBindMountAllowed || managedConfig.Settings.HostPIDAllowed || !managedConfig.Settings.PrivilegedAllowed {
+		t.Fatalf("expected privileged setting migrated to config: %#v", managedConfig.Settings)
 	}
 }
 

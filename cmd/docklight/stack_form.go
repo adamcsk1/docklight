@@ -15,6 +15,7 @@ type StackForm struct {
 	USBDeviceBindMountsAllowed bool
 	DBusBindMountAllowed       bool
 	HostPIDAllowed             bool
+	PrivilegedAllowed          bool
 }
 
 type ManagedFileForm struct {
@@ -33,6 +34,7 @@ func newStackFormFromRequest(r *http.Request) StackForm {
 		USBDeviceBindMountsAllowed: r.FormValue("usb_device_bind_mounts_allowed") == "on",
 		DBusBindMountAllowed:       r.FormValue("dbus_bind_mount_allowed") == "on",
 		HostPIDAllowed:             r.FormValue("host_pid_allowed") == "on",
+		PrivilegedAllowed:          r.FormValue("privileged_allowed") == "on",
 	}
 }
 
@@ -47,6 +49,7 @@ func updateStackFormFromRequest(r *http.Request, name string) StackForm {
 		USBDeviceBindMountsAllowed: r.FormValue("usb_device_bind_mounts_allowed") == "on",
 		DBusBindMountAllowed:       r.FormValue("dbus_bind_mount_allowed") == "on",
 		HostPIDAllowed:             r.FormValue("host_pid_allowed") == "on",
+		PrivilegedAllowed:          r.FormValue("privileged_allowed") == "on",
 	}
 }
 

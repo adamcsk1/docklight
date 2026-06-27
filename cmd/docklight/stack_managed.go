@@ -29,6 +29,7 @@ type StackManagedSettings struct {
 	USBDeviceBindMountsAllowed bool `yaml:"usb_device_bind_mounts_allowed,omitempty"`
 	DBusBindMountAllowed       bool `yaml:"dbus_bind_mount_allowed,omitempty"`
 	HostPIDAllowed             bool `yaml:"host_pid_allowed,omitempty"`
+	PrivilegedAllowed          bool `yaml:"privileged_allowed,omitempty"`
 }
 
 type managedFileWrite struct {
@@ -99,6 +100,7 @@ func stackManagedSettingsFromForm(form StackForm) StackManagedSettings {
 		USBDeviceBindMountsAllowed: form.USBDeviceBindMountsAllowed,
 		DBusBindMountAllowed:       form.DBusBindMountAllowed,
 		HostPIDAllowed:             form.HostPIDAllowed,
+		PrivilegedAllowed:          form.PrivilegedAllowed,
 	}
 }
 
@@ -108,6 +110,7 @@ func applyManagedSettingsToStack(stack *Stack, settings StackManagedSettings) {
 	stack.USBDeviceBindMountsAllowed = settings.USBDeviceBindMountsAllowed
 	stack.DBusBindMountAllowed = settings.DBusBindMountAllowed
 	stack.HostPIDAllowed = settings.HostPIDAllowed
+	stack.PrivilegedAllowed = settings.PrivilegedAllowed
 }
 
 func managedFoldersText(folders []string) string {

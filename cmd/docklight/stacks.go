@@ -28,6 +28,7 @@ type Stack struct {
 	USBDeviceBindMountsAllowed bool
 	DBusBindMountAllowed       bool
 	HostPIDAllowed             bool
+	PrivilegedAllowed          bool
 	Containers                 []Container
 	ContainerCount             int
 }

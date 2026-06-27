@@ -167,7 +167,7 @@ INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'adm
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.USBDeviceBindMountsAllowed || stack.DBusBindMountAllowed || stack.HostPIDAllowed {
+	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.USBDeviceBindMountsAllowed || stack.DBusBindMountAllowed || stack.HostPIDAllowed || stack.PrivilegedAllowed {
 		t.Fatalf("expected fresh stack settings to default false: %#v", stack)
 	}
 	var count int
@@ -219,7 +219,7 @@ func TestRescanLoadsMountPermissionsFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stack.ExternalBindMountsAllowed || !stack.DockerSocketMountsAllowed || !stack.USBDeviceBindMountsAllowed || !stack.DBusBindMountAllowed || stack.HostPIDAllowed {
+	if !stack.ExternalBindMountsAllowed || !stack.DockerSocketMountsAllowed || !stack.USBDeviceBindMountsAllowed || !stack.DBusBindMountAllowed || stack.HostPIDAllowed || stack.PrivilegedAllowed {
 		t.Fatalf("expected stack settings loaded from config: %#v", stack)
 	}
 }

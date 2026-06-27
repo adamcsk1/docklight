@@ -72,7 +72,7 @@ func (app *App) cleanupStackSchema() error {
 		return err
 	}
 	needsRebuild := false
-	for _, column := range []string{"auto_update_enabled", "update_status", "update_checked_at", "update_fingerprint", "external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed"} {
+	for _, column := range []string{"auto_update_enabled", "update_status", "update_checked_at", "update_fingerprint", "external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed", "privileged_allowed"} {
 		exists, err := app.tableHasColumn("stacks", column)
 		if err != nil {
 			return err
@@ -107,16 +107,25 @@ ALTER TABLE stacks_new RENAME TO stacks;
 }
 
 func (app *App) migrateDBStackSettingsToConfig() error {
-	for _, column := range []string{"external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed"} {
+	settingColumns := []string{"external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed", "privileged_allowed"}
+	selectColumns := make([]string, 0, len(settingColumns))
+	whereColumns := make([]string, 0, len(settingColumns))
+	for _, column := range settingColumns {
 		exists, err := app.tableHasColumn("stacks", column)
 		if err != nil {
 			return err
 		}
-		if !exists {
-			return nil
+		if exists {
+			selectColumns = append(selectColumns, column)
+			whereColumns = append(whereColumns, column+" = 1")
+			continue
 		}
+		selectColumns = append(selectColumns, "0")
 	}
-	rows, err := app.db.Query(`SELECT relative_path, external_bind_mounts_allowed, docker_socket_mounts_allowed, host_pid_allowed FROM stacks WHERE ignored = 0 AND (external_bind_mounts_allowed = 1 OR docker_socket_mounts_allowed = 1 OR host_pid_allowed = 1)`)
+	if len(whereColumns) == 0 {
+		return nil
+	}
+	rows, err := app.db.Query(`SELECT relative_path, ` + strings.Join(selectColumns, ", ") + ` FROM stacks WHERE ignored = 0 AND (` + strings.Join(whereColumns, " OR ") + `)`)
 	if err != nil {
 		return err
 	}
@@ -126,7 +135,8 @@ func (app *App) migrateDBStackSettingsToConfig() error {
 		var externalBinds int
 		var dockerSocketMounts int
 		var hostPID int
-		if err := rows.Scan(&relativePath, &externalBinds, &dockerSocketMounts, &hostPID); err != nil {
+		var privileged int
+		if err := rows.Scan(&relativePath, &externalBinds, &dockerSocketMounts, &hostPID, &privileged); err != nil {
 			return err
 		}
 		stackDir := filepath.Join(app.cfg.StacksRoot, relativePath)
@@ -138,7 +148,10 @@ func (app *App) migrateDBStackSettingsToConfig() error {
 			continue
 		}
 		managedConfig := app.loadManagedStackConfigOrDefault(stackDir)
-		managedConfig.Settings = StackManagedSettings{ExternalBindMountsAllowed: externalBinds == 1, DockerSocketMountsAllowed: dockerSocketMounts == 1, HostPIDAllowed: hostPID == 1}
+		managedConfig.Settings.ExternalBindMountsAllowed = managedConfig.Settings.ExternalBindMountsAllowed || externalBinds == 1
+		managedConfig.Settings.DockerSocketMountsAllowed = managedConfig.Settings.DockerSocketMountsAllowed || dockerSocketMounts == 1
+		managedConfig.Settings.HostPIDAllowed = managedConfig.Settings.HostPIDAllowed || hostPID == 1
+		managedConfig.Settings.PrivilegedAllowed = managedConfig.Settings.PrivilegedAllowed || privileged == 1
 		if err := writeStackManagedConfig(stackDir, managedConfig); err != nil {
 			return err
 		}

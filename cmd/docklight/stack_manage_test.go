@@ -169,6 +169,34 @@ func TestCreateStackPersistsHostPIDPermissionInConfig(t *testing.T) {
 	}
 }
 
+func TestCreateStackPersistsPrivilegedPermissionInConfig(t *testing.T) {
+	root := t.TempDir()
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		return "ok", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "privileged-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest\n    privileged: true")
+	values.Set("privileged_allowed", "on")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected create redirect, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	managedConfig, err := app.loadManagedStackConfig(filepath.Join(root, "privileged-stack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managedConfig.Settings.PrivilegedAllowed {
+		t.Fatalf("expected privileged permission in managed config: %#v", managedConfig.Settings)
+	}
+}
+
 func TestCreateStackPersistsDBusBindPermissionInConfig(t *testing.T) {
 	root := t.TempDir()
 	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
@@ -402,6 +430,36 @@ func TestCreateStackRejectsHostPIDByDefault(t *testing.T) {
 	}
 }
 
+func TestCreateStackRejectsPrivilegedByDefault(t *testing.T) {
+	root := t.TempDir()
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		t.Fatalf("runner should not be called when validation fails")
+		return "", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "privileged-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest\n    privileged: true")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "blocked host-level option: privileged") {
+		t.Fatalf("expected validation error, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM stacks WHERE name = 'privileged-stack'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("expected rejected stack not to be persisted, got count %d", count)
+	}
+}
+
 func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	root := t.TempDir()
 	stackDir := filepath.Join(root, "editable")
@@ -431,6 +489,7 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	values.Set("usb_device_bind_mounts_allowed", "on")
 	values.Set("dbus_bind_mount_allowed", "on")
 	values.Set("host_pid_allowed", "on")
+	values.Set("privileged_allowed", "on")
 	values.Set("update_mode", "save")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -452,7 +511,7 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || !managedConfig.Settings.USBDeviceBindMountsAllowed || !managedConfig.Settings.DBusBindMountAllowed || !managedConfig.Settings.HostPIDAllowed {
+	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || !managedConfig.Settings.USBDeviceBindMountsAllowed || !managedConfig.Settings.DBusBindMountAllowed || !managedConfig.Settings.HostPIDAllowed || !managedConfig.Settings.PrivilegedAllowed {
 		t.Fatalf("expected stack settings in managed config: %#v", managedConfig.Settings)
 	}
 	if _, err := os.Stat(filepath.Join(stackDir, "config")); err != nil {
