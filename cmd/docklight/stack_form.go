@@ -13,6 +13,7 @@ type StackForm struct {
 	ExternalBindMountsAllowed  bool
 	DockerSocketMountsAllowed  bool
 	USBDeviceBindMountsAllowed bool
+	DBusBindMountAllowed       bool
 	HostPIDAllowed             bool
 }
 
@@ -30,6 +31,7 @@ func newStackFormFromRequest(r *http.Request) StackForm {
 		ExternalBindMountsAllowed:  r.FormValue("external_bind_mounts_allowed") == "on",
 		DockerSocketMountsAllowed:  r.FormValue("docker_socket_mounts_allowed") == "on",
 		USBDeviceBindMountsAllowed: r.FormValue("usb_device_bind_mounts_allowed") == "on",
+		DBusBindMountAllowed:       r.FormValue("dbus_bind_mount_allowed") == "on",
 		HostPIDAllowed:             r.FormValue("host_pid_allowed") == "on",
 	}
 }
@@ -43,6 +45,7 @@ func updateStackFormFromRequest(r *http.Request, name string) StackForm {
 		ExternalBindMountsAllowed:  r.FormValue("external_bind_mounts_allowed") == "on",
 		DockerSocketMountsAllowed:  r.FormValue("docker_socket_mounts_allowed") == "on",
 		USBDeviceBindMountsAllowed: r.FormValue("usb_device_bind_mounts_allowed") == "on",
+		DBusBindMountAllowed:       r.FormValue("dbus_bind_mount_allowed") == "on",
 		HostPIDAllowed:             r.FormValue("host_pid_allowed") == "on",
 	}
 }

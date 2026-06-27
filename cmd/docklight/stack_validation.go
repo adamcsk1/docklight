@@ -48,9 +48,9 @@ func parseBindFolders(input string) ([]string, error) {
 	return folders, nil
 }
 
-func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, envFile string, envFilePresent bool, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID bool) error {
+func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, envFile string, envFilePresent bool, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID bool) error {
 	if !composeNeedsInterpolation(composeYAML, envFile, envFilePresent) {
-		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID)
+		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID)
 	}
 	if err := app.ensureStackPathSafe(stackDir); err != nil {
 		return err
@@ -98,9 +98,9 @@ func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, en
 	}
 	resolved := strings.TrimSpace(output)
 	if resolved == "" {
-		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID)
+		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID)
 	}
-	return validateResolvedComposeYAML(resolved, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID)
+	return validateResolvedComposeYAML(resolved, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID)
 }
 
 func composeNeedsInterpolation(composeYAML, envFile string, envFilePresent bool) bool {
@@ -108,26 +108,26 @@ func composeNeedsInterpolation(composeYAML, envFile string, envFilePresent bool)
 }
 
 func validateComposeYAML(input string) error {
-	return validateComposeYAMLWithExternalBinds(input, false, false, false, false)
+	return validateComposeYAMLWithExternalBinds(input, false, false, false, false, false)
 }
 
-func validateComposeYAMLWithExternalBinds(input string, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID bool) error {
+func validateComposeYAMLWithExternalBinds(input string, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID bool) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(input), &root); err != nil {
 		return err
 	}
-	return validateComposeNode(&root, "", allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID)
+	return validateComposeNode(&root, "", allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID)
 }
 
-func validateResolvedComposeYAML(input, stackDir string, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID bool) error {
+func validateResolvedComposeYAML(input, stackDir string, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID bool) error {
 	var root yaml.Node
 	if err := yaml.Unmarshal([]byte(input), &root); err != nil {
 		return err
 	}
-	return validateComposeNode(&root, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID)
+	return validateComposeNode(&root, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID)
 }
 
-func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID bool) error {
+func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID bool) error {
 	if node == nil {
 		return nil
 	}
@@ -157,25 +157,25 @@ func validateComposeNode(node *yaml.Node, stackDir string, allowExternalBinds, a
 			case "cap_add", "devices", "security_opt":
 				return fmt.Errorf("compose yaml contains blocked host-level option: %s", key)
 			case "volumes":
-				if err := validateComposeVolumes(value, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds); err != nil {
+				if err := validateComposeVolumes(value, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount); err != nil {
 					return err
 				}
 			}
-			if err := validateComposeNode(value, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID); err != nil {
+			if err := validateComposeNode(value, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
 	for _, child := range node.Content {
-		if err := validateComposeNode(child, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowHostPID); err != nil {
+		if err := validateComposeNode(child, stackDir, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func validateComposeVolumes(node *yaml.Node, stackDir string, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds bool) error {
+func validateComposeVolumes(node *yaml.Node, stackDir string, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount bool) error {
 	if node == nil || node.Kind != yaml.SequenceNode {
 		return nil
 	}
@@ -187,7 +187,7 @@ func validateComposeVolumes(node *yaml.Node, stackDir string, allowExternalBinds
 				if bindSourceExposesDockerSocket(source, allowDockerSocketMounts) {
 					return fmt.Errorf("compose yaml contains blocked docker socket mount: %s", source)
 				}
-				if dockerSocketMountAllowed(source, allowDockerSocketMounts) || usbDeviceBindMountAllowed(source, allowUSBDeviceBinds) {
+				if dockerSocketMountAllowed(source, allowDockerSocketMounts) || usbDeviceBindMountAllowed(source, allowUSBDeviceBinds) || dbusBindMountAllowed(source, allowDBusBindMount) {
 					continue
 				}
 			}
@@ -208,7 +208,7 @@ func validateComposeVolumes(node *yaml.Node, stackDir string, allowExternalBinds
 				if bindSourceExposesDockerSocket(sourceNode.Value, allowDockerSocketMounts) {
 					return fmt.Errorf("compose yaml contains blocked docker socket mount: %s", sourceNode.Value)
 				}
-				if dockerSocketMountAllowed(sourceNode.Value, allowDockerSocketMounts) || usbDeviceBindMountAllowed(sourceNode.Value, allowUSBDeviceBinds) {
+				if dockerSocketMountAllowed(sourceNode.Value, allowDockerSocketMounts) || usbDeviceBindMountAllowed(sourceNode.Value, allowUSBDeviceBinds) || dbusBindMountAllowed(sourceNode.Value, allowDBusBindMount) {
 					continue
 				}
 				if !allowExternalBinds && !pathInsideOrEqual(stackDir, sourceNode.Value) {
@@ -226,6 +226,14 @@ func usbDeviceBindMountAllowed(source string, allowed bool) bool {
 	}
 	cleaned := filepath.ToSlash(path.Clean(filepath.ToSlash(strings.TrimSpace(source))))
 	return cleaned == "/dev/bus/usb"
+}
+
+func dbusBindMountAllowed(source string, allowed bool) bool {
+	if !allowed {
+		return false
+	}
+	cleaned := filepath.ToSlash(path.Clean(filepath.ToSlash(strings.TrimSpace(source))))
+	return cleaned == "/run/dbus"
 }
 
 func dockerSocketMountAllowed(source string, allowExactSocket bool) bool {

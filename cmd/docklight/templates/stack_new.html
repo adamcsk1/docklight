@@ -87,6 +87,11 @@
       </label>
       <p class="form-hint">Allows the exact host bind mount <code>/dev/bus/usb</code>. This exposes USB devices to the container. Enable only for trusted stacks.</p>
       <label class="switch-label">
+        <input type="checkbox" name="dbus_bind_mount_allowed" {{if .StackForm.DBusBindMountAllowed}}checked{{end}}>
+        <span>allow DBus system bus bind mount</span>
+      </label>
+      <p class="form-hint">Allows the exact host bind mount <code>/run/dbus</code>. This exposes the host system bus to the container. Enable only for trusted stacks.</p>
+      <label class="switch-label">
         <input type="checkbox" name="host_pid_allowed" {{if .StackForm.HostPIDAllowed}}checked{{end}}>
         <span>allow host PID namespace</span>
       </label>

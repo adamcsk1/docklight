@@ -71,6 +71,10 @@
         <span>allow USB device bind mount</span>
       </label>
       <label class="switch-label">
+        <input type="checkbox" name="dbus_bind_mount_allowed" {{if .StackForm.DBusBindMountAllowed}}checked{{end}}>
+        <span>allow DBus system bus bind mount</span>
+      </label>
+      <label class="switch-label">
         <input type="checkbox" name="host_pid_allowed" {{if .StackForm.HostPIDAllowed}}checked{{end}}>
         <span>allow host PID namespace</span>
       </label>
@@ -78,6 +82,7 @@
       <p class="form-hint">External bind mounts allow paths outside the stack folder, such as <code>/etc/localtime</code> or media folders. Host-level options remain blocked.</p>
       <p class="form-hint">Docker socket mounts allow exact socket file mounts for <code>/var/run/docker.sock</code> or <code>/run/docker.sock</code>. This gives containers powerful control over the Docker host. Enable only for trusted stacks.</p>
       <p class="form-hint">USB device bind mounts allow the exact host bind mount <code>/dev/bus/usb</code>, exposing USB devices to the container. Enable only for trusted stacks.</p>
+      <p class="form-hint">DBus system bus bind mounts allow the exact host bind mount <code>/run/dbus</code>, exposing the host system bus to the container. Enable only for trusted stacks.</p>
       <p class="form-hint">Host PID namespace allows <code>pid: host</code>, exposing host process IDs to the container. Enable only for trusted stacks.</p>
       <div class="actions actions-large">
         <button class="button button-secondary" type="submit" name="update_mode" value="save" data-loading-text="Saving...">Save</button>

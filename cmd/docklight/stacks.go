@@ -26,6 +26,7 @@ type Stack struct {
 	ExternalBindMountsAllowed  bool
 	DockerSocketMountsAllowed  bool
 	USBDeviceBindMountsAllowed bool
+	DBusBindMountAllowed       bool
 	HostPIDAllowed             bool
 	Containers                 []Container
 	ContainerCount             int

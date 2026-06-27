@@ -108,7 +108,7 @@ func TestCreateStackPersistsDockerSocketMountPermissionInConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.USBDeviceBindMountsAllowed || managedConfig.Settings.HostPIDAllowed {
+	if managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || managedConfig.Settings.USBDeviceBindMountsAllowed || managedConfig.Settings.DBusBindMountAllowed || managedConfig.Settings.HostPIDAllowed {
 		t.Fatalf("expected only docker socket permission in managed config: %#v", managedConfig.Settings)
 	}
 }
@@ -166,6 +166,34 @@ func TestCreateStackPersistsHostPIDPermissionInConfig(t *testing.T) {
 	}
 	if !managedConfig.Settings.HostPIDAllowed {
 		t.Fatalf("expected host PID permission in managed config: %#v", managedConfig.Settings)
+	}
+}
+
+func TestCreateStackPersistsDBusBindPermissionInConfig(t *testing.T) {
+	root := t.TempDir()
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		return "ok", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "dbus-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest\n    volumes:\n      - /run/dbus:/run/dbus")
+	values.Set("dbus_bind_mount_allowed", "on")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected create redirect, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+
+	managedConfig, err := app.loadManagedStackConfig(filepath.Join(root, "dbus-stack"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !managedConfig.Settings.DBusBindMountAllowed {
+		t.Fatalf("expected DBus bind permission in managed config: %#v", managedConfig.Settings)
 	}
 }
 
@@ -258,7 +286,7 @@ func TestInvalidManagedConfigDoesNotBreakStackLoading(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.USBDeviceBindMountsAllowed || stack.HostPIDAllowed {
+	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.USBDeviceBindMountsAllowed || stack.DBusBindMountAllowed || stack.HostPIDAllowed {
 		t.Fatalf("expected invalid managed config to use safe defaults: %#v", stack)
 	}
 	stacks, err := app.loadStacks(false)
@@ -401,6 +429,7 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	values.Set("external_bind_mounts_allowed", "on")
 	values.Set("docker_socket_mounts_allowed", "on")
 	values.Set("usb_device_bind_mounts_allowed", "on")
+	values.Set("dbus_bind_mount_allowed", "on")
 	values.Set("host_pid_allowed", "on")
 	values.Set("update_mode", "save")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
@@ -423,7 +452,7 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || !managedConfig.Settings.USBDeviceBindMountsAllowed || !managedConfig.Settings.HostPIDAllowed {
+	if !managedConfig.Settings.ExternalBindMountsAllowed || !managedConfig.Settings.DockerSocketMountsAllowed || !managedConfig.Settings.USBDeviceBindMountsAllowed || !managedConfig.Settings.DBusBindMountAllowed || !managedConfig.Settings.HostPIDAllowed {
 		t.Fatalf("expected stack settings in managed config: %#v", managedConfig.Settings)
 	}
 	if _, err := os.Stat(filepath.Join(stackDir, "config")); err != nil {
