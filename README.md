@@ -72,6 +72,7 @@ For deployment options, image tags, Windows paths, private registries, reverse p
 | `SESSION_SECRET` | required | Long random secret for sessions. |
 | `STACKS_ROOT` | `/stacks` | Mounted compose root inside the Docklight container. |
 | `STACKS_HOST_ROOT` | `STACKS_ROOT` | Docker-daemon-visible host path for the same stack root. Set this when stack compose files use relative bind mounts and `/stacks` is not the same path on the Docker host. |
+| `STACKS_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to stack files Docklight creates, such as `.docklight.config.yml`, compose files, managed files, and managed folders. Use this to keep host bind-mounted stack files editable by your host user while Docklight still runs as root for Docker socket access. |
 | `DB_PATH` | `/data/docklight.db` | SQLite database path. |
 | `COOKIE_SECURE` | `false` | Set to `true` when serving only through HTTPS. |
 
@@ -92,6 +93,8 @@ Activity retention defaults to 30 days and can be changed on the Config page. Th
 Verbose logging is off by default. When enabled on the Config page, Docklight writes timestamped troubleshooting logs to the data folder.
 
 When Docklight creates or edits extra stack-local folders, files, or stack safety checkboxes, it stores those stack-specific settings in `.docklight.config.yml` inside that stack folder. Only files listed there are editable in Docklight; manual files in old or hand-created stacks are left untouched unless added through the stack edit UI.
+
+On Linux bind mounts, set `STACKS_FILE_OWNER` to your host user's numeric `uid:gid` if Docklight-created stack files should remain editable from the host without root, for example `STACKS_FILE_OWNER: "1000:1000"`.
 
 It does not store container IDs or live Docker state. If the user changes containers with the Docker CLI, Docklight reads the live state again.
 

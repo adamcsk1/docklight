@@ -4,9 +4,15 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 )
+
+type fileOwner struct {
+	UID int
+	GID int
+}
 
 type Config struct {
 	Addr           string
@@ -16,6 +22,7 @@ type Config struct {
 	SessionSecret  string
 	StacksRoot     string
 	StacksHostRoot string
+	StackFileOwner *fileOwner
 	DBPath         string
 	ActionTimeout  time.Duration
 	CookieSecure   bool
@@ -23,6 +30,10 @@ type Config struct {
 
 func loadConfig() (Config, error) {
 	stacksRoot := env("STACKS_ROOT", "/stacks")
+	stackFileOwner, err := parseStackFileOwnerEnv()
+	if err != nil {
+		return Config{}, err
+	}
 	cfg := Config{
 		Addr:           env("ADDR", ":8080"),
 		BaseURL:        normalizeBaseURL(env("BASE_URL", "/")),
@@ -31,6 +42,7 @@ func loadConfig() (Config, error) {
 		SessionSecret:  os.Getenv("SESSION_SECRET"),
 		StacksRoot:     stacksRoot,
 		StacksHostRoot: env("STACKS_HOST_ROOT", stacksRoot),
+		StackFileOwner: stackFileOwner,
 		DBPath:         env("DB_PATH", "/data/docklight.db"),
 		ActionTimeout:  10 * time.Minute,
 		CookieSecure:   parseBoolEnv("COOKIE_SECURE", false),
@@ -42,6 +54,21 @@ func loadConfig() (Config, error) {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+func parseStackFileOwnerEnv() (*fileOwner, error) {
+	value := strings.TrimSpace(os.Getenv("STACKS_FILE_OWNER"))
+	if value == "" {
+		return nil, nil
+	}
+	if runtime.GOOS == "windows" {
+		return nil, errWindowsChownUnsupported("STACKS_FILE_OWNER", value)
+	}
+	uid, gid, err := parseManagedOwner(value, "STACKS_FILE_OWNER")
+	if err != nil {
+		return nil, err
+	}
+	return &fileOwner{UID: uid, GID: gid}, nil
 }
 
 func parseBoolEnv(key string, fallback bool) bool {

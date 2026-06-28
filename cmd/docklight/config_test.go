@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"runtime"
 	"testing"
 )
 
@@ -13,6 +14,9 @@ func TestConfigParsesProductionEnvironment(t *testing.T) {
 	t.Setenv("SESSION_SECRET", "secret")
 	t.Setenv("STACKS_ROOT", "/srv/stacks")
 	t.Setenv("STACKS_HOST_ROOT", "/host/stacks")
+	if runtime.GOOS != "windows" {
+		t.Setenv("STACKS_FILE_OWNER", "1000:1001")
+	}
 	t.Setenv("DB_PATH", "/srv/data/app.db")
 	t.Setenv("COOKIE_SECURE", "yes")
 
@@ -23,10 +27,24 @@ func TestConfigParsesProductionEnvironment(t *testing.T) {
 	if cfg.Addr != ":9090" || cfg.BaseURL != "/docklight" || cfg.StacksRoot != "/srv/stacks" || cfg.StacksHostRoot != "/host/stacks" || cfg.DBPath != "/srv/data/app.db" || !cfg.CookieSecure {
 		t.Fatalf("unexpected config: %#v", cfg)
 	}
+	if runtime.GOOS != "windows" && (cfg.StackFileOwner == nil || cfg.StackFileOwner.UID != 1000 || cfg.StackFileOwner.GID != 1001) {
+		t.Fatalf("unexpected stack file owner: %#v", cfg.StackFileOwner)
+	}
 
 	t.Setenv("BASE_URL", "/bad%2fpath")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("expected invalid base URL to fail")
+	}
+}
+
+func TestLoadConfigRejectsInvalidStackFileOwner(t *testing.T) {
+	t.Setenv("ADMIN_USER", "admin")
+	t.Setenv("ADMIN_PASSWORD", "pw")
+	t.Setenv("SESSION_SECRET", "secret")
+	t.Setenv("STACKS_FILE_OWNER", "user:group")
+
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("expected invalid STACKS_FILE_OWNER to fail")
 	}
 }
 

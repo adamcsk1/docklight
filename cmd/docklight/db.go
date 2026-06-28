@@ -155,7 +155,7 @@ func (app *App) migrateDBStackSettingsToConfig() error {
 		managedConfig.Settings.DockerSocketMountsAllowed = managedConfig.Settings.DockerSocketMountsAllowed || dockerSocketMounts == 1
 		managedConfig.Settings.HostPIDAllowed = managedConfig.Settings.HostPIDAllowed || hostPID == 1
 		managedConfig.Settings.PrivilegedAllowed = managedConfig.Settings.PrivilegedAllowed || privileged == 1
-		if err := writeStackManagedConfig(stackDir, managedConfig); err != nil {
+		if err := app.writeStackManagedConfigFile(stackDir, managedConfig); err != nil {
 			return err
 		}
 	}

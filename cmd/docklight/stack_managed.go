@@ -94,15 +94,15 @@ func (app *App) loadManagedStackConfigOrDefault(stackDir string) StackManagedCon
 	return cfg
 }
 
-func writeManagedStackConfig(stackDir string, folders []StackManagedConfigFolder, files []managedFileWrite, settings StackManagedSettings) error {
+func (app *App) writeManagedStackConfig(stackDir string, folders []StackManagedConfigFolder, files []managedFileWrite, settings StackManagedSettings) error {
 	cfg := StackManagedConfig{Folders: folders, Settings: settings}
 	for _, file := range files {
 		cfg.Files = append(cfg.Files, StackManagedConfigFile{Path: file.Path, Chmod: file.Chmod, Chown: file.Chown})
 	}
-	return writeStackManagedConfig(stackDir, cfg)
+	return app.writeStackManagedConfigFile(stackDir, cfg)
 }
 
-func writeStackManagedConfig(stackDir string, cfg StackManagedConfig) error {
+func (app *App) writeStackManagedConfigFile(stackDir string, cfg StackManagedConfig) error {
 	content, err := yaml.Marshal(cfg)
 	if err != nil {
 		return err
@@ -110,7 +110,18 @@ func writeStackManagedConfig(stackDir string, cfg StackManagedConfig) error {
 	if err := ensureNoSymlinkInStackPath(stackDir, stackManagedConfigFile); err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(stackDir, stackManagedConfigFile), content, 0o644)
+	if err := app.chownStackPath(stackDir); err != nil {
+		return err
+	}
+	configPath := filepath.Join(stackDir, stackManagedConfigFile)
+	if err := os.WriteFile(configPath, content, 0o644); err != nil {
+		return err
+	}
+	return app.chownStackPath(configPath)
+}
+
+func writeStackManagedConfig(stackDir string, cfg StackManagedConfig) error {
+	return (&App{}).writeStackManagedConfigFile(stackDir, cfg)
 }
 
 func stackManagedSettingsFromForm(form StackForm) StackManagedSettings {
@@ -280,7 +291,7 @@ func cleanStackRelativePath(rawValue, label string) (string, error) {
 	return cleaned, nil
 }
 
-func writeManagedFiles(stackDir string, folders []StackManagedConfigFolder, files []managedFileWrite) error {
+func (app *App) writeManagedFiles(stackDir string, folders []StackManagedConfigFolder, files []managedFileWrite) error {
 	if err := validateManagedFileParents(stackDir, folders, files); err != nil {
 		return err
 	}
@@ -322,12 +333,18 @@ func writeManagedFiles(stackDir string, folders []StackManagedConfigFolder, file
 			if err != nil {
 				return err
 			}
-			if err := os.Chown(filePath, uid, gid); err != nil {
+			if err := chownPath(filePath, uid, gid); err != nil {
 				return err
 			}
+		} else if err := app.chownStackPath(filePath); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+func writeManagedFiles(stackDir string, folders []StackManagedConfigFolder, files []managedFileWrite) error {
+	return (&App{}).writeManagedFiles(stackDir, folders, files)
 }
 
 func validateManagedFileParents(stackDir string, folders []StackManagedConfigFolder, files []managedFileWrite) error {

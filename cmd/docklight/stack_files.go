@@ -9,6 +9,8 @@ import (
 	"strings"
 )
 
+var chownPath = os.Chown
+
 func (app *App) safeStackPath(name string) (string, error) {
 	if _, err := validateStackName(name); err != nil {
 		return "", err
@@ -88,12 +90,15 @@ func (app *App) writeStackFiles(name, composeYAML string, folders []StackManaged
 	if err := os.MkdirAll(stackDir, 0o755); err != nil {
 		return err
 	}
+	if err := app.chownStackPath(stackDir); err != nil {
+		return err
+	}
 	for _, folder := range folders {
 		path := filepath.Join(stackDir, filepath.FromSlash(folder.Path))
 		if err := app.ensureStackPathSafe(path); err != nil {
 			return err
 		}
-		if err := createManagedFolder(stackDir, path, folder); err != nil {
+		if err := app.createManagedFolder(stackDir, path, folder); err != nil {
 			return err
 		}
 	}
@@ -107,10 +112,13 @@ func (app *App) writeStackFiles(name, composeYAML string, folders []StackManaged
 	if err := os.WriteFile(composePath, []byte(composeYAML+"\n"), 0o644); err != nil {
 		return err
 	}
-	if err := writeManagedFiles(stackDir, folders, managedFiles); err != nil {
+	if err := app.chownStackPath(composePath); err != nil {
 		return err
 	}
-	return writeManagedStackConfig(stackDir, folders, managedFiles, settings)
+	if err := app.writeManagedFiles(stackDir, folders, managedFiles); err != nil {
+		return err
+	}
+	return app.writeManagedStackConfig(stackDir, folders, managedFiles, settings)
 }
 
 func (app *App) updateStackFiles(stack Stack, composeYAML string, folders []StackManagedConfigFolder, managedFiles []managedFileWrite, settings StackManagedSettings) error {
@@ -136,7 +144,7 @@ func (app *App) updateStackFiles(stack Stack, composeYAML string, folders []Stac
 		if err := app.ensureStackPathSafe(folderPath); err != nil {
 			return err
 		}
-		if err := createManagedFolder(stack.AbsolutePath, folderPath, folder); err != nil {
+		if err := app.createManagedFolder(stack.AbsolutePath, folderPath, folder); err != nil {
 			return err
 		}
 	}
@@ -146,7 +154,10 @@ func (app *App) updateStackFiles(stack Stack, composeYAML string, folders []Stac
 	if err := os.WriteFile(composePath, []byte(composeYAML+"\n"), 0o644); err != nil {
 		return err
 	}
-	if err := writeManagedFiles(stack.AbsolutePath, folders, managedFiles); err != nil {
+	if err := app.chownStackPath(composePath); err != nil {
+		return err
+	}
+	if err := app.writeManagedFiles(stack.AbsolutePath, folders, managedFiles); err != nil {
 		return err
 	}
 	if managedConfigTracksEnv(previousConfig) && !managedFilesTrackEnv(managedFiles) {
@@ -155,10 +166,10 @@ func (app *App) updateStackFiles(stack Stack, composeYAML string, folders []Stac
 			return err
 		}
 	}
-	return writeManagedStackConfig(stack.AbsolutePath, folders, managedFiles, settings)
+	return app.writeManagedStackConfig(stack.AbsolutePath, folders, managedFiles, settings)
 }
 
-func createManagedFolder(stackDir, folderPath string, folder StackManagedConfigFolder) error {
+func (app *App) createManagedFolder(stackDir, folderPath string, folder StackManagedConfigFolder) error {
 	if err := ensureNoSymlinkInStackPath(stackDir, folder.Path); err != nil {
 		return err
 	}
@@ -171,6 +182,9 @@ func createManagedFolder(stackDir, folderPath string, folder StackManagedConfigF
 		mode = parsed
 	}
 	if err := os.MkdirAll(filepath.Dir(folderPath), 0o755); err != nil {
+		return err
+	}
+	if err := app.chownStackPathParents(stackDir, folderPath); err != nil {
 		return err
 	}
 	if err := os.Mkdir(folderPath, mode); err != nil {
@@ -207,7 +221,47 @@ func createManagedFolder(stackDir, folderPath string, folder StackManagedConfigF
 		if err != nil {
 			return err
 		}
-		if err := os.Chown(folderPath, uid, gid); err != nil {
+		if err := chownPath(folderPath, uid, gid); err != nil {
+			return err
+		}
+	} else if err := app.chownStackPath(folderPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (app *App) chownStackPath(targetPath string) error {
+	if app.cfg.StackFileOwner == nil {
+		return nil
+	}
+	if runtime.GOOS == "windows" {
+		return errWindowsChownUnsupported("STACKS_FILE_OWNER", targetPath)
+	}
+	return chownPath(targetPath, app.cfg.StackFileOwner.UID, app.cfg.StackFileOwner.GID)
+}
+
+func (app *App) chownStackPathParents(stackDir, targetPath string) error {
+	if app.cfg.StackFileOwner == nil {
+		return nil
+	}
+	parentPath := filepath.Dir(targetPath)
+	rel, err := filepath.Rel(stackDir, parentPath)
+	if err != nil {
+		return err
+	}
+	if rel == "." {
+		return nil
+	}
+	if pathEscapesRoot(rel) {
+		return errors.New("refusing to operate outside stack folder")
+	}
+	current := stackDir
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		if err := app.chownStackPath(current); err != nil {
 			return err
 		}
 	}

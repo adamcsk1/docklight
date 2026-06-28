@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -50,9 +51,19 @@ INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:
 `); err != nil {
 		t.Fatal(err)
 	}
-	app := &App{cfg: Config{StacksRoot: root}, db: db}
+	cfg := Config{StacksRoot: root}
+	var calls *[]chownCall
+	if runtime.GOOS != "windows" {
+		calls = recordChown(t)
+		cfg.StackFileOwner = &fileOwner{UID: 1000, GID: 1001}
+	}
+	app := &App{cfg: cfg, db: db}
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
+	}
+	if calls != nil {
+		assertChownCall(t, *calls, filepath.Join(root, "web", stackManagedConfigFile), 1000, 1001)
+		assertChownCall(t, *calls, filepath.Join(root, "priv-db", stackManagedConfigFile), 1000, 1001)
 	}
 	for _, column := range []string{"auto_update_enabled", "update_status", "update_checked_at", "update_fingerprint", "external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed", "privileged_allowed"} {
 		exists, err := app.tableHasColumn("stacks", column)

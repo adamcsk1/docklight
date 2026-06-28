@@ -69,6 +69,7 @@ Use a GitHub token with `read:packages`. Public packages do not require login.
 | `SESSION_SECRET` | required | Long random secret for sessions. |
 | `STACKS_ROOT` | `/stacks` | Mounted compose root inside the Docklight container. |
 | `STACKS_HOST_ROOT` | `STACKS_ROOT` | Docker-daemon-visible host path for the same stack root. Set this when stack compose files use relative bind mounts and `/stacks` is not the same path on the Docker host. |
+| `STACKS_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to stack files Docklight creates, such as `.docklight.config.yml`, compose files, managed files, and managed folders. Use this to keep host bind-mounted stack files editable by your host user while Docklight still runs as root for Docker socket access. |
 | `DB_PATH` | `/data/docklight.db` | SQLite database path. |
 | `COOKIE_SECURE` | `false` | Set to `true` when serving only through HTTPS. |
 
@@ -82,9 +83,12 @@ volumes:
 environment:
   STACKS_ROOT: /stacks
   STACKS_HOST_ROOT: /home/administrator/docker
+  STACKS_FILE_OWNER: "1000:1000"
 ```
 
 `STACKS_HOST_ROOT` must point to the same host folder as the `/stacks` mount. Docklight keeps the Compose project directory inside the container, but rewrites stack-relative bind mounts such as `./data:/app/data` to the Docker-daemon-visible host path for start, upgrade, recreate, and delete actions. Compose project names are pinned to the Docklight stack name.
+
+Set `STACKS_FILE_OWNER` to the numeric `uid:gid` of the host user that should edit stack files. Docklight applies it to stack-local files and folders it creates, including `.docklight.config.yml`, without changing how the Docklight container itself runs. Running the whole container with Compose `user: "1000:1000"` can also avoid root-owned files, but it often requires extra Docker socket, `/data`, and Docker config permissions.
 
 ## Windows Docker Desktop Paths
 

@@ -437,6 +437,67 @@ func TestManagedEnvFileDefaultChmodCanBeOverridden(t *testing.T) {
 	}
 }
 
+func TestStackFileOwnerAppliedOnCreate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chown is not supported on Windows")
+	}
+	root := t.TempDir()
+	calls := recordChown(t)
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute, StackFileOwner: &fileOwner{UID: 1000, GID: 1001}}}
+
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", []StackManagedConfigFolder{{Path: "data/subfolder"}}, []managedFileWrite{{Path: "test.conf", Content: "x"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	assertChownCall(t, *calls, stackDir, 1000, 1001)
+	assertChownCall(t, *calls, filepath.Join(stackDir, "docker-compose.yml"), 1000, 1001)
+	assertChownCall(t, *calls, filepath.Join(stackDir, stackManagedConfigFile), 1000, 1001)
+	assertChownCall(t, *calls, filepath.Join(stackDir, "test.conf"), 1000, 1001)
+	assertChownCall(t, *calls, filepath.Join(stackDir, "data"), 1000, 1001)
+	assertChownCall(t, *calls, filepath.Join(stackDir, "data", "subfolder"), 1000, 1001)
+}
+
+func TestExplicitManagedChownOverridesStackFileOwner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chown is not supported on Windows")
+	}
+	root := t.TempDir()
+	calls := recordChown(t)
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute, StackFileOwner: &fileOwner{UID: 1000, GID: 1000}}}
+
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", []StackManagedConfigFolder{{Path: "data", Chown: "2000:2001"}}, []managedFileWrite{{Path: "test.conf", Content: "x", Chown: "3000:3001"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	assertChownCall(t, *calls, filepath.Join(stackDir, "data"), 2000, 2001)
+	assertChownCall(t, *calls, filepath.Join(stackDir, "test.conf"), 3000, 3001)
+	assertNoChownCall(t, *calls, filepath.Join(stackDir, "data"), 1000, 1000)
+	assertNoChownCall(t, *calls, filepath.Join(stackDir, "test.conf"), 1000, 1000)
+}
+
+func TestStackFileOwnerAppliedOnUpdate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chown is not supported on Windows")
+	}
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	calls := recordChown(t)
+	app.cfg.StackFileOwner = &fileOwner{UID: 1000, GID: 1001}
+	stack := Stack{Name: "web", AbsolutePath: filepath.Join(root, "web"), ComposeFile: "docker-compose.yml"}
+
+	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx:1.27", []StackManagedConfigFolder{{Path: "data"}}, []managedFileWrite{{Path: "test.conf", Content: "x"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	assertChownCall(t, *calls, filepath.Join(stackDir, "docker-compose.yml"), 1000, 1001)
+	assertChownCall(t, *calls, filepath.Join(stackDir, stackManagedConfigFile), 1000, 1001)
+	assertChownCall(t, *calls, filepath.Join(stackDir, "data"), 1000, 1001)
+	assertChownCall(t, *calls, filepath.Join(stackDir, "test.conf"), 1000, 1001)
+}
+
 func TestManagedFolderRejectsSymlinkTarget(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlink handling differs on Windows")

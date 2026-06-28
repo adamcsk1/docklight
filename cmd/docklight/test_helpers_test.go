@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -98,6 +99,55 @@ func mapValues(kv ...string) url.Values {
 		values[kv[i]] = []string{kv[i+1]}
 	}
 	return values
+}
+
+type chownCall struct {
+	Path string
+	UID  int
+	GID  int
+}
+
+func recordChown(t *testing.T) *[]chownCall {
+	t.Helper()
+	var calls []chownCall
+	original := chownPath
+	chownPath = func(path string, uid int, gid int) error {
+		cleaned, err := filepath.Abs(path)
+		if err != nil {
+			return err
+		}
+		calls = append(calls, chownCall{Path: cleaned, UID: uid, GID: gid})
+		return nil
+	}
+	t.Cleanup(func() { chownPath = original })
+	return &calls
+}
+
+func assertChownCall(t *testing.T, calls []chownCall, targetPath string, uid int, gid int) {
+	t.Helper()
+	targetPath, err := filepath.Abs(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if call.Path == targetPath && call.UID == uid && call.GID == gid {
+			return
+		}
+	}
+	t.Fatalf("expected chown %s to %d:%d, got %#v", targetPath, uid, gid, calls)
+}
+
+func assertNoChownCall(t *testing.T, calls []chownCall, targetPath string, uid int, gid int) {
+	t.Helper()
+	targetPath, err := filepath.Abs(targetPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range calls {
+		if call.Path == targetPath && call.UID == uid && call.GID == gid {
+			t.Fatalf("did not expect chown %s to %d:%d, got %#v", targetPath, uid, gid, calls)
+		}
+	}
 }
 
 func installOnlyUsedInventoryRunner(app *App) {
