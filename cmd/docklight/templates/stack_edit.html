@@ -16,15 +16,55 @@
         <span>Docker Compose YAML</span>
         <textarea name="compose_yaml" spellcheck="false" required>{{.StackForm.ComposeYAML}}</textarea>
       </label>
-      <label>
-        <span>Managed folders</span>
-        <textarea name="bind_folders" spellcheck="false" placeholder="data&#10;data/subfolder">{{.StackForm.BindFolders}}</textarea>
-      </label>
-      <p class="form-hint">Tracked in <code>.docklight.config.yml</code>. Only missing managed folders are created; existing folders and contents are preserved.</p>
+      <div class="managed-folders" data-managed-folder-list>
+        <div>
+          <h3>Managed folders</h3>
+          <p class="form-hint">Tracked in <code>.docklight.config.yml</code>. Only missing managed folders are created; existing folders and contents are preserved. Optional chmod uses octal values such as <code>0755</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
+        </div>
+        {{if .StackForm.ManagedFolders}}
+          {{range .StackForm.ManagedFolders}}
+            <div class="managed-folder-row">
+              <label>
+                <span>Relative folder path</span>
+                <input name="managed_folder_path" value="{{.Path}}" placeholder="data">
+              </label>
+              <label>
+                <span>chmod</span>
+                <input name="managed_folder_chmod" value="{{.Chmod}}" placeholder="0755">
+              </label>
+              <label>
+                <span>chown</span>
+                <input name="managed_folder_chown" value="{{.Chown}}" placeholder="1000:1000">
+              </label>
+              <button class="button button-ghost" type="button" data-managed-folder-remove>Remove folder</button>
+            </div>
+          {{end}}
+        {{else}}
+          <p class="form-hint">No extra folders are currently managed for this stack.</p>
+        {{end}}
+      </div>
+      <button class="button button-secondary" type="button" data-managed-folder-add>Add managed folder</button>
+      <template data-managed-folder-template>
+        <div class="managed-folder-row">
+          <label>
+            <span>Relative folder path</span>
+            <input name="managed_folder_path" placeholder="data/subfolder">
+          </label>
+          <label>
+            <span>chmod</span>
+            <input name="managed_folder_chmod" placeholder="0755">
+          </label>
+          <label>
+            <span>chown</span>
+            <input name="managed_folder_chown" placeholder="1000:1000">
+          </label>
+          <button class="button button-ghost" type="button" data-managed-folder-remove>Remove folder</button>
+        </div>
+      </template>
       <div class="managed-files" data-managed-file-list>
         <div>
           <h3>Managed files</h3>
-          <p class="form-hint">Only files listed in <code>.docklight.config.yml</code> are shown here. Add <code>.env</code> to manage Compose interpolation values. Manual files are left untouched unless added as managed files.</p>
+          <p class="form-hint">Only files listed in <code>.docklight.config.yml</code> are shown here. Add <code>.env</code> to manage Compose interpolation values. Manual files are left untouched unless added as managed files. Optional chmod uses octal values such as <code>0644</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
         </div>
         {{if .StackForm.ManagedFiles}}
           {{range .StackForm.ManagedFiles}}
@@ -36,6 +76,14 @@
               <label>
                 <span>File content</span>
                 <textarea name="managed_file_content" spellcheck="false">{{.Content}}</textarea>
+              </label>
+              <label>
+                <span>chmod</span>
+                <input name="managed_file_chmod" value="{{.Chmod}}" placeholder="0644">
+              </label>
+              <label>
+                <span>chown</span>
+                <input name="managed_file_chown" value="{{.Chown}}" placeholder="1000:1000">
               </label>
               <button class="button button-ghost" type="button" data-managed-file-remove>Remove file</button>
             </div>
@@ -54,6 +102,14 @@
           <label>
             <span>File content</span>
             <textarea name="managed_file_content" spellcheck="false"></textarea>
+          </label>
+          <label>
+            <span>chmod</span>
+            <input name="managed_file_chmod" placeholder="0644">
+          </label>
+          <label>
+            <span>chown</span>
+            <input name="managed_file_chown" placeholder="1000:1000">
           </label>
           <button class="button button-ghost" type="button" data-managed-file-remove>Remove file</button>
         </div>

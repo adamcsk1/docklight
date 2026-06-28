@@ -119,7 +119,7 @@ INSERT INTO stacks (name, relative_path, compose_file, external_bind_mounts_allo
 	}
 }
 
-func TestMigrationRewritesInvalidManagedConfig(t *testing.T) {
+func TestMigrationRejectsInvalidManagedConfig(t *testing.T) {
 	root := t.TempDir()
 	stackDir := filepath.Join(root, "web")
 	mustWriteCompose(t, stackDir)
@@ -149,15 +149,8 @@ INSERT INTO stacks (name, relative_path, compose_file, docker_socket_mounts_allo
 		t.Fatal(err)
 	}
 	app := &App{cfg: Config{StacksRoot: root}, db: db}
-	if err := app.initDB(); err != nil {
-		t.Fatal(err)
-	}
-	managedConfig, err := app.loadManagedStackConfig(stackDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !managedConfig.Settings.DockerSocketMountsAllowed {
-		t.Fatalf("expected migrated docker socket setting in rewritten config: %#v", managedConfig)
+	if err := app.initDB(); err == nil {
+		t.Fatal("expected invalid managed config to fail migration instead of being rewritten")
 	}
 }
 

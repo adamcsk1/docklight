@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -38,6 +39,16 @@ func (app *App) runCompose(stack Stack, args ...string) (string, error) {
 	}
 	if err := ensurePathInside(stack.AbsolutePath, composePath); err != nil {
 		return "", fmt.Errorf("unsafe compose file path: %w", err)
+	}
+	if err := ensureNoSymlinkInStackPath(stack.AbsolutePath, stack.ComposeFile); err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(composePath); err == nil {
+		if err := ensureResolvedPathInside(stack.AbsolutePath, composePath); err != nil {
+			return "", err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
 	}
 	composeFile, cleanup, err := app.composeFileForCommand(stack, composePath)
 	if err != nil {

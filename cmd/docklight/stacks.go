@@ -112,7 +112,8 @@ ON CONFLICT(name) DO UPDATE SET relative_path = excluded.relative_path, compose_
 
 func findComposeFile(dir string) string {
 	for _, name := range []string{"docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+		info, err := os.Lstat(filepath.Join(dir, name))
+		if err == nil && info.Mode()&os.ModeSymlink == 0 && !info.IsDir() {
 			return name
 		}
 	}
@@ -147,7 +148,10 @@ func (app *App) loadStacks(withLive bool) ([]Stack, error) {
 		}
 		stack.Protected = app.protectedStackName(stack.Name)
 		stack.AbsolutePath = filepath.Join(app.cfg.StacksRoot, stack.RelativePath)
-		managedConfig := app.loadManagedStackConfigOrDefault(stack.AbsolutePath)
+		managedConfig, err := app.loadManagedStackConfig(stack.AbsolutePath)
+		if err != nil {
+			return nil, err
+		}
 		applyManagedSettingsToStack(&stack, managedConfig.Settings)
 		stack.Status = "unknown"
 		stacks = append(stacks, stack)
@@ -175,7 +179,10 @@ func (app *App) loadStack(name string, withLive bool) (Stack, error) {
 	}
 	stack.Protected = app.protectedStackName(stack.Name)
 	stack.AbsolutePath = filepath.Join(app.cfg.StacksRoot, stack.RelativePath)
-	managedConfig := app.loadManagedStackConfigOrDefault(stack.AbsolutePath)
+	managedConfig, err := app.loadManagedStackConfig(stack.AbsolutePath)
+	if err != nil {
+		return stack, err
+	}
 	applyManagedSettingsToStack(&stack, managedConfig.Settings)
 	stack.Status = "unknown"
 	if withLive {

@@ -28,16 +28,16 @@ func TestValidateStackName(t *testing.T) {
 }
 
 func TestParseBindFoldersStaysRelative(t *testing.T) {
-	folders, err := parseBindFolders("data\nconfig/logs\ndata\n")
+	folders, err := parseManagedFolderForms([]ManagedFolderForm{{Path: "data"}, {Path: "config/logs"}, {Path: "data"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Join(folders, ",") != "data,config/logs" {
+	if strings.Join(managedFolderPaths(folders), ",") != "data,config/logs" {
 		t.Fatalf("unexpected folders: %#v", folders)
 	}
 
 	for _, value := range []string{"../data", "/data", `C:\\data`, `data\\..\\x`} {
-		if _, err := parseBindFolders(value); err == nil {
+		if _, err := parseManagedFolderForms([]ManagedFolderForm{{Path: value}}); err == nil {
 			t.Fatalf("expected %q to be rejected", value)
 		}
 	}
@@ -246,7 +246,12 @@ func TestCreateStackPostWriteErrorPreservesFormValues(t *testing.T) {
 	values := url.Values{}
 	values.Set("name", "new-stack")
 	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest")
-	values.Set("bind_folders", "data\nconfig")
+	values.Add("managed_folder_path", "data")
+	values.Add("managed_folder_chmod", "")
+	values.Add("managed_folder_chown", "")
+	values.Add("managed_folder_path", "config")
+	values.Add("managed_folder_chmod", "")
+	values.Add("managed_folder_chown", "")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()

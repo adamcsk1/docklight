@@ -24,13 +24,17 @@ func (app *App) createStack(w http.ResponseWriter, r *http.Request) {
 		app.render(w, r, "stack_new.html", PageData{Title: "New stack", Error: "compose yaml is required", StackForm: form})
 		return
 	}
-	folders, err := parseBindFolders(form.BindFolders)
+	folders, err := parseManagedFolderForms(form.ManagedFolders)
 	if err != nil {
 		app.render(w, r, "stack_new.html", PageData{Title: "New stack", Error: err.Error(), StackForm: form})
 		return
 	}
 	managedFiles, err := parseManagedFiles(form.ManagedFiles)
 	if err != nil {
+		app.render(w, r, "stack_new.html", PageData{Title: "New stack", Error: err.Error(), StackForm: form})
+		return
+	}
+	if err := validateManagedFileFormPlatform(managedFiles); err != nil {
 		app.render(w, r, "stack_new.html", PageData{Title: "New stack", Error: err.Error(), StackForm: form})
 		return
 	}
@@ -58,6 +62,7 @@ func (app *App) createStack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := app.writeStackFiles(name, form.ComposeYAML, folders, managedFiles, stackManagedSettingsFromForm(form)); err != nil {
+		_ = os.RemoveAll(stackDir)
 		app.render(w, r, "stack_new.html", PageData{Title: "New stack", Error: err.Error(), StackForm: form})
 		return
 	}
@@ -101,18 +106,31 @@ func (app *App) editStackPage(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	composeYAML, err := os.ReadFile(filepath.Join(stack.AbsolutePath, stack.ComposeFile))
+	composePath := filepath.Join(stack.AbsolutePath, stack.ComposeFile)
+	if err := ensureNoSymlinkInStackPath(stack.AbsolutePath, stack.ComposeFile); err != nil {
+		app.redirectWithError(w, r, "/stacks/"+name, err.Error())
+		return
+	}
+	if err := ensureResolvedPathInside(stack.AbsolutePath, composePath); err != nil {
+		app.redirectWithError(w, r, "/stacks/"+name, err.Error())
+		return
+	}
+	composeYAML, err := os.ReadFile(composePath)
 	if err != nil {
 		app.redirectWithError(w, r, "/stacks/"+name, err.Error())
 		return
 	}
-	managedConfig := app.loadManagedStackConfigOrDefault(stack.AbsolutePath)
+	managedConfig, err := app.loadManagedStackConfig(stack.AbsolutePath)
+	if err != nil {
+		app.redirectWithError(w, r, "/stacks/"+name, err.Error())
+		return
+	}
 	managedFiles, err := app.managedFileForms(stack.AbsolutePath, managedConfig.Files)
 	if err != nil {
 		app.redirectWithError(w, r, "/stacks/"+name, err.Error())
 		return
 	}
-	app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, StackForm: StackForm{Name: stack.Name, ComposeYAML: strings.TrimRight(string(composeYAML), "\r\n"), BindFolders: managedFoldersText(managedConfig.Folders), ManagedFiles: managedFiles, ExternalBindMountsAllowed: stack.ExternalBindMountsAllowed, DockerSocketMountsAllowed: stack.DockerSocketMountsAllowed, USBDeviceBindMountsAllowed: stack.USBDeviceBindMountsAllowed, DBusBindMountAllowed: stack.DBusBindMountAllowed, HostPIDAllowed: stack.HostPIDAllowed, PrivilegedAllowed: stack.PrivilegedAllowed}})
+	app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, StackForm: StackForm{Name: stack.Name, ComposeYAML: strings.TrimRight(string(composeYAML), "\r\n"), ManagedFolders: managedFolderForms(managedConfig.Folders), ManagedFiles: managedFiles, ExternalBindMountsAllowed: stack.ExternalBindMountsAllowed, DockerSocketMountsAllowed: stack.DockerSocketMountsAllowed, USBDeviceBindMountsAllowed: stack.USBDeviceBindMountsAllowed, DBusBindMountAllowed: stack.DBusBindMountAllowed, HostPIDAllowed: stack.HostPIDAllowed, PrivilegedAllowed: stack.PrivilegedAllowed}})
 }
 
 func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
@@ -143,7 +161,7 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
 	}
-	folders, err := parseBindFolders(form.BindFolders)
+	folders, err := parseManagedFolderForms(form.ManagedFolders)
 	if err != nil {
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
@@ -153,8 +171,16 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
 	}
+	if err := validateManagedFileFormPlatform(managedFiles); err != nil {
+		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
+		return
+	}
 	envFile, envFilePresent := managedEnvFile(managedFiles)
-	previousConfig := app.loadManagedStackConfigOrDefault(stack.AbsolutePath)
+	previousConfig, err := app.loadManagedStackConfig(stack.AbsolutePath)
+	if err != nil {
+		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
+		return
+	}
 	if !envFilePresent && managedConfigTracksEnv(previousConfig) {
 		envFilePresent = true
 	}

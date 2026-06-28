@@ -709,6 +709,7 @@ textarea {
   text-transform: uppercase;
 }
 
+.managed-folders,
 .managed-files {
   display: grid;
   gap: var(--space-3);
@@ -718,6 +719,7 @@ textarea {
   }
 }
 
+.managed-folder-row,
 .managed-file-row {
   display: grid;
   gap: var(--space-3);

@@ -25,29 +25,6 @@ func validateStackName(value string) (string, error) {
 	return sanitized, nil
 }
 
-func parseBindFolders(input string) ([]string, error) {
-	var folders []string
-	seen := make(map[string]bool)
-	for _, line := range strings.Split(input, "\n") {
-		raw := strings.TrimSpace(line)
-		if strings.ContainsAny(raw, `:\`) {
-			return nil, fmt.Errorf("bind folder must be relative and stay inside the stack folder: %s", line)
-		}
-		folder := path.Clean(raw)
-		if folder == "." || folder == "" {
-			continue
-		}
-		if strings.HasPrefix(folder, "/") || folder == ".." || strings.HasPrefix(folder, "../") || strings.Contains(folder, "/../") {
-			return nil, fmt.Errorf("bind folder must be relative and stay inside the stack folder: %s", line)
-		}
-		if !seen[folder] {
-			seen[folder] = true
-			folders = append(folders, folder)
-		}
-	}
-	return folders, nil
-}
-
 func (app *App) validateComposeDefinition(projectName, stackDir, composeYAML, envFile string, envFilePresent bool, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID, allowPrivileged bool) error {
 	if !composeNeedsInterpolation(composeYAML, envFile, envFilePresent) {
 		return validateComposeYAMLWithExternalBinds(composeYAML, allowExternalBinds, allowDockerSocketMounts, allowUSBDeviceBinds, allowDBusBindMount, allowHostPID, allowPrivileged)

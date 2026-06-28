@@ -147,7 +147,10 @@ func (app *App) migrateDBStackSettingsToConfig() error {
 		if err != nil || !info.IsDir() {
 			continue
 		}
-		managedConfig := app.loadManagedStackConfigOrDefault(stackDir)
+		managedConfig, err := app.loadManagedStackConfig(stackDir)
+		if err != nil {
+			return err
+		}
 		managedConfig.Settings.ExternalBindMountsAllowed = managedConfig.Settings.ExternalBindMountsAllowed || externalBinds == 1
 		managedConfig.Settings.DockerSocketMountsAllowed = managedConfig.Settings.DockerSocketMountsAllowed || dockerSocketMounts == 1
 		managedConfig.Settings.HostPIDAllowed = managedConfig.Settings.HostPIDAllowed || hostPID == 1

@@ -13,6 +13,14 @@ import (
 	"time"
 )
 
+func managedTestFolders(paths ...string) []StackManagedConfigFolder {
+	folders := make([]StackManagedConfigFolder, 0, len(paths))
+	for _, path := range paths {
+		folders = append(folders, StackManagedConfigFolder{Path: path})
+	}
+	return folders
+}
+
 func TestEditStackPageRedirectsWhenComposeFileMissing(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "web"), 0o755); err != nil {
@@ -235,11 +243,20 @@ func TestCreateStackWritesManagedFiles(t *testing.T) {
 	values := url.Values{}
 	values.Set("name", "managed-stack")
 	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:latest")
-	values.Set("bind_folders", "data\ndata/subfolder")
+	values.Add("managed_folder_path", "data")
+	values.Add("managed_folder_chmod", "0755")
+	values.Add("managed_folder_chown", "")
+	values.Add("managed_folder_path", "data/subfolder")
+	values.Add("managed_folder_chmod", "")
+	values.Add("managed_folder_chown", "")
 	values.Add("managed_file_path", "test.conf")
 	values.Add("managed_file_content", "root=true\n")
+	values.Add("managed_file_chmod", "0640")
+	values.Add("managed_file_chown", "")
 	values.Add("managed_file_path", "data/file.conf")
 	values.Add("managed_file_content", "child=true\n")
+	values.Add("managed_file_chmod", "")
+	values.Add("managed_file_chown", "")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
@@ -258,8 +275,322 @@ func TestCreateStackWritesManagedFiles(t *testing.T) {
 		t.Fatalf("expected managed nested folder: %v", err)
 	}
 	managedConfig, err := os.ReadFile(filepath.Join(stackDir, stackManagedConfigFile))
-	if err != nil || !strings.Contains(string(managedConfig), "data/file.conf") {
+	if err != nil || !strings.Contains(string(managedConfig), "data/file.conf") || !strings.Contains(string(managedConfig), "chmod: \"0755\"") || !strings.Contains(string(managedConfig), "chmod: \"0640\"") {
 		t.Fatalf("expected managed config to list data/file.conf, content=%s err=%v", string(managedConfig), err)
+	}
+}
+
+func TestManagedFolderConfigLoadsObjectForms(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stackDir, stackManagedConfigFile), []byte("folders:\n  - path: data\n  - path: config\n    chmod: \"0750\"\n    chown: \"1000:1000\"\nfiles:\n  - path: test.conf\n    chmod: \"0640\"\n    chown: \"1000:1000\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{StacksRoot: root}}
+
+	managedConfig, err := app.loadManagedStackConfig(stackDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(managedConfig.Folders) != 2 || managedConfig.Folders[0].Path != "data" || managedConfig.Folders[1].Path != "config" || managedConfig.Folders[1].Chmod != "0750" || managedConfig.Folders[1].Chown != "1000:1000" {
+		t.Fatalf("unexpected managed folders: %#v", managedConfig.Folders)
+	}
+	if len(managedConfig.Files) != 1 || managedConfig.Files[0].Path != "test.conf" || managedConfig.Files[0].Chmod != "0640" || managedConfig.Files[0].Chown != "1000:1000" {
+		t.Fatalf("unexpected managed files: %#v", managedConfig.Files)
+	}
+}
+
+func TestManagedFolderConfigRejectsLegacyScalarForms(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stackDir, stackManagedConfigFile), []byte("folders:\n  - data\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{StacksRoot: root}}
+
+	if _, err := app.loadManagedStackConfig(stackDir); err == nil {
+		t.Fatal("expected legacy scalar folder config to be rejected")
+	}
+}
+
+func TestManagedFolderValidationRejectsBadChmodAndChown(t *testing.T) {
+	for _, folder := range []ManagedFolderForm{{Path: "data", Chmod: "abc"}, {Path: "data", Chown: "user:group"}, {Path: "data", Chown: "1000"}, {Path: "data", Chown: ":1000"}} {
+		if _, err := parseManagedFolderForms([]ManagedFolderForm{folder}); err == nil {
+			t.Fatalf("expected invalid managed folder to be rejected: %#v", folder)
+		}
+	}
+}
+
+func TestManagedFolderOwnerParsesNumericUIDGID(t *testing.T) {
+	uid, gid, err := parseFolderOwner("1000:1001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != 1000 || gid != 1001 {
+		t.Fatalf("unexpected owner uid=%d gid=%d", uid, gid)
+	}
+}
+
+func TestManagedFileValidationRejectsBadChmodAndChown(t *testing.T) {
+	for _, file := range []ManagedFileForm{{Path: "test.conf", Chmod: "abc"}, {Path: "test.conf", Chown: "user:group"}, {Path: "test.conf", Chown: "1000"}, {Path: "test.conf", Chown: ":1000"}} {
+		if _, err := parseManagedFiles([]ManagedFileForm{file}); err == nil {
+			t.Fatalf("expected invalid managed file to be rejected: %#v", file)
+		}
+	}
+}
+
+func TestManagedFileOwnerParsesNumericUIDGID(t *testing.T) {
+	uid, gid, err := parseFileOwner("1000:1001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if uid != 1000 || gid != 1001 {
+		t.Fatalf("unexpected owner uid=%d gid=%d", uid, gid)
+	}
+}
+
+func TestManagedFolderChmodApplied(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX folder modes")
+	}
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", []StackManagedConfigFolder{{Path: "data/subfolder", Chmod: "0700"}}, nil, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, "web", "data", "subfolder"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o700 {
+		t.Fatalf("expected chmod 0700, got %v", info.Mode().Perm())
+	}
+}
+
+func TestManagedFileChmodApplied(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX file modes")
+	}
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", nil, []managedFileWrite{{Path: "test.conf", Content: "x", Chmod: "0600"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, "web", "test.conf"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("expected chmod 0600, got %v", info.Mode().Perm())
+	}
+}
+
+func TestManagedEnvFileDefaultChmodCanBeOverridden(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose POSIX file modes")
+	}
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", nil, []managedFileWrite{{Path: ".env", Content: "TAG=1", Chmod: "0644"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(filepath.Join(root, "web", ".env"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Fatalf("expected overridden .env chmod 0644, got %v", info.Mode().Perm())
+	}
+}
+
+func TestManagedFolderRejectsSymlinkTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink handling differs on Windows")
+	}
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	originalInfo, err := os.Stat(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(stackDir, "data")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "compose.yml"}
+
+	err = app.updateStackFiles(stack, "services:\n  app:\n    image: nginx", []StackManagedConfigFolder{{Path: "data", Chmod: "0700"}}, nil, StackManagedSettings{})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink rejection, got %v", err)
+	}
+	info, err := os.Stat(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != originalInfo.Mode().Perm() {
+		t.Fatalf("expected outside folder mode not to be changed through symlink, got %v want %v", info.Mode().Perm(), originalInfo.Mode().Perm())
+	}
+}
+
+func TestManagedFolderRejectsSymlinkParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink handling differs on Windows")
+	}
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(stackDir, "data")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "compose.yml"}
+
+	err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx", []StackManagedConfigFolder{{Path: "data/subfolder"}}, nil, StackManagedSettings{})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink parent rejection, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "subfolder")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected outside subfolder not to be created through symlink parent, got %v", err)
+	}
+}
+
+func TestManagedFileRejectsSymlinkTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink handling differs on Windows")
+	}
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	outsideFile := filepath.Join(root, "outside.conf")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outsideFile, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(stackDir, "test.conf")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	err := writeManagedFiles(stackDir, nil, []managedFileWrite{{Path: "test.conf", Content: "changed"}})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink rejection, got %v", err)
+	}
+	content, err := os.ReadFile(outsideFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "keep" {
+		t.Fatalf("expected outside file not to be changed, got %q", string(content))
+	}
+}
+
+func TestManagedFileRejectsSymlinkParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink handling differs on Windows")
+	}
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	outside := filepath.Join(root, "outside")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(stackDir, "data")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+
+	err := writeManagedFiles(stackDir, managedTestFolders("data"), []managedFileWrite{{Path: "data/file.conf", Content: "changed"}})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink parent rejection, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "file.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected outside file not to be created through symlink parent, got %v", err)
+	}
+}
+
+func TestManagedConfigRejectsSymlinkTarget(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink handling differs on Windows")
+	}
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	outsideFile := filepath.Join(root, "outside-config.yml")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outsideFile, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(stackDir, stackManagedConfigFile)); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+
+	if _, err := app.loadManagedStackConfig(stackDir); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected managed config read symlink rejection, got %v", err)
+	}
+	if err := writeStackManagedConfig(stackDir, StackManagedConfig{Settings: StackManagedSettings{ExternalBindMountsAllowed: true}}); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected managed config write symlink rejection, got %v", err)
+	}
+	content, err := os.ReadFile(outsideFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "keep" {
+		t.Fatalf("expected outside config not to be changed, got %q", string(content))
+	}
+}
+
+func TestUpdateStackRejectsSymlinkComposeFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink handling differs on Windows")
+	}
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	outsideFile := filepath.Join(root, "outside-compose.yml")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outsideFile, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(stackDir, "compose.yml")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "compose.yml"}
+
+	err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected compose file symlink rejection, got %v", err)
+	}
+	content, err := os.ReadFile(outsideFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "keep" {
+		t.Fatalf("expected outside compose not to be changed, got %q", string(content))
 	}
 }
 
@@ -293,12 +624,12 @@ func TestCreateStackRejectsManagedFileMissingParent(t *testing.T) {
 	if count != 0 {
 		t.Fatalf("expected rejected managed stack not to be persisted, got count %d", count)
 	}
-	if _, err := os.Stat(filepath.Join(root, "managed-stack", "docker-compose.yml")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected rejected managed stack not to write compose file, stat err=%v", err)
+	if _, err := os.Stat(filepath.Join(root, "managed-stack")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected rejected managed stack folder to be removed, stat err=%v", err)
 	}
 }
 
-func TestInvalidManagedConfigDoesNotBreakStackLoading(t *testing.T) {
+func TestInvalidManagedConfigBreaksStackLoading(t *testing.T) {
 	root := t.TempDir()
 	stackDir := filepath.Join(root, "legacy")
 	mustWriteCompose(t, stackDir)
@@ -310,23 +641,15 @@ func TestInvalidManagedConfigDoesNotBreakStackLoading(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	stack, err := app.loadStack("legacy", false)
-	if err != nil {
-		t.Fatal(err)
+	if _, err := app.loadStack("legacy", false); err == nil {
+		t.Fatal("expected invalid managed config to break single stack load")
 	}
-	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.USBDeviceBindMountsAllowed || stack.DBusBindMountAllowed || stack.HostPIDAllowed {
-		t.Fatalf("expected invalid managed config to use safe defaults: %#v", stack)
-	}
-	stacks, err := app.loadStacks(false)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(stacks) != 1 || stacks[0].Name != "legacy" {
-		t.Fatalf("expected legacy stack to load, got %#v", stacks)
+	if _, err := app.loadStacks(false); err == nil {
+		t.Fatal("expected invalid managed config to break stack list load")
 	}
 }
 
-func TestEditStackRewritesInvalidManagedConfig(t *testing.T) {
+func TestEditStackRejectsInvalidManagedConfig(t *testing.T) {
 	root := t.TempDir()
 	stackDir := filepath.Join(root, "legacy")
 	mustWriteCompose(t, stackDir)
@@ -345,28 +668,8 @@ func TestEditStackRewritesInvalidManagedConfig(t *testing.T) {
 	pageReq.SetPathValue("name", "legacy")
 	pageRec := httptest.NewRecorder()
 	app.editStackPage(pageRec, pageReq)
-	if pageRec.Code != http.StatusOK || !strings.Contains(pageRec.Body.String(), "No extra files are currently managed") {
-		t.Fatalf("expected edit page to tolerate invalid managed config, code=%d body=%s", pageRec.Code, pageRec.Body.String())
-	}
-
-	values := url.Values{}
-	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:changed")
-	values.Set("bind_folders", "data")
-	values.Set("update_mode", "save")
-	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/legacy/edit", strings.NewReader(values.Encode()))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.SetPathValue("name", "legacy")
-	rec := httptest.NewRecorder()
-	app.updateStack(rec, req)
-	if rec.Code != http.StatusFound {
-		t.Fatalf("expected edit save redirect, code=%d body=%s", rec.Code, rec.Body.String())
-	}
-	managedConfig, err := app.loadManagedStackConfig(stackDir)
-	if err != nil {
-		t.Fatalf("expected invalid config to be rewritten as valid YAML: %v", err)
-	}
-	if len(managedConfig.Folders) != 1 || managedConfig.Folders[0] != "data" {
-		t.Fatalf("expected managed folder saved in rewritten config: %#v", managedConfig)
+	if pageRec.Code != http.StatusNotFound {
+		t.Fatalf("expected edit page to reject invalid managed config, code=%d body=%s", pageRec.Code, pageRec.Body.String())
 	}
 }
 
@@ -483,7 +786,12 @@ func TestEditStackSaveDoesNotRecreateStack(t *testing.T) {
 
 	values := url.Values{}
 	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:1.28\n    volumes:\n      - /etc/localtime:/etc/localtime:ro")
-	values.Set("bind_folders", "config\ndata")
+	values.Add("managed_folder_path", "config")
+	values.Add("managed_folder_chmod", "")
+	values.Add("managed_folder_chown", "")
+	values.Add("managed_folder_path", "data")
+	values.Add("managed_folder_chmod", "")
+	values.Add("managed_folder_chown", "")
 	values.Set("external_bind_mounts_allowed", "on")
 	values.Set("docker_socket_mounts_allowed", "on")
 	values.Set("usb_device_bind_mounts_allowed", "on")
@@ -542,7 +850,9 @@ func TestEditStackPreservesListedFolderContents(t *testing.T) {
 
 	values := url.Values{}
 	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:1.27")
-	values.Set("bind_folders", "data")
+	values.Add("managed_folder_path", "data")
+	values.Add("managed_folder_chmod", "")
+	values.Add("managed_folder_chown", "")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetPathValue("name", "editable")
@@ -714,7 +1024,7 @@ func TestCreateStackValidationAndFileHelpers(t *testing.T) {
 		{name: "bad name", form: url.Values{"name": {"Bad Name"}, "compose_yaml": {"services:\n  app:\n    image: nginx"}}, want: "suggested"},
 		{name: "missing compose", form: url.Values{"name": {"web"}}, want: "compose yaml is required"},
 		{name: "unsafe compose", form: url.Values{"name": {"web"}, "compose_yaml": {"services:\n  app:\n    privileged: true"}}, want: "blocked host-level option"},
-		{name: "bad bind", form: url.Values{"name": {"web"}, "compose_yaml": {"services:\n  app:\n    image: nginx"}, "bind_folders": {"../data"}}, want: "bind folder must be relative"},
+		{name: "bad bind", form: url.Values{"name": {"web"}, "compose_yaml": {"services:\n  app:\n    image: nginx"}, "managed_folder_path": {"../data"}}, want: "bind folder must be relative"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := formRequest("http://docklight.local/stacks/new", tc.form)
@@ -726,11 +1036,11 @@ func TestCreateStackValidationAndFileHelpers(t *testing.T) {
 		})
 	}
 
-	if err := app.writeStackFiles("files", "services:\n  app:\n    image: nginx", []string{"data", "data/subfolder"}, []managedFileWrite{{Path: "test.conf", Content: "root=true\n"}, {Path: "data/file.conf", Content: "child=true\n"}}, StackManagedSettings{}); err != nil {
+	if err := app.writeStackFiles("files", "services:\n  app:\n    image: nginx", managedTestFolders("data", "data/subfolder"), []managedFileWrite{{Path: "test.conf", Content: "root=true\n"}, {Path: "data/file.conf", Content: "child=true\n"}}, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	stack := Stack{Name: "files", AbsolutePath: filepath.Join(root, "files"), ComposeFile: "docker-compose.yml"}
-	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx:1.27", []string{"data"}, []managedFileWrite{{Path: "test.conf", Content: "root=false\n"}}, StackManagedSettings{}); err != nil {
+	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx:1.27", managedTestFolders("data"), []managedFileWrite{{Path: "test.conf", Content: "root=false\n"}}, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
 	content, err := os.ReadFile(filepath.Join(root, "files", "test.conf"))
@@ -882,7 +1192,12 @@ func TestEditStackUpdatesComposeCreatesFoldersAndRecreatesStack(t *testing.T) {
 
 	values := url.Values{}
 	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:1.27")
-	values.Set("bind_folders", "data\nconfig")
+	values.Add("managed_folder_path", "data")
+	values.Add("managed_folder_chmod", "")
+	values.Add("managed_folder_chown", "")
+	values.Add("managed_folder_path", "config")
+	values.Add("managed_folder_chmod", "")
+	values.Add("managed_folder_chown", "")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.SetPathValue("name", "editable")
@@ -943,7 +1258,7 @@ func TestUpdateStackAndDeleteStackFailurePaths(t *testing.T) {
 		{name: "missing", path: "missing", form: url.Values{"compose_yaml": {"services:\n  app:\n    image: nginx"}}, redirect: true},
 		{name: "protected", path: "docklight", form: url.Values{"compose_yaml": {"services:\n  app:\n    image: nginx"}}, redirect: true},
 		{name: "unsafe compose", path: "web", form: url.Values{"compose_yaml": {"services:\n  app:\n    network_mode: host"}}, want: "blocked host-level option"},
-		{name: "unsafe bind", path: "web", form: url.Values{"compose_yaml": {"services:\n  app:\n    image: nginx"}, "bind_folders": {"/host"}}, want: "bind folder"},
+		{name: "unsafe bind", path: "web", form: url.Values{"compose_yaml": {"services:\n  app:\n    image: nginx"}, "managed_folder_path": {"/host"}}, want: "bind folder"},
 	} {
 		t.Run("update "+tc.name, func(t *testing.T) {
 			req := formRequest("http://docklight.local/stacks/"+tc.path+"/edit", tc.form)

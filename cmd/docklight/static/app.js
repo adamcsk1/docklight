@@ -3,8 +3,19 @@ document.addEventListener("click", (event) => {
   if (!(target instanceof Element)) return;
 
   const toggle = target.closest(".menu-toggle");
+  if (target.closest("[data-managed-folder-add]")) {
+    addManagedRow(target, "folder");
+    return;
+  }
+
+  const removeManagedFolder = target.closest("[data-managed-folder-remove]");
+  if (removeManagedFolder) {
+    removeManagedFolder.closest(".managed-folder-row")?.remove();
+    return;
+  }
+
   if (target.closest("[data-managed-file-add]")) {
-    addManagedFileRow(target);
+    addManagedRow(target, "file");
     return;
   }
 
@@ -25,10 +36,10 @@ document.addEventListener("click", (event) => {
   menu.classList.toggle("is-open", !expanded);
 });
 
-function addManagedFileRow(target) {
+function addManagedRow(target, type) {
   const form = target.closest("form");
-  const list = form?.querySelector("[data-managed-file-list]");
-  const template = form?.querySelector("template[data-managed-file-template]");
+  const list = form?.querySelector(`[data-managed-${type}-list]`);
+  const template = form?.querySelector(`template[data-managed-${type}-template]`);
   if (!(list instanceof HTMLElement) || !(template instanceof HTMLTemplateElement)) return;
 
   list.append(template.content.cloneNode(true));
