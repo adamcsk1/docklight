@@ -44,6 +44,7 @@ func (app *App) logActivity(stackName, action, status, output string) {
 		app.verboseLog("activity insert failed", "error", err.Error())
 		return
 	}
+	app.verboseLog("activity recorded", "stack", stackName, "action", action, "status", status, "output_bytes", fmt.Sprintf("%d", len(output)))
 	if err := app.purgeExpiredActivity(); err != nil {
 		app.logger.Warn("failed to purge activity", "error", err)
 		app.verboseLog("activity purge failed", "error", err.Error())
