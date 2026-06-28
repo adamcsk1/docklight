@@ -55,7 +55,7 @@ func (app *App) createStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	envFile, envFilePresent := managedEnvFile(managedFiles)
-	if err := app.validateComposeDefinition(name, stackDir, form.ComposeYAML, envFile, envFilePresent, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed, form.USBDeviceBindMountsAllowed, form.DBusBindMountAllowed, form.HostPIDAllowed, form.PrivilegedAllowed); err != nil {
+	if err := app.validateComposeDefinition(name, stackDir, form.ComposeYAML, envFile, envFilePresent, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed, form.USBDeviceBindMountsAllowed, form.DBusBindMountAllowed, form.HostPIDAllowed, form.PrivilegedAllowed, form.SecurityOptAllowed); err != nil {
 		_ = os.RemoveAll(stackDir)
 		app.render(w, r, "stack_new.html", PageData{Title: "New stack", Error: err.Error(), StackForm: form})
 		return
@@ -83,6 +83,7 @@ func (app *App) createStack(w http.ResponseWriter, r *http.Request) {
 	stack.DBusBindMountAllowed = form.DBusBindMountAllowed
 	stack.HostPIDAllowed = form.HostPIDAllowed
 	stack.PrivilegedAllowed = form.PrivilegedAllowed
+	stack.SecurityOptAllowed = form.SecurityOptAllowed
 	unlock := app.lockStack(stack.Name)
 	defer unlock()
 	output, err := app.runCompose(stack, "up", "-d")
@@ -130,7 +131,7 @@ func (app *App) editStackPage(w http.ResponseWriter, r *http.Request) {
 		app.redirectWithError(w, r, "/stacks/"+name, err.Error())
 		return
 	}
-	app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, StackForm: StackForm{Name: stack.Name, ComposeYAML: strings.TrimRight(string(composeYAML), "\r\n"), ManagedFolders: managedFolderForms(managedConfig.Folders), ManagedFiles: managedFiles, ExternalBindMountsAllowed: stack.ExternalBindMountsAllowed, DockerSocketMountsAllowed: stack.DockerSocketMountsAllowed, USBDeviceBindMountsAllowed: stack.USBDeviceBindMountsAllowed, DBusBindMountAllowed: stack.DBusBindMountAllowed, HostPIDAllowed: stack.HostPIDAllowed, PrivilegedAllowed: stack.PrivilegedAllowed}})
+	app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, StackForm: StackForm{Name: stack.Name, ComposeYAML: strings.TrimRight(string(composeYAML), "\r\n"), ManagedFolders: managedFolderForms(managedConfig.Folders), ManagedFiles: managedFiles, ExternalBindMountsAllowed: stack.ExternalBindMountsAllowed, DockerSocketMountsAllowed: stack.DockerSocketMountsAllowed, USBDeviceBindMountsAllowed: stack.USBDeviceBindMountsAllowed, DBusBindMountAllowed: stack.DBusBindMountAllowed, HostPIDAllowed: stack.HostPIDAllowed, PrivilegedAllowed: stack.PrivilegedAllowed, SecurityOptAllowed: stack.SecurityOptAllowed}})
 }
 
 func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +185,7 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 	if !envFilePresent && managedConfigTracksEnv(previousConfig) {
 		envFilePresent = true
 	}
-	if err := app.validateComposeDefinition(stack.Name, stack.AbsolutePath, form.ComposeYAML, envFile, envFilePresent, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed, form.USBDeviceBindMountsAllowed, form.DBusBindMountAllowed, form.HostPIDAllowed, form.PrivilegedAllowed); err != nil {
+	if err := app.validateComposeDefinition(stack.Name, stack.AbsolutePath, form.ComposeYAML, envFile, envFilePresent, form.ExternalBindMountsAllowed, form.DockerSocketMountsAllowed, form.USBDeviceBindMountsAllowed, form.DBusBindMountAllowed, form.HostPIDAllowed, form.PrivilegedAllowed, form.SecurityOptAllowed); err != nil {
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
 	}
@@ -198,6 +199,7 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 	stack.DBusBindMountAllowed = form.DBusBindMountAllowed
 	stack.HostPIDAllowed = form.HostPIDAllowed
 	stack.PrivilegedAllowed = form.PrivilegedAllowed
+	stack.SecurityOptAllowed = form.SecurityOptAllowed
 	if r.FormValue("update_mode") == "save" {
 		app.logActivity(name, "save stack", "success", "stack definition saved without recreate")
 		app.redirectWithMessage(w, r, "/stacks/"+name, "stack changes saved")

@@ -44,6 +44,7 @@ type StackManagedSettings struct {
 	DBusBindMountAllowed       bool `yaml:"dbus_bind_mount_allowed,omitempty"`
 	HostPIDAllowed             bool `yaml:"host_pid_allowed,omitempty"`
 	PrivilegedAllowed          bool `yaml:"privileged_allowed,omitempty"`
+	SecurityOptAllowed         bool `yaml:"security_opt_allowed,omitempty"`
 }
 
 type managedFileWrite struct {
@@ -120,6 +121,7 @@ func stackManagedSettingsFromForm(form StackForm) StackManagedSettings {
 		DBusBindMountAllowed:       form.DBusBindMountAllowed,
 		HostPIDAllowed:             form.HostPIDAllowed,
 		PrivilegedAllowed:          form.PrivilegedAllowed,
+		SecurityOptAllowed:         form.SecurityOptAllowed,
 	}
 }
 
@@ -130,6 +132,7 @@ func applyManagedSettingsToStack(stack *Stack, settings StackManagedSettings) {
 	stack.DBusBindMountAllowed = settings.DBusBindMountAllowed
 	stack.HostPIDAllowed = settings.HostPIDAllowed
 	stack.PrivilegedAllowed = settings.PrivilegedAllowed
+	stack.SecurityOptAllowed = settings.SecurityOptAllowed
 }
 
 func managedFolderForms(folders []StackManagedConfigFolder) []ManagedFolderForm {

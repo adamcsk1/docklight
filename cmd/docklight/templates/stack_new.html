@@ -183,6 +183,11 @@
         <span>allow privileged mode</span>
       </label>
       <p class="form-hint">Allows <code>privileged: true</code>. This gives the container broad host access. Enable only for trusted stacks.</p>
+      <label class="switch-label">
+        <input type="checkbox" name="security_opt_allowed" {{if .StackForm.SecurityOptAllowed}}checked{{end}}>
+        <span>allow security options</span>
+      </label>
+      <p class="form-hint">Allows <code>security_opt</code> entries. This can change container confinement. Enable only for trusted stacks.</p>
       <div class="actions actions-large">
         <button class="button button-primary" type="submit" data-loading-text="Creating...">Create</button>
         <a class="button button-ghost" href="{{base "/"}}">Cancel</a>

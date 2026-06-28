@@ -29,6 +29,7 @@ type Stack struct {
 	DBusBindMountAllowed       bool
 	HostPIDAllowed             bool
 	PrivilegedAllowed          bool
+	SecurityOptAllowed         bool
 	Containers                 []Container
 	ContainerCount             int
 }

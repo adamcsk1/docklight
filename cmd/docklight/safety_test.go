@@ -167,7 +167,7 @@ INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'adm
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.USBDeviceBindMountsAllowed || stack.DBusBindMountAllowed || stack.HostPIDAllowed || stack.PrivilegedAllowed {
+	if stack.ExternalBindMountsAllowed || stack.DockerSocketMountsAllowed || stack.USBDeviceBindMountsAllowed || stack.DBusBindMountAllowed || stack.HostPIDAllowed || stack.PrivilegedAllowed || stack.SecurityOptAllowed {
 		t.Fatalf("expected fresh stack settings to default false: %#v", stack)
 	}
 	var count int
@@ -195,7 +195,7 @@ INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'adm
 func TestRescanLoadsMountPermissionsFromConfig(t *testing.T) {
 	root := t.TempDir()
 	mustWriteCompose(t, filepath.Join(root, "web"))
-	if err := writeStackManagedConfig(filepath.Join(root, "web"), StackManagedConfig{Settings: StackManagedSettings{ExternalBindMountsAllowed: true, DockerSocketMountsAllowed: true, USBDeviceBindMountsAllowed: true, DBusBindMountAllowed: true}}); err != nil {
+	if err := writeStackManagedConfig(filepath.Join(root, "web"), StackManagedConfig{Settings: StackManagedSettings{ExternalBindMountsAllowed: true, DockerSocketMountsAllowed: true, USBDeviceBindMountsAllowed: true, DBusBindMountAllowed: true, SecurityOptAllowed: true}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -219,7 +219,7 @@ func TestRescanLoadsMountPermissionsFromConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !stack.ExternalBindMountsAllowed || !stack.DockerSocketMountsAllowed || !stack.USBDeviceBindMountsAllowed || !stack.DBusBindMountAllowed || stack.HostPIDAllowed || stack.PrivilegedAllowed {
+	if !stack.ExternalBindMountsAllowed || !stack.DockerSocketMountsAllowed || !stack.USBDeviceBindMountsAllowed || !stack.DBusBindMountAllowed || stack.HostPIDAllowed || stack.PrivilegedAllowed || !stack.SecurityOptAllowed {
 		t.Fatalf("expected stack settings loaded from config: %#v", stack)
 	}
 }
@@ -328,7 +328,7 @@ func TestValidateComposeYAMLBlocksHostLevelOptions(t *testing.T) {
 	if err := validateComposeYAML("services:\n  app:\n    image: nginx\n"); err != nil {
 		t.Fatalf("expected basic compose to pass: %v", err)
 	}
-	for _, value := range []string{"privileged: true", "/var/run/docker.sock", "network_mode: host", "cap_add:"} {
+	for _, value := range []string{"privileged: true", "/var/run/docker.sock", "network_mode: host", "cap_add:", "security_opt:"} {
 		if err := validateComposeYAML(value); err == nil {
 			t.Fatalf("expected %q to be rejected", value)
 		}

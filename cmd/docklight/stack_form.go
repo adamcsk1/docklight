@@ -17,6 +17,7 @@ type StackForm struct {
 	DBusBindMountAllowed       bool
 	HostPIDAllowed             bool
 	PrivilegedAllowed          bool
+	SecurityOptAllowed         bool
 }
 
 type ManagedFolderForm struct {
@@ -44,6 +45,7 @@ func newStackFormFromRequest(r *http.Request) StackForm {
 		DBusBindMountAllowed:       r.FormValue("dbus_bind_mount_allowed") == "on",
 		HostPIDAllowed:             r.FormValue("host_pid_allowed") == "on",
 		PrivilegedAllowed:          r.FormValue("privileged_allowed") == "on",
+		SecurityOptAllowed:         r.FormValue("security_opt_allowed") == "on",
 	}
 }
 
@@ -59,6 +61,7 @@ func updateStackFormFromRequest(r *http.Request, name string) StackForm {
 		DBusBindMountAllowed:       r.FormValue("dbus_bind_mount_allowed") == "on",
 		HostPIDAllowed:             r.FormValue("host_pid_allowed") == "on",
 		PrivilegedAllowed:          r.FormValue("privileged_allowed") == "on",
+		SecurityOptAllowed:         r.FormValue("security_opt_allowed") == "on",
 	}
 }
 
