@@ -27,11 +27,20 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
       - name: Check Go formatting
         run: test -z "$(gofmt -l cmd)"
 
       - name: Download dependencies
         run: go mod download
+
+      - name: Generate frontend assets
+        run: npm ci && npm run sync:htmx
 
       - name: Run tests
         run: go test ./...

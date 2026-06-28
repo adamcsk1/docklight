@@ -41,36 +41,38 @@ docker exec -it docklight docker login ghcr.io -u <github-user>
 
 Use a least-privileged GitHub token with `read:packages`. Do not copy a Docker Desktop `config.json` that relies on `credsStore` or `credHelpers`; those helper binaries usually are not available inside the Docklight container. Treat `./docker-config/config.json` as secret material and rotate the token if it is exposed.
 
-## Vendored Frontend Dependency
+## Frontend Dependency
 
-HTMX is vendored at `cmd/docklight/static/htmx.min.js` so Docklight does not depend on a CDN at runtime. The vendored version is tracked in `cmd/docklight/static/htmx.version`.
+HTMX is managed through npm and generated into `cmd/docklight/static/htmx.min.js` before Go builds. The generated file is ignored by git, but Go embeds it into the Docklight binary so runtime does not depend on npm or a CDN.
 
-Current vendored version:
+Current version:
 
 ```text
 htmx.org 2.0.10
 ```
 
-Upgrade HTMX manually with:
+Prepare local builds and tests with:
 
 ```sh
-version=2.0.10
-curl -fsSL "https://unpkg.com/htmx.org@$version/dist/htmx.min.js" -o cmd/docklight/static/htmx.min.js
-printf '%s\n' "$version" > cmd/docklight/static/htmx.version
+npm ci
+npm run sync:htmx
 ```
 
-When needed, manually check that the tracked version matches the vendored file:
+Then run Go commands normally:
 
 ```sh
-expected="$(tr -d '[:space:]' < cmd/docklight/static/htmx.version)"
-actual="$(sed -n 's/.*version:"\([^"]*\)".*/\1/p' cmd/docklight/static/htmx.min.js | head -n 1)"
-test "$actual" = "$expected"
+npm test
+npm run build
 ```
 
-To compare with the latest upstream release, inspect:
+The Docker build runs the same npm sync step before `go build`.
+
+Upgrade HTMX with an exact dependency version:
 
 ```sh
-curl -fsSL https://registry.npmjs.org/htmx.org/latest
+npm install --save-exact htmx.org@<version>
+npm run sync:htmx
+go test ./...
 ```
 
 ## Go Dependency Updates
@@ -93,7 +95,9 @@ go mod tidy
 After dependency changes, verify the project with:
 
 ```sh
-go test ./...
+npm ci
+npm run sync:htmx
+npm test
 go test ./... -cover
 go vet ./...
 ```

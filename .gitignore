@@ -5,6 +5,8 @@
 /docklight.exe
 /cmd/docklight/docklight
 /cmd/docklight/docklight.exe
+/cmd/docklight/static/htmx.min.js
+/node_modules/
 *.db
 *.db-shm
 *.db-wal

@@ -105,7 +105,7 @@ It does not store container IDs or live Docker state. If the user changes contai
 ## More Documentation
 
 - [Docker Deployment](docs/docker.md) covers image tags, path mapping, private registries, reverse proxies, stored data, and upgrade behavior.
-- [Development](docs/development.md) covers maintainer tasks, CI publishing, vendored frontend dependencies, and Go dependency updates.
+- [Development](docs/development.md) covers maintainer tasks, CI publishing, generated frontend dependencies, and Go dependency updates.
 
 ## Current Limitations
 

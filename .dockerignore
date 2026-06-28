@@ -1,6 +1,8 @@
 .git
 .opencode
 data
+node_modules
+cmd/docklight/static/htmx.min.js
 *.db
 *.db-shm
 *.db-wal

@@ -1,3 +1,11 @@
+FROM node:22-bookworm-slim AS frontend
+
+WORKDIR /src
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY scripts ./scripts
+RUN npm run sync:htmx
+
 FROM golang:1.26.4-bookworm AS build
 ARG BUILD_DATE=unknown
 
@@ -5,6 +13,7 @@ WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
 COPY . .
+COPY --from=frontend /src/cmd/docklight/static/htmx.min.js cmd/docklight/static/htmx.min.js
 RUN build_date="${BUILD_DATE}"; \
   if [ "$build_date" = "unknown" ]; then build_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; fi; \
   CGO_ENABLED=0 GOOS=linux go build -ldflags "-X main.buildDate=${build_date}" -o /out/docklight ./cmd/docklight
