@@ -28,7 +28,7 @@ Mount a dedicated config directory for this in the Docklight Compose service:
 
 ```yaml
 volumes:
-  - ./data/docker-config:/root/.docker
+  - ./docker-config:/root/.docker
 environment:
   DOCKER_CONFIG: /root/.docker
 ```
@@ -39,7 +39,7 @@ Authenticate that config from inside the running container:
 docker exec -it docklight docker login ghcr.io -u <github-user>
 ```
 
-Use a least-privileged GitHub token with `read:packages`. Do not copy a Docker Desktop `config.json` that relies on `credsStore` or `credHelpers`; those helper binaries usually are not available inside the Docklight container. Treat `./data/docker-config/config.json` as secret material and rotate the token if it is exposed.
+Use a least-privileged GitHub token with `read:packages`. Do not copy a Docker Desktop `config.json` that relies on `credsStore` or `credHelpers`; those helper binaries usually are not available inside the Docklight container. Treat `./docker-config/config.json` as secret material and rotate the token if it is exposed.
 
 ## Vendored Frontend Dependency
 

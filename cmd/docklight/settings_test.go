@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -82,7 +83,13 @@ func TestDownloadActivityExportsAllRows(t *testing.T) {
 
 func TestVerboseLogWritesAndDownloadsWhenEnabled(t *testing.T) {
 	dataDir := t.TempDir()
-	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), DBPath: filepath.Join(dataDir, "docklight.db"), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	cfg := Config{BaseURL: "/", StacksRoot: t.TempDir(), DBPath: filepath.Join(dataDir, "docklight.db"), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"}
+	var calls *[]chownCall
+	if runtime.GOOS != "windows" {
+		calls = recordChown(t)
+		cfg.DataFileOwner = &fileOwner{UID: 2000, GID: 2001}
+	}
+	app, _ := newTestApp(t, cfg)
 	path := app.verboseLogPath(time.Now())
 	app.verboseLog("disabled message")
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
@@ -98,6 +105,10 @@ func TestVerboseLogWritesAndDownloadsWhenEnabled(t *testing.T) {
 	}
 	if !strings.Contains(string(content), "enabled message key=\"value\"") {
 		t.Fatalf("unexpected verbose log content: %s", content)
+	}
+	if calls != nil {
+		assertChownCall(t, *calls, dataDir, 2000, 2001)
+		assertChownCall(t, *calls, path, 2000, 2001)
 	}
 	rec := httptest.NewRecorder()
 	app.downloadVerboseLog(rec, httptest.NewRequest(http.MethodGet, "http://docklight.local/settings/verbose-log/download", nil))

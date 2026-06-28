@@ -16,6 +16,7 @@ func TestConfigParsesProductionEnvironment(t *testing.T) {
 	t.Setenv("STACKS_HOST_ROOT", "/host/stacks")
 	if runtime.GOOS != "windows" {
 		t.Setenv("STACKS_FILE_OWNER", "1000:1001")
+		t.Setenv("DATA_FILE_OWNER", "2000:2001")
 	}
 	t.Setenv("DB_PATH", "/srv/data/app.db")
 	t.Setenv("COOKIE_SECURE", "yes")
@@ -30,10 +31,24 @@ func TestConfigParsesProductionEnvironment(t *testing.T) {
 	if runtime.GOOS != "windows" && (cfg.StackFileOwner == nil || cfg.StackFileOwner.UID != 1000 || cfg.StackFileOwner.GID != 1001) {
 		t.Fatalf("unexpected stack file owner: %#v", cfg.StackFileOwner)
 	}
+	if runtime.GOOS != "windows" && (cfg.DataFileOwner == nil || cfg.DataFileOwner.UID != 2000 || cfg.DataFileOwner.GID != 2001) {
+		t.Fatalf("unexpected data file owner: %#v", cfg.DataFileOwner)
+	}
 
 	t.Setenv("BASE_URL", "/bad%2fpath")
 	if _, err := loadConfig(); err == nil {
 		t.Fatal("expected invalid base URL to fail")
+	}
+}
+
+func TestLoadConfigRejectsInvalidDataFileOwner(t *testing.T) {
+	t.Setenv("ADMIN_USER", "admin")
+	t.Setenv("ADMIN_PASSWORD", "pw")
+	t.Setenv("SESSION_SECRET", "secret")
+	t.Setenv("DATA_FILE_OWNER", "user:group")
+
+	if _, err := loadConfig(); err == nil {
+		t.Fatal("expected invalid DATA_FILE_OWNER to fail")
 	}
 }
 

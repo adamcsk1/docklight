@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -20,7 +19,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := os.MkdirAll(filepath.Dir(cfg.DBPath), 0o755); err != nil {
+	if err := ensureDataStorage(cfg); err != nil {
 		logger.Error("failed to create data directory", "error", err)
 		os.Exit(1)
 	}
@@ -35,6 +34,10 @@ func main() {
 	app := &App{cfg: cfg, db: db, logger: logger}
 	if err := app.initDB(); err != nil {
 		logger.Error("failed to initialize database", "error", err)
+		os.Exit(1)
+	}
+	if err := app.chownDataFiles(); err != nil {
+		logger.Error("failed to set data file ownership", "error", err)
 		os.Exit(1)
 	}
 	if err := app.purgeExpiredActivity(); err != nil {

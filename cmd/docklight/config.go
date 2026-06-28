@@ -23,6 +23,7 @@ type Config struct {
 	StacksRoot     string
 	StacksHostRoot string
 	StackFileOwner *fileOwner
+	DataFileOwner  *fileOwner
 	DBPath         string
 	ActionTimeout  time.Duration
 	CookieSecure   bool
@@ -31,6 +32,10 @@ type Config struct {
 func loadConfig() (Config, error) {
 	stacksRoot := env("STACKS_ROOT", "/stacks")
 	stackFileOwner, err := parseStackFileOwnerEnv()
+	if err != nil {
+		return Config{}, err
+	}
+	dataFileOwner, err := parseFileOwnerEnv("DATA_FILE_OWNER")
 	if err != nil {
 		return Config{}, err
 	}
@@ -43,6 +48,7 @@ func loadConfig() (Config, error) {
 		StacksRoot:     stacksRoot,
 		StacksHostRoot: env("STACKS_HOST_ROOT", stacksRoot),
 		StackFileOwner: stackFileOwner,
+		DataFileOwner:  dataFileOwner,
 		DBPath:         env("DB_PATH", "/data/docklight.db"),
 		ActionTimeout:  10 * time.Minute,
 		CookieSecure:   parseBoolEnv("COOKIE_SECURE", false),
@@ -57,14 +63,18 @@ func loadConfig() (Config, error) {
 }
 
 func parseStackFileOwnerEnv() (*fileOwner, error) {
-	value := strings.TrimSpace(os.Getenv("STACKS_FILE_OWNER"))
+	return parseFileOwnerEnv("STACKS_FILE_OWNER")
+}
+
+func parseFileOwnerEnv(key string) (*fileOwner, error) {
+	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return nil, nil
 	}
 	if runtime.GOOS == "windows" {
-		return nil, errWindowsChownUnsupported("STACKS_FILE_OWNER", value)
+		return nil, errWindowsChownUnsupported(key, value)
 	}
-	uid, gid, err := parseManagedOwner(value, "STACKS_FILE_OWNER")
+	uid, gid, err := parseManagedOwner(value, key)
 	if err != nil {
 		return nil, err
 	}

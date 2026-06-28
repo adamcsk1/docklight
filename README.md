@@ -73,6 +73,7 @@ For deployment options, image tags, Windows paths, private registries, reverse p
 | `STACKS_ROOT` | `/stacks` | Mounted compose root inside the Docklight container. |
 | `STACKS_HOST_ROOT` | `STACKS_ROOT` | Docker-daemon-visible host path for the same stack root. Set this when stack compose files use relative bind mounts and `/stacks` is not the same path on the Docker host. |
 | `STACKS_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to stack files Docklight creates, such as `.docklight.config.yml`, compose files, managed files, and managed folders. Use this to keep host bind-mounted stack files editable by your host user while Docklight still runs as root for Docker socket access. |
+| `DATA_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to Docklight-created data artifacts, including the data directory, SQLite database files, and verbose logs. It does not recursively change all files under `/data` or manage Docker config ownership. |
 | `DB_PATH` | `/data/docklight.db` | SQLite database path. |
 | `COOKIE_SECURE` | `false` | Set to `true` when serving only through HTTPS. |
 
@@ -95,6 +96,8 @@ Verbose logging is off by default. When enabled on the Config page, Docklight wr
 When Docklight creates or edits extra stack-local folders, files, or stack safety checkboxes, it stores those stack-specific settings in `.docklight.config.yml` inside that stack folder. Only files listed there are editable in Docklight; manual files in old or hand-created stacks are left untouched unless added through the stack edit UI.
 
 On Linux bind mounts, set `STACKS_FILE_OWNER` to your host user's numeric `uid:gid` if Docklight-created stack files should remain editable from the host without root, for example `STACKS_FILE_OWNER: "1000:1000"`.
+
+Set `DATA_FILE_OWNER` the same way if Docklight-created files under `/data`, such as `docklight.db` and verbose logs, should be host-editable without root. Docklight does not recursively chown `/data` or manage Docker CLI credential mounts; set ownership for Docker CLI credentials on the host if you use that optional mount.
 
 It does not store container IDs or live Docker state. If the user changes containers with the Docker CLI, Docklight reads the live state again.
 

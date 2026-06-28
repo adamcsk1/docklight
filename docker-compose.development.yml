@@ -16,11 +16,13 @@ services:
       # STACKS_HOST_ROOT: /absolute/host/path/to/stacks
       # Optional Linux-only uid:gid for files Docklight creates under /stacks.
       # STACKS_FILE_OWNER: "1000:1000"
+      # Optional Linux-only uid:gid for Docklight-created files under /data.
+      # DATA_FILE_OWNER: "1000:1000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./stacks:/stacks
       - ./data:/data
-      - ./data/docker-config:/root/.docker
+      - ./docker-config:/root/.docker
       # Optional: required for Config > Maintenance > Update Docklight.
       # Mount this compose project at the same absolute path used on the host.
       # - /absolute/host/path/to/docklight:/absolute/host/path/to/docklight:ro

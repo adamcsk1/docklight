@@ -30,8 +30,13 @@ func (app *App) verboseLog(message string, attrs ...string) {
 	app.verboseMu.Lock()
 	defer app.verboseMu.Unlock()
 	path := app.verboseLogPath(time.Now())
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	logDir := filepath.Dir(path)
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		app.logger.Warn("failed to create verbose log directory", "error", err)
+		return
+	}
+	if err := chownDataPath(app.cfg, logDir); err != nil {
+		app.logger.Warn("failed to set verbose log directory ownership", "error", err)
 		return
 	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -40,6 +45,10 @@ func (app *App) verboseLog(message string, attrs ...string) {
 		return
 	}
 	defer file.Close()
+	if err := chownDataPath(app.cfg, path); err != nil {
+		app.logger.Warn("failed to set verbose log ownership", "error", err)
+		return
+	}
 	if _, err := file.WriteString(line); err != nil {
 		app.logger.Warn("failed to write verbose log", "error", err)
 	}
