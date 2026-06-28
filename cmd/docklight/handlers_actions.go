@@ -33,7 +33,6 @@ func (app *App) resetDatabase() error {
 	if _, err := tx.Exec(`
 DROP TABLE IF EXISTS stacks;
 DROP TABLE IF EXISTS activity_log;
-DROP TABLE IF EXISTS app_settings;
 DROP TABLE IF EXISTS sessions;
 PRAGMA user_version = 0;
 `); err != nil {

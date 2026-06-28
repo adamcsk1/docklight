@@ -1,14 +1,15 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"strconv"
+	"os"
+	"path/filepath"
+
+	"gopkg.in/yaml.v3"
 )
 
 const (
-	settingActivityRetentionDays   = "activity_retention_days"
-	settingVerboseLogRetentionDays = "verbose_log_retention_days"
-	settingVerboseLoggingEnabled   = "verbose_logging_enabled"
 	defaultActivityRetentionDays   = 30
 	defaultVerboseLogRetentionDays = 30
 )
@@ -21,45 +22,42 @@ type AppSettings struct {
 	VerboseLoggingEnabled   bool
 }
 
+type appSettingsFile struct {
+	ActivityRetentionDays   int  `yaml:"activity_retention_days"`
+	VerboseLogRetentionDays int  `yaml:"verbose_log_retention_days"`
+	VerboseLoggingEnabled   bool `yaml:"verbose_logging_enabled"`
+}
+
 func (app *App) ensureDefaultSettings() error {
-	for key, value := range map[string]string{
-		settingActivityRetentionDays:   strconv.Itoa(defaultActivityRetentionDays),
-		settingVerboseLogRetentionDays: strconv.Itoa(defaultVerboseLogRetentionDays),
-		settingVerboseLoggingEnabled:   "false",
-	} {
-		if _, err := app.db.Exec(`INSERT OR IGNORE INTO app_settings (key, value) VALUES (?, ?)`, key, value); err != nil {
-			return err
-		}
+	if _, err := os.Stat(app.settingsPath()); err == nil {
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	return nil
+	return app.saveSettings(AppSettings{ActivityRetentionDays: defaultActivityRetentionDays, VerboseLogRetentionDays: defaultVerboseLogRetentionDays})
 }
 
 func (app *App) loadSettings() (AppSettings, error) {
 	settings := AppSettings{ActivityRetentionDays: defaultActivityRetentionDays, VerboseLogRetentionDays: defaultVerboseLogRetentionDays}
-	rows, err := app.db.Query(`SELECT key, value FROM app_settings`)
+	content, err := os.ReadFile(app.settingsPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return settings, nil
+	}
 	if err != nil {
 		return settings, err
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var key, value string
-		if err := rows.Scan(&key, &value); err != nil {
-			return settings, err
-		}
-		switch key {
-		case settingActivityRetentionDays:
-			if days, err := strconv.Atoi(value); err == nil && validRetentionDays(days) {
-				settings.ActivityRetentionDays = days
-			}
-		case settingVerboseLogRetentionDays:
-			if days, err := strconv.Atoi(value); err == nil && validRetentionDays(days) {
-				settings.VerboseLogRetentionDays = days
-			}
-		case settingVerboseLoggingEnabled:
-			settings.VerboseLoggingEnabled = value == "true"
-		}
+	var fileSettings appSettingsFile
+	if err := yaml.Unmarshal(content, &fileSettings); err != nil {
+		return settings, err
 	}
-	return settings, rows.Err()
+	if validRetentionDays(fileSettings.ActivityRetentionDays) {
+		settings.ActivityRetentionDays = fileSettings.ActivityRetentionDays
+	}
+	if validRetentionDays(fileSettings.VerboseLogRetentionDays) {
+		settings.VerboseLogRetentionDays = fileSettings.VerboseLogRetentionDays
+	}
+	settings.VerboseLoggingEnabled = fileSettings.VerboseLoggingEnabled
+	return settings, nil
 }
 
 func (app *App) saveSettings(settings AppSettings) error {
@@ -69,22 +67,38 @@ func (app *App) saveSettings(settings AppSettings) error {
 	if !validRetentionDays(settings.VerboseLogRetentionDays) {
 		return fmt.Errorf("invalid verbose log retention: %d", settings.VerboseLogRetentionDays)
 	}
-	tx, err := app.db.Begin()
+	if err := os.MkdirAll(dataDir(app.cfg), 0o755); err != nil {
+		return err
+	}
+	if err := chownDataPath(app.cfg, dataDir(app.cfg)); err != nil {
+		return err
+	}
+	content, err := yaml.Marshal(appSettingsFile{
+		ActivityRetentionDays:   settings.ActivityRetentionDays,
+		VerboseLogRetentionDays: settings.VerboseLogRetentionDays,
+		VerboseLoggingEnabled:   settings.VerboseLoggingEnabled,
+	})
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
-	values := map[string]string{
-		settingActivityRetentionDays:   strconv.Itoa(settings.ActivityRetentionDays),
-		settingVerboseLogRetentionDays: strconv.Itoa(settings.VerboseLogRetentionDays),
-		settingVerboseLoggingEnabled:   strconv.FormatBool(settings.VerboseLoggingEnabled),
+	path := app.settingsPath()
+	tmpPath := path + ".tmp"
+	if err := os.WriteFile(tmpPath, content, 0o644); err != nil {
+		return err
 	}
-	for key, value := range values {
-		if _, err := tx.Exec(`INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value); err != nil {
-			return err
-		}
+	if err := chownDataPath(app.cfg, tmpPath); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
 	}
-	return tx.Commit()
+	if err := os.Rename(tmpPath, path); err != nil {
+		_ = os.Remove(tmpPath)
+		return err
+	}
+	return chownDataPath(app.cfg, path)
+}
+
+func (app *App) settingsPath() string {
+	return filepath.Join(dataDir(app.cfg), "config.yml")
 }
 
 func validRetentionDays(days int) bool {

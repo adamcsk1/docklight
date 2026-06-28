@@ -33,10 +33,6 @@ CREATE TABLE IF NOT EXISTS activity_log (
   output TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE IF NOT EXISTS app_settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
 `)
 	if err != nil {
 		return err
@@ -65,9 +61,6 @@ CREATE TABLE IF NOT EXISTS app_settings (
 }
 
 func (app *App) cleanupStackSchema() error {
-	if _, err := app.db.Exec(`DELETE FROM app_settings WHERE key IN ('update_check_interval', 'auto_update_interval')`); err != nil {
-		return err
-	}
 	if _, err := app.db.Exec(`DROP TABLE IF EXISTS image_updates`); err != nil {
 		return err
 	}

@@ -70,7 +70,7 @@ Use a GitHub token with `read:packages`. Public packages do not require login.
 | `STACKS_ROOT` | `/stacks` | Mounted compose root inside the Docklight container. |
 | `STACKS_HOST_ROOT` | `STACKS_ROOT` | Docker-daemon-visible host path for the same stack root. Set this when stack compose files use relative bind mounts and `/stacks` is not the same path on the Docker host. |
 | `STACKS_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to stack files Docklight creates, such as `.docklight.config.yml`, compose files, managed files, and managed folders. Use this to keep host bind-mounted stack files editable by your host user while Docklight still runs as root for Docker socket access. |
-| `DATA_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to Docklight-created data artifacts, including the data directory, SQLite database files, and verbose logs. It does not recursively change all files under `/data` or manage Docker config ownership. |
+| `DATA_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to Docklight-created data artifacts, including the data directory, `config.yml`, SQLite database files, and verbose logs. It does not recursively change all files under `/data` or manage Docker config ownership. |
 | `DB_PATH` | `/data/docklight.db` | SQLite database path. |
 | `COOKIE_SECURE` | `false` | Set to `true` when serving only through HTTPS. |
 
@@ -92,7 +92,7 @@ environment:
 
 Set `STACKS_FILE_OWNER` to the numeric `uid:gid` of the host user that should edit stack files. Docklight applies it to stack-local files and folders it creates, including `.docklight.config.yml`, without changing how the Docklight container itself runs. Running the whole container with Compose `user: "1000:1000"` can also avoid root-owned files, but it often requires extra Docker socket, `/data`, and Docker config permissions.
 
-Set `DATA_FILE_OWNER` when Docklight-created files under `/data`, such as `docklight.db` and verbose logs, should be editable from the host without root. Docklight applies it only to its own data directory and files; it does not recursively chown `/data` or change Docker CLI credential mount ownership. If you mount Docker CLI credentials, create and chown that credential directory on the host.
+Set `DATA_FILE_OWNER` when Docklight-created files under `/data`, such as `config.yml`, `docklight.db`, and verbose logs, should be editable from the host without root. Docklight applies it only to its own data directory and files; it does not recursively chown `/data` or change Docker CLI credential mount ownership. If you mount Docker CLI credentials, create and chown that credential directory on the host.
 
 ## Windows Docker Desktop Paths
 
@@ -157,19 +157,20 @@ Set `COOKIE_SECURE: true` when serving Docklight only through HTTPS.
 
 ## Stored Data
 
-SQLite stores durable app data only:
+SQLite stores durable database data only:
 
 - discovered stack relative path
 - compose filename
 - sessions
 - activity log
-- app settings, including activity retention and verbose logging state
+
+Docklight stores app settings, including activity retention and verbose logging state, in `/data/config.yml`.
 
 Activity retention defaults to 30 days and can be changed on the Config page to 30, 60, 120, 180, or 365 days. Rows older than the selected limit are purged automatically. The Activity page can download all retained activity as CSV.
 
 If you mount `./docker-config:/root/.docker` for private registry access, that folder is user-provided Docker CLI configuration and may contain registry credentials. Docklight does not manage those credentials.
 
-Verbose logging is off by default. When enabled on the Config page, Docklight writes timestamped troubleshooting logs to the data folder with daily filenames such as `docklight-verbose-2026-06-18.log`. Verbose log retention defaults to 30 days and supports the same 30, 60, 120, 180, or 365 day options. Out-of-retention verbose log files are deleted automatically, and retained historical log files can be downloaded from the Config page.
+Verbose logging is off by default. When enabled on the Config page, Docklight writes timestamped troubleshooting logs under `/data/logs` with daily filenames such as `docklight-verbose-2026-06-18.log`. Verbose log retention defaults to 30 days and supports the same 30, 60, 120, 180, or 365 day options. Out-of-retention verbose log files are deleted automatically, and retained historical log files can be downloaded from the Config page.
 
 Docklight does not store container IDs or live Docker state. If the user changes containers with the Docker CLI, Docklight reads the live state again.
 

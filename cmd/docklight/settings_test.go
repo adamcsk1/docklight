@@ -108,6 +108,7 @@ func TestVerboseLogWritesAndDownloadsWhenEnabled(t *testing.T) {
 	}
 	if calls != nil {
 		assertChownCall(t, *calls, dataDir, 2000, 2001)
+		assertChownCall(t, *calls, app.verboseLogDir(), 2000, 2001)
 		assertChownCall(t, *calls, path, 2000, 2001)
 	}
 	rec := httptest.NewRecorder()
@@ -123,15 +124,19 @@ func TestVerboseLogWritesAndDownloadsWhenEnabled(t *testing.T) {
 func TestVerboseLogHistoricalListDownloadAndRetention(t *testing.T) {
 	dataDir := t.TempDir()
 	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), DBPath: filepath.Join(dataDir, "docklight.db"), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	logDir := app.verboseLogDir()
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	oldName := "docklight-verbose-2020-01-01.log"
 	recentName := "docklight-verbose-2099-01-01.log"
-	if err := os.WriteFile(filepath.Join(dataDir, oldName), []byte("old"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(logDir, oldName), []byte("old"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, recentName), []byte("recent"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(logDir, recentName), []byte("recent"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dataDir, "not-a-docklight.log"), []byte("skip"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(logDir, "not-a-docklight.log"), []byte("skip"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	files, err := app.verboseLogFiles()
@@ -157,10 +162,10 @@ func TestVerboseLogHistoricalListDownloadAndRetention(t *testing.T) {
 	if err := app.purgeExpiredVerboseLogs(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, oldName)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(logDir, oldName)); !os.IsNotExist(err) {
 		t.Fatalf("expected old verbose log to be purged, stat error: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dataDir, recentName)); err != nil {
+	if _, err := os.Stat(filepath.Join(logDir, recentName)); err != nil {
 		t.Fatalf("expected recent verbose log to remain: %v", err)
 	}
 }

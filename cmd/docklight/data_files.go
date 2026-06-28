@@ -7,11 +7,15 @@ import (
 )
 
 func ensureDataStorage(cfg Config) error {
-	dataDir := filepath.Dir(cfg.DBPath)
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	dir := dataDir(cfg)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return chownDataPath(cfg, dataDir)
+	return chownDataPath(cfg, dir)
+}
+
+func dataDir(cfg Config) string {
+	return filepath.Dir(cfg.DBPath)
 }
 
 func (app *App) chownDataFiles() error {

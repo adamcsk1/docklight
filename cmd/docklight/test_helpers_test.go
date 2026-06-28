@@ -26,6 +26,9 @@ func newTestApp(t *testing.T, cfg Config) (*App, *sql.DB) {
 	if cfg.ActionTimeout == 0 {
 		cfg.ActionTimeout = time.Minute
 	}
+	if cfg.DBPath == "" {
+		cfg.DBPath = filepath.Join(t.TempDir(), "docklight.db")
+	}
 	app := &App{cfg: cfg, db: db, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)

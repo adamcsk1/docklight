@@ -42,16 +42,14 @@ CREATE TABLE stacks (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE image_updates (image_ref TEXT PRIMARY KEY, image_id TEXT NOT NULL);
 INSERT INTO stacks (name, relative_path, compose_file, auto_update_enabled, update_status, external_bind_mounts_allowed, docker_socket_mounts_allowed) VALUES ('web', 'web', 'compose.yml', 1, 'available', 1, 1);
 INSERT INTO stacks (name, relative_path, compose_file, privileged_allowed) VALUES ('priv-db', 'priv-db', 'compose.yml', 1);
-INSERT INTO app_settings (key, value) VALUES ('update_check_interval', '1h'), ('auto_update_interval', '6h');
 INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:old');
 `); err != nil {
 		t.Fatal(err)
 	}
-	cfg := Config{StacksRoot: root}
+	cfg := Config{StacksRoot: root, DBPath: filepath.Join(t.TempDir(), "docklight.db")}
 	var calls *[]chownCall
 	if runtime.GOOS != "windows" {
 		calls = recordChown(t)
@@ -76,13 +74,6 @@ INSERT INTO image_updates (image_ref, image_id) VALUES ('nginx:latest', 'sha256:
 	}
 	if exists, err := app.tableExists("image_updates"); err != nil || exists {
 		t.Fatalf("expected image_updates table removed, exists=%v err=%v", exists, err)
-	}
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM app_settings WHERE key IN ('update_check_interval', 'auto_update_interval')`).Scan(&count); err != nil {
-		t.Fatal(err)
-	}
-	if count != 0 {
-		t.Fatalf("expected update settings removed, got %d", count)
 	}
 	managedConfig, err := app.loadManagedStackConfig(filepath.Join(root, "web"))
 	if err != nil {
@@ -119,12 +110,11 @@ CREATE TABLE stacks (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 INSERT INTO stacks (name, relative_path, compose_file, external_bind_mounts_allowed) VALUES ('unsafe', '../outside', 'compose.yml', 1);
 `); err != nil {
 		t.Fatal(err)
 	}
-	app := &App{cfg: Config{StacksRoot: root}, db: db}
+	app := &App{cfg: Config{StacksRoot: root, DBPath: filepath.Join(t.TempDir(), "docklight.db")}, db: db}
 	if err := app.initDB(); err == nil || !strings.Contains(err.Error(), "outside stacks root") {
 		t.Fatalf("expected unsafe migration path to fail, got %v", err)
 	}
@@ -154,12 +144,11 @@ CREATE TABLE stacks (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-CREATE TABLE app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 INSERT INTO stacks (name, relative_path, compose_file, docker_socket_mounts_allowed) VALUES ('web', 'web', 'compose.yml', 1);
 `); err != nil {
 		t.Fatal(err)
 	}
-	app := &App{cfg: Config{StacksRoot: root}, db: db}
+	app := &App{cfg: Config{StacksRoot: root, DBPath: filepath.Join(t.TempDir(), "docklight.db")}, db: db}
 	if err := app.initDB(); err == nil {
 		t.Fatal("expected invalid managed config to fail migration instead of being rewritten")
 	}

@@ -84,7 +84,7 @@ func TestRescanRejectsStackNameCollision(t *testing.T) {
 	}
 	defer db.Close()
 
-	app := &App{cfg: Config{StacksRoot: root}, db: db}
+	app := &App{cfg: Config{StacksRoot: root, DBPath: filepath.Join(t.TempDir(), "docklight.db")}, db: db}
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +105,7 @@ func TestRebuildDatabaseDropsExistingDataOnRescanFailure(t *testing.T) {
 	}
 	defer db.Close()
 
-	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret"}, db: db}
+	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, DBPath: filepath.Join(t.TempDir(), "docklight.db"), SessionSecret: "secret"}, db: db}
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}
@@ -136,14 +136,16 @@ func TestRebuildDatabaseStartsFreshFromFilesystem(t *testing.T) {
 	}
 	defer db.Close()
 
-	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret"}, db: db}
+	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, DBPath: filepath.Join(t.TempDir(), "docklight.db"), SessionSecret: "secret"}, db: db}
 	if err := app.initDB(); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.saveSettings(AppSettings{ActivityRetentionDays: 30, VerboseLogRetentionDays: 30, VerboseLoggingEnabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(`
 INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'old-web', 'compose.yml');
 INSERT INTO activity_log (stack_name, action, status, output) VALUES ('old', 'test', 'success', 'old row');
-INSERT INTO app_settings (key, value) VALUES ('verbose_logging_enabled', 'true') ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'admin', '2099-01-01T00:00:00Z');
 `); err != nil {
 		t.Fatal(err)
@@ -183,12 +185,12 @@ INSERT INTO sessions (id_hash, username, expires_at) VALUES ('old-session', 'adm
 	if count != 0 {
 		t.Fatalf("expected old sessions to be dropped, got count %d", count)
 	}
-	var verboseLogging string
-	if err := db.QueryRow(`SELECT value FROM app_settings WHERE key = ?`, settingVerboseLoggingEnabled).Scan(&verboseLogging); err != nil {
+	settings, err := app.loadSettings()
+	if err != nil {
 		t.Fatal(err)
 	}
-	if verboseLogging != "false" {
-		t.Fatalf("expected default verbose logging after rebuild, got %q", verboseLogging)
+	if !settings.VerboseLoggingEnabled {
+		t.Fatalf("expected database rebuild to preserve file-backed settings, got %#v", settings)
 	}
 }
 
@@ -204,7 +206,7 @@ func TestRescanLoadsMountPermissionsFromConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret"}, db: db}
+	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, DBPath: filepath.Join(t.TempDir(), "docklight.db"), SessionSecret: "secret"}, db: db}
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +237,7 @@ func TestCreateStackPostWriteErrorPreservesFormValues(t *testing.T) {
 	}
 	defer db.Close()
 
-	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret"}, db: db}
+	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, DBPath: filepath.Join(t.TempDir(), "docklight.db"), SessionSecret: "secret"}, db: db}
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +525,7 @@ func newDeleteStackTestApp(t *testing.T, root string) (*App, *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret"}, db: db}
+	app := &App{cfg: Config{BaseURL: "/", StacksRoot: root, DBPath: filepath.Join(t.TempDir(), "docklight.db"), SessionSecret: "secret"}, db: db}
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}

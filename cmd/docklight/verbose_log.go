@@ -58,7 +58,11 @@ func (app *App) verboseLog(message string, attrs ...string) {
 }
 
 func (app *App) verboseLogPath(t time.Time) string {
-	return filepath.Join(filepath.Dir(app.cfg.DBPath), verboseLogFileName(t))
+	return filepath.Join(app.verboseLogDir(), verboseLogFileName(t))
+}
+
+func (app *App) verboseLogDir() string {
+	return filepath.Join(dataDir(app.cfg), "logs")
 }
 
 func verboseLogFileName(t time.Time) string {
@@ -66,7 +70,7 @@ func verboseLogFileName(t time.Time) string {
 }
 
 func (app *App) verboseLogFiles() ([]string, error) {
-	entries, err := os.ReadDir(filepath.Dir(app.cfg.DBPath))
+	entries, err := os.ReadDir(app.verboseLogDir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil
@@ -113,7 +117,7 @@ func (app *App) purgeExpiredVerboseLogs() error {
 	if err != nil {
 		return err
 	}
-	entries, err := os.ReadDir(filepath.Dir(app.cfg.DBPath))
+	entries, err := os.ReadDir(app.verboseLogDir())
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -131,7 +135,7 @@ func (app *App) purgeExpiredVerboseLogs() error {
 		if !ok || !logDate.Before(cutoffDate) {
 			continue
 		}
-		if err := os.Remove(filepath.Join(filepath.Dir(app.cfg.DBPath), name)); err != nil && !os.IsNotExist(err) {
+		if err := os.Remove(filepath.Join(app.verboseLogDir(), name)); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 	}
@@ -172,7 +176,7 @@ func (app *App) downloadVerboseLog(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid verbose log file", http.StatusBadRequest)
 		return
 	}
-	path := filepath.Join(filepath.Dir(app.cfg.DBPath), name)
+	path := filepath.Join(app.verboseLogDir(), name)
 	if _, err := os.Stat(path); err != nil {
 		http.Error(w, "verbose log not found", http.StatusNotFound)
 		return

@@ -86,6 +86,7 @@ func TestDataFileOwnerAppliedAfterRealDatabaseInit(t *testing.T) {
 
 	assertChownCall(t, *calls, dataDir, 2000, 2001)
 	assertChownCall(t, *calls, dbPath, 2000, 2001)
+	assertChownCall(t, *calls, filepath.Join(dataDir, "config.yml"), 2000, 2001)
 }
 
 func TestDataFileOwnerReturnsChownErrors(t *testing.T) {

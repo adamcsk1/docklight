@@ -83,7 +83,7 @@ func TestEnsureSessionSchemaDropsLegacyPlainSessionTable(t *testing.T) {
 	if _, err := db.Exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, username TEXT NOT NULL, expires_at TEXT NOT NULL)`); err != nil {
 		t.Fatal(err)
 	}
-	app := &App{db: db, cfg: Config{SessionSecret: "secret"}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	app := &App{db: db, cfg: Config{DBPath: filepath.Join(t.TempDir(), "docklight.db"), SessionSecret: "secret"}, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if err := app.initDB(); err != nil {
 		t.Fatal(err)
 	}
