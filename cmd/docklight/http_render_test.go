@@ -101,7 +101,7 @@ func TestCommandActionsDisableWhenUnavailable(t *testing.T) {
 	rec = httptest.NewRecorder()
 	app.render(rec, req, "container_logs.html", PageData{Container: DockerContainer{ID: "stop123", Name: "worker", State: "exited"}})
 	body = rec.Body.String()
-	if strings.Contains(body, `/containers/stop123/exec`) || !strings.Contains(body, `aria-disabled="true">Command`) {
+	if strings.Contains(body, `/containers/stop123/exec`) || !strings.Contains(body, `aria-disabled="true">Command`) || !strings.Contains(body, `data-log-copy`) {
 		t.Fatalf("expected logs page command action to be disabled: %s", body)
 	}
 }
