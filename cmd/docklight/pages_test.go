@@ -19,7 +19,12 @@ func TestCreateStackSuccessRedirectsToDashboard(t *testing.T) {
 	if err := app.loadTemplates(); err != nil {
 		t.Fatal(err)
 	}
+	var ranComposeUp bool
 	app.runner = func(dir, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		if strings.Contains(call, " up -d") {
+			ranComposeUp = true
+		}
 		return "started", nil
 	}
 
@@ -33,11 +38,104 @@ func TestCreateStackSuccessRedirectsToDashboard(t *testing.T) {
 	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
 		t.Fatalf("expected redirect to dashboard after successful create, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
 	}
+	if !ranComposeUp {
+		t.Fatal("expected create stack to run docker compose up -d")
+	}
 	if _, err := os.Stat(filepath.Join(root, "new-stack", "docker-compose.yml")); err != nil {
 		t.Fatalf("expected docker-compose.yml to be written: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(root, "new-stack", "compose.yml")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("expected compose.yml not to be written, stat error: %v", err)
+	}
+}
+
+func TestCreateStackSaveOnlyWritesFilesWithoutStarting(t *testing.T) {
+	root := t.TempDir()
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	var ranComposeConfig bool
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		if strings.Contains(call, " up -d") {
+			t.Fatalf("save-only create should not run compose up: %s in %s", call, dir)
+		}
+		if strings.Contains(call, " compose ") && strings.HasSuffix(call, " config") {
+			ranComposeConfig = true
+			return "services:\n  app:\n    image: nginx:latest\n", nil
+		}
+		t.Fatalf("unexpected save-only create command %s in %s", call, dir)
+		return "", nil
+	}
+
+	values := url.Values{}
+	values.Set("name", "saved-stack")
+	values.Set("compose_yaml", "services:\n  app:\n    image: ${IMAGE}")
+	values.Set("managed_folder_path", "data")
+	values.Add("managed_file_path", ".env")
+	values.Add("managed_file_content", "IMAGE=nginx:latest")
+	values.Add("managed_file_path", "data/config.txt")
+	values.Add("managed_file_content", "enabled=true")
+	values.Set("external_bind_mounts_allowed", "on")
+	values.Set("create_mode", "save")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/new", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	app.createStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/saved-stack" {
+		t.Fatalf("expected redirect to saved stack after save-only create, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if !ranComposeConfig {
+		t.Fatal("expected compose config validation to run for interpolated save-only stack")
+	}
+	compose, err := os.ReadFile(filepath.Join(root, "saved-stack", "docker-compose.yml"))
+	if err != nil {
+		t.Fatalf("expected docker-compose.yml to be written: %v", err)
+	}
+	if string(compose) != "services:\n  app:\n    image: ${IMAGE}\n" {
+		t.Fatalf("unexpected compose file content: %q", string(compose))
+	}
+	if info, err := os.Stat(filepath.Join(root, "saved-stack", "data")); err != nil || !info.IsDir() {
+		t.Fatalf("expected managed data folder to be created, info=%v err=%v", info, err)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "saved-stack", "data", "config.txt"))
+	if err != nil {
+		t.Fatalf("expected managed file to be written: %v", err)
+	}
+	if string(content) != "enabled=true" {
+		t.Fatalf("unexpected managed file content: %q", string(content))
+	}
+	stack, err := app.loadStack("saved-stack", false)
+	if err != nil {
+		t.Fatalf("expected saved stack to load from scan: %v", err)
+	}
+	if !stack.ExternalBindMountsAllowed {
+		t.Fatal("expected saved stack settings to be loaded")
+	}
+	activities, err := app.loadActivity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(activities) != 1 || activities[0].StackName != "saved-stack" || activities[0].Action != "save stack" || activities[0].Status != "success" {
+		t.Fatalf("expected save stack activity, got %#v", activities)
+	}
+}
+
+func TestNewStackPageRendersSaveAndStartActions(t *testing.T) {
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	app.newStackPage(rec, httptest.NewRequest(http.MethodGet, "http://docklight.local/stacks/new", nil))
+	body := rec.Body.String()
+	for _, want := range []string{`name="create_mode" value="save"`, `>Save</button>`, `name="create_mode" value="start"`, `>Create and start</button>`, `Save only creates the stack folder`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected new stack page to contain %q, body: %s", want, body)
+		}
 	}
 }
 

@@ -189,10 +189,11 @@
       </label>
       <p class="form-hint">Allows <code>security_opt</code> entries. This can change container confinement. Enable only for trusted stacks.</p>
       <div class="actions actions-large">
-        <button class="button button-primary" type="submit" data-loading-text="Creating...">Create</button>
+        <button class="button button-secondary" type="submit" name="create_mode" value="save" data-loading-text="Saving...">Save</button>
+        <button class="button button-primary" type="submit" name="create_mode" value="start" data-loading-text="Creating...">Create and start</button>
         <a class="button button-ghost" href="{{base "/"}}">Cancel</a>
       </div>
-      <p class="form-hint">Creating a stack can take a while when Docker pulls images and starts services.</p>
+      <p class="form-hint">Save only creates the stack folder, compose file, managed folders/files, and stack settings. Create and start also runs <code>docker compose up -d</code>, which can take a while when Docker pulls images.</p>
     </form>
   </section>
 {{template "layout_end" .}}

@@ -84,6 +84,12 @@ func (app *App) createStack(w http.ResponseWriter, r *http.Request) {
 	stack.HostPIDAllowed = form.HostPIDAllowed
 	stack.PrivilegedAllowed = form.PrivilegedAllowed
 	stack.SecurityOptAllowed = form.SecurityOptAllowed
+	if r.FormValue("create_mode") == "save" {
+		app.logActivity(name, "save stack", "success", "stack definition saved without start")
+		app.redirectWithMessage(w, r, "/stacks/"+name, "stack created: "+name)
+		return
+	}
+
 	unlock := app.lockStack(stack.Name)
 	defer unlock()
 	output, err := app.runCompose(stack, "up", "-d")
