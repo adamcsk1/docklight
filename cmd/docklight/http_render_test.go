@@ -33,6 +33,7 @@ func TestPageHandlersRenderOperationalInventories(t *testing.T) {
 	}{
 		{name: "new stack", method: app.newStackPage, url: "http://docklight.local/stacks/new", want: "New stack"},
 		{name: "edit stack", method: app.editStackPage, url: "http://docklight.local/stacks/web/edit", pathKey: "name", pathVal: "web", want: "Edit web"},
+		{name: "rename stack", method: app.renameStackPage, url: "http://docklight.local/stacks/web/rename", pathKey: "name", pathVal: "web", want: "Rename web"},
 		{name: "activity", method: app.activity, url: "http://docklight.local/activity", want: "hello"},
 		{name: "settings", method: app.settings, url: "http://docklight.local/settings", want: "Settings"},
 		{name: "containers", method: app.containers, url: "http://docklight.local/containers", want: "web"},
@@ -165,7 +166,7 @@ func TestOperationalActionsRenderConfirmationPrompts(t *testing.T) {
 		want    []string
 	}{
 		{name: "dashboard", handler: app.dashboard, url: "http://docklight.local/", want: []string{"web", "compose.yml"}},
-		{name: "stack detail", handler: app.stackDetail, url: "http://docklight.local/stacks/web", want: []string{"Start stack web", "Stop stack web", "Restart stack web", "Pull images and apply with docker compose up -d", "This restarts all services and resets container uptime", "Pull + apply", "Pull + force upgrade"}},
+		{name: "stack detail", handler: app.stackDetail, url: "http://docklight.local/stacks/web", want: []string{"/stacks/web/rename", "Start stack web", "Stop stack web", "Restart stack web", "Pull images and apply with docker compose up -d", "This restarts all services and resets container uptime", "Pull + apply", "Pull + force upgrade"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.url, nil)

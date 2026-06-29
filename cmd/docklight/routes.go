@@ -20,6 +20,8 @@ func (app *App) routes() http.Handler {
 	app.handle(mux, "POST /stacks/new", app.requireAuth(http.HandlerFunc(app.createStack)), true)
 	app.handle(mux, "GET /stacks/{name}/edit", app.requireAuth(http.HandlerFunc(app.editStackPage)), true)
 	app.handle(mux, "POST /stacks/{name}/edit", app.requireAuth(http.HandlerFunc(app.updateStack)), true)
+	app.handle(mux, "GET /stacks/{name}/rename", app.requireAuth(http.HandlerFunc(app.renameStackPage)), true)
+	app.handle(mux, "POST /stacks/{name}/rename", app.requireAuth(http.HandlerFunc(app.renameStack)), true)
 	app.handle(mux, "GET /stacks/{name}", app.requireAuth(http.HandlerFunc(app.stackDetail)), true)
 	app.handle(mux, "POST /stacks/{name}/delete", app.requireAuth(http.HandlerFunc(app.deleteStack)), true)
 	app.handle(mux, "POST /stacks/{name}/{action}", app.requireAuth(http.HandlerFunc(app.stackAction)), true)

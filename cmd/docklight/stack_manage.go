@@ -1,7 +1,9 @@
 package main
 
 import (
+	"database/sql"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -232,6 +234,162 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	app.redirectWithMessage(w, r, "/stacks/"+name, "stack updated and recreated")
+}
+
+func (app *App) renameStackPage(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	stack, err := app.loadStack(name, false)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if stack.Protected {
+		app.redirectWithError(w, r, "/stacks/"+name, "Docklight cannot rename its own stack")
+		return
+	}
+	app.render(w, r, "stack_rename.html", PageData{Title: "Rename " + stack.Name, Stack: stack})
+}
+
+func (app *App) renameStack(w http.ResponseWriter, r *http.Request) {
+	oldName := r.PathValue("name")
+	stack, err := app.loadStack(oldName, false)
+	if err != nil {
+		app.redirectWithError(w, r, "/", "stack not found: "+oldName)
+		return
+	}
+	if stack.Protected {
+		app.redirectWithError(w, r, "/stacks/"+oldName, "Docklight cannot rename its own stack")
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		app.redirectWithError(w, r, "/stacks/"+oldName, "bad form")
+		return
+	}
+	newName, err := validateStackName(r.FormValue("new_name"))
+	if err != nil {
+		app.redirectWithError(w, r, "/stacks/"+oldName, err.Error())
+		return
+	}
+	if newName == stack.Name {
+		app.redirectWithError(w, r, "/stacks/"+oldName, "new stack name must be different")
+		return
+	}
+
+	unlocked := app.lockStack(stack.Name)
+	defer unlocked()
+
+	newPath, err := app.prepareStackRename(stack, newName)
+	if err != nil {
+		app.redirectWithError(w, r, "/stacks/"+oldName, err.Error())
+		return
+	}
+	if app.stackHasDocklightContainer(stack.Name) {
+		app.redirectWithError(w, r, "/stacks/"+oldName, "Docklight cannot rename its own stack")
+		return
+	}
+
+	outputDown, err := app.runCompose(stack, "down", "--remove-orphans")
+	if err != nil {
+		app.logActivity(oldName, "rename stack", "failed", outputDown)
+		app.redirectWithError(w, r, "/stacks/"+oldName, outputDown)
+		return
+	}
+	if err := app.renameStackFilesAndRow(stack, newName, newPath); err != nil {
+		restartOutput, restartErr := app.runCompose(stack, "up", "-d")
+		if restartErr != nil {
+			err = fmt.Errorf("%w; also failed to restart original stack: %s", err, strings.TrimSpace(restartOutput))
+		}
+		app.logActivity(oldName, "rename stack", "failed", err.Error())
+		app.redirectWithError(w, r, "/stacks/"+oldName, err.Error())
+		return
+	}
+
+	renamed, err := app.loadStack(newName, false)
+	if err != nil {
+		app.logActivity(newName, "rename stack", "failed", err.Error())
+		app.redirectWithError(w, r, "/", "stack was renamed, but loading it failed: "+err.Error())
+		return
+	}
+	outputUp, err := app.runCompose(renamed, "up", "-d")
+	output := strings.TrimSpace(outputDown + "\n" + outputUp)
+	if err != nil {
+		app.logActivity(newName, "rename stack", "failed", output)
+		app.setFlashCookie(w, r, "error", "stack was renamed, but Docker start failed:\n"+outputUp)
+		http.Redirect(w, r, app.withBase("/stacks/"+newName), http.StatusFound)
+		return
+	}
+	app.logActivity(newName, "rename stack", "success", output)
+	app.redirectWithMessage(w, r, "/stacks/"+newName, "stack renamed and recreated: "+newName)
+}
+
+func (app *App) prepareStackRename(stack Stack, newName string) (string, error) {
+	if err := app.ensureStackPathSafe(stack.AbsolutePath); err != nil {
+		return "", err
+	}
+	info, err := os.Lstat(stack.AbsolutePath)
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return "", errors.New("stack path must be a real directory")
+	}
+	newPath, err := app.safeStackPath(newName)
+	if err != nil {
+		return "", err
+	}
+	if err := app.ensureStackPathSafe(newPath); err != nil {
+		return "", err
+	}
+	if _, err := os.Lstat(newPath); err == nil {
+		return "", errors.New("destination stack folder already exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	var existing string
+	err = app.db.QueryRow(`SELECT name FROM stacks WHERE name = ? AND ignored = 0`, newName).Scan(&existing)
+	if err == nil {
+		return "", errors.New("destination stack already exists")
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	return newPath, nil
+}
+
+func (app *App) renameStackFilesAndRow(stack Stack, newName, newPath string) error {
+	if err := os.Rename(stack.AbsolutePath, newPath); err != nil {
+		return err
+	}
+	tx, err := app.db.Begin()
+	if err != nil {
+		return app.rollbackStackFolderRename(newPath, stack.AbsolutePath, err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM stacks WHERE name = ? AND ignored = 1`, newName); err != nil {
+		return app.rollbackStackFolderRename(newPath, stack.AbsolutePath, err)
+	}
+	result, err := tx.Exec(`UPDATE stacks SET name = ?, relative_path = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ? AND ignored = 0`, newName, newName, stack.Name)
+	if err != nil {
+		return app.rollbackStackFolderRename(newPath, stack.AbsolutePath, err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return app.rollbackStackFolderRename(newPath, stack.AbsolutePath, err)
+	}
+	if rows != 1 {
+		return app.rollbackStackFolderRename(newPath, stack.AbsolutePath, fmt.Errorf("expected to update 1 stack row, updated %d", rows))
+	}
+	if err := tx.Commit(); err != nil {
+		return app.rollbackStackFolderRename(newPath, stack.AbsolutePath, err)
+	}
+	return nil
+}
+
+func (app *App) rollbackStackFolderRename(fromPath, toPath string, cause error) error {
+	if err := os.Rename(fromPath, toPath); err != nil {
+		return fmt.Errorf("%w; also failed to restore stack folder: %v", cause, err)
+	}
+	return cause
 }
 
 func (app *App) renderStackCreateError(w http.ResponseWriter, r *http.Request, form StackForm, message string) {

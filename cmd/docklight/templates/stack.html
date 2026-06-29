@@ -16,6 +16,7 @@
     <h2>Actions</h2>
     <div class="actions actions-large">
       {{if not .Stack.Protected}}<a class="button button-primary" href="{{base "/stacks/"}}{{.Stack.Name}}/edit">Edit</a>{{end}}
+      {{if not .Stack.Protected}}<a class="button button-secondary" href="{{base "/stacks/"}}{{.Stack.Name}}/rename">Rename</a>{{end}}
       {{if not .Stack.Protected}}
       <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/start">{{template "csrf" .}}<button class="button" type="submit" data-confirm-action="Start stack {{.Stack.Name}} with docker compose up -d?">Start</button></form>
       <form method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/stop">{{template "csrf" .}}<button class="button" type="submit" data-confirm-action="Stop stack {{.Stack.Name}}? This can interrupt running services.">Stop</button></form>

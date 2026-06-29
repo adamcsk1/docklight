@@ -90,6 +90,10 @@ environment:
 
 `STACKS_HOST_ROOT` must point to the same host folder as the `/stacks` mount. Docklight keeps the Compose project directory inside the container, but rewrites stack-relative bind mounts such as `./data:/app/data` to the Docker-daemon-visible host path for start, upgrade, recreate, and delete actions. Compose project names are pinned to the Docklight stack name.
 
+Keep the `/stacks` mount writable. Docklight creates, edits, renames, and deletes stack folders, Compose files, managed files, and `.docklight.config.yml` under this path. Keep `/data` writable too; Docklight stores SQLite data, settings, sessions, and verbose logs there.
+
+Marking `/var/run/docker.sock` as a read-only bind mount does not materially reduce Docker API access. A container that can talk to the Docker socket can still control the Docker host, so only run Docklight where that level of trust is acceptable.
+
 Set `STACKS_FILE_OWNER` to the numeric `uid:gid` of the host user that should edit stack files. Docklight applies it to stack-local files and folders it creates, including `.docklight.config.yml`, without changing how the Docklight container itself runs. Running the whole container with Compose `user: "1000:1000"` can also avoid root-owned files, but it often requires extra Docker socket, `/data`, and Docker config permissions.
 
 Set `DATA_FILE_OWNER` when Docklight-created files under `/data`, such as `config.yml`, `docklight.db`, and verbose logs, should be editable from the host without root. Docklight applies it only to its own data directory and files; it does not recursively chown `/data` or change Docker CLI credential mount ownership. If you mount Docker CLI credentials, create and chown that credential directory on the host.
@@ -169,6 +173,12 @@ Docklight stores app settings, including activity retention and verbose logging 
 Activity retention defaults to 30 days and can be changed on the Config page to 30, 60, 120, 180, or 365 days. Rows older than the selected limit are purged automatically. The Activity page can download all retained activity as CSV.
 
 If you mount `./docker-config:/root/.docker` for private registry access, that folder is user-provided Docker CLI configuration and may contain registry credentials. Docklight does not manage those credentials.
+
+If Docker credentials are already provisioned and Docklight does not need to run `docker login`, the Docker config mount can be read-only, for example `./docker-config:/root/.docker:ro`. Leave it writable when logging in from inside the Docklight container.
+
+## Rename Actions
+
+Renaming a stack stops the old Compose project with `docker compose down --remove-orphans`, renames the stack folder, updates Docklight's stack record, and starts the new Compose project with `docker compose up -d`. Because the Compose project name changes with the Docklight stack name, Compose-generated container, network, and volume names can change. Explicitly named volumes are preserved.
 
 Verbose logging is off by default. When enabled on the Config page, Docklight writes timestamped troubleshooting logs under `/data/logs` with daily filenames such as `docklight-verbose-2026-06-18.log`. Verbose log retention defaults to 30 days and supports the same 30, 60, 120, 180, or 365 day options. Out-of-retention verbose log files are deleted automatically, and retained historical log files can be downloaded from the Config page.
 

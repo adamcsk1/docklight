@@ -19,7 +19,9 @@ services:
       # Optional Linux-only uid:gid for Docklight-created files under /data.
       # DATA_FILE_OWNER: "1000:1000"
     volumes:
+      # Docker socket access is powerful even if the bind is marked read-only.
       - /var/run/docker.sock:/var/run/docker.sock
+      # Docklight writes stack compose files, managed files, settings, and database state.
       - ./stacks:/stacks
       - ./data:/data
       - ./docker-config:/root/.docker

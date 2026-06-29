@@ -1,0 +1,27 @@
+{{define "stack_rename.html"}}
+{{template "layout_start" .}}
+  <section class="page-head">
+    <div>
+      <p class="eyebrow">compose target</p>
+      <h1>Rename {{.Stack.Name}}</h1>
+      <p class="muted">{{.Stack.RelativePath}}/{{.Stack.ComposeFile}}</p>
+    </div>
+  </section>
+
+  <section class="panel">
+    <h2>Rename stack</h2>
+    <form class="form" method="post" action="{{base "/stacks/"}}{{.Stack.Name}}/rename">
+      {{template "csrf" .}}
+      <label>
+        <span>New stack name</span>
+        <input name="new_name" value="{{.Stack.Name}}" required>
+      </label>
+      <p class="form-hint">Renaming runs <code>docker compose down --remove-orphans</code>, renames the stack folder, then starts it with <code>docker compose up -d</code> under the new Compose project name. Compose-generated container, network, and volume names can change; explicitly named volumes are preserved.</p>
+      <div class="actions">
+        <button class="button button-secondary" type="submit" data-loading-text="Renaming..." data-confirm-action="Rename and recreate stack {{.Stack.Name}}? This stops the old Compose project, renames the stack folder, and starts it under the new project name. Compose-generated volume names can change.">Rename and recreate</button>
+        <a class="button button-ghost" href="{{base "/stacks/"}}{{.Stack.Name}}">Cancel</a>
+      </div>
+    </form>
+  </section>
+{{template "layout_end" .}}
+{{end}}

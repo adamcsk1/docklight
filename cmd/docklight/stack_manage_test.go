@@ -93,6 +93,290 @@ func TestCreateStackDockerStartFailureRedirectsToStackDetail(t *testing.T) {
 	}
 }
 
+func TestRenameStackStopsRenamesUpdatesDBAndStarts(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "container" {
+			return "", nil
+		}
+		commands = append(commands, strings.Join(args, " "))
+		return "ok", nil
+	}
+
+	req := renameStackRequest("web", "api")
+	rec := httptest.NewRecorder()
+	app.renameStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/api" {
+		t.Fatalf("expected redirect to renamed stack, code=%d location=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "web")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected old folder removed, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "api", "compose.yml")); err != nil {
+		t.Fatalf("expected renamed compose file: %v", err)
+	}
+	var relativePath, composeFile string
+	if err := db.QueryRow(`SELECT relative_path, compose_file FROM stacks WHERE name = 'api'`).Scan(&relativePath, &composeFile); err != nil {
+		t.Fatal(err)
+	}
+	if relativePath != "api" || composeFile != "compose.yml" {
+		t.Fatalf("unexpected renamed row: relative_path=%q compose_file=%q", relativePath, composeFile)
+	}
+	if len(commands) != 2 || !strings.Contains(commands[0], "--project-name web") || !strings.HasSuffix(commands[0], " down --remove-orphans") || !strings.Contains(commands[1], "--project-name api") || !strings.HasSuffix(commands[1], " up -d") {
+		t.Fatalf("unexpected compose commands: %#v", commands)
+	}
+}
+
+func TestRenameStackRejectsProtectedDocklight(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "docklight"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('docklight', 'docklight', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := renameStackRequest("docklight", "new-name")
+	rec := httptest.NewRecorder()
+	app.renameStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/docklight" {
+		t.Fatalf("expected redirect to protected stack, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := os.Stat(filepath.Join(root, "docklight", "compose.yml")); err != nil {
+		t.Fatalf("expected protected folder unchanged: %v", err)
+	}
+}
+
+func TestRenameStackRejectsStackWithDocklightContainer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		command := strings.Join(args, " ")
+		switch {
+		case command == "container ls -aq":
+			return "docklight-id", nil
+		case strings.HasPrefix(command, "container inspect"):
+			return `[{
+				"ID":"docklight-id",
+				"Name":"/docklight",
+				"Config":{"Image":"docklight","Labels":{"com.docker.compose.project":"web","com.docker.compose.service":"docklight"}},
+				"State":{"Status":"running"},
+				"NetworkSettings":{"Ports":{},"Networks":{}}
+			}]`, nil
+		default:
+			t.Fatalf("unexpected docker command: %s", command)
+			return "", nil
+		}
+	}
+
+	req := renameStackRequest("web", "api")
+	rec := httptest.NewRecorder()
+	app.renameStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/web" {
+		t.Fatalf("expected redirect to original stack, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := os.Stat(filepath.Join(root, "web", "compose.yml")); err != nil {
+		t.Fatalf("expected protected stack folder unchanged: %v", err)
+	}
+}
+
+func TestRenameStackRejectsDestinationCollision(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	mustWriteCompose(t, filepath.Join(root, "api"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml'), ('api', 'api', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "container" {
+			return "", nil
+		}
+		t.Fatal("docker should not run for collision")
+		return "", nil
+	}
+
+	req := renameStackRequest("web", "api")
+	rec := httptest.NewRecorder()
+	app.renameStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/web" {
+		t.Fatalf("expected redirect to old stack, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := os.Stat(filepath.Join(root, "web", "compose.yml")); err != nil {
+		t.Fatalf("expected old folder unchanged: %v", err)
+	}
+}
+
+func TestRenameStackDownFailureLeavesFolderAndDBUnchanged(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "container" {
+			return "", nil
+		}
+		return "down failed", errors.New("down failed")
+	}
+
+	req := renameStackRequest("web", "api")
+	rec := httptest.NewRecorder()
+	app.renameStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/web" {
+		t.Fatalf("expected redirect to old stack, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := os.Stat(filepath.Join(root, "web", "compose.yml")); err != nil {
+		t.Fatalf("expected old folder unchanged: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM stacks WHERE name = 'web' AND relative_path = 'web'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("expected old DB row unchanged, count=%d err=%v", count, err)
+	}
+}
+
+func TestRenameStackUpFailureKeepsRenamedStack(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "container" {
+			return "", nil
+		}
+		if args[len(args)-2] == "up" {
+			return "up failed", errors.New("up failed")
+		}
+		return "down ok", nil
+	}
+
+	req := renameStackRequest("web", "api")
+	rec := httptest.NewRecorder()
+	app.renameStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/api" {
+		t.Fatalf("expected redirect to renamed stack after up failure, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := os.Stat(filepath.Join(root, "api", "compose.yml")); err != nil {
+		t.Fatalf("expected renamed folder to remain: %v", err)
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM stacks WHERE name = 'api' AND relative_path = 'api'`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("expected renamed DB row, count=%d err=%v", count, err)
+	}
+}
+
+func TestRenameStackPostDownDBFailureRestartsOriginalStack(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	var commands []string
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "container" {
+			return "", nil
+		}
+		command := strings.Join(args, " ")
+		commands = append(commands, command)
+		if strings.HasSuffix(command, " down --remove-orphans") {
+			if err := db.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return "ok", nil
+	}
+
+	req := renameStackRequest("web", "api")
+	rec := httptest.NewRecorder()
+	app.renameStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/web" {
+		t.Fatalf("expected redirect to original stack, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if _, err := os.Stat(filepath.Join(root, "web", "compose.yml")); err != nil {
+		t.Fatalf("expected old folder restored: %v", err)
+	}
+	if len(commands) != 2 || !strings.HasSuffix(commands[0], " down --remove-orphans") || !strings.HasSuffix(commands[1], " up -d") || !strings.Contains(commands[1], "--project-name web") {
+		t.Fatalf("expected down followed by original stack restart, commands=%#v", commands)
+	}
+}
+
+func TestRenameStackReusesIgnoredDestinationRow(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file, ignored) VALUES ('web', 'web', 'compose.yml', 0), ('api', 'api', 'compose.yml', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		if len(args) > 0 && args[0] == "container" {
+			return "", nil
+		}
+		return "ok", nil
+	}
+
+	req := renameStackRequest("web", "api")
+	rec := httptest.NewRecorder()
+	app.renameStack(rec, req)
+
+	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/api" {
+		t.Fatalf("expected redirect to renamed stack, code=%d location=%q body=%s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
+	}
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM stacks WHERE name = 'api' AND relative_path = 'api' AND ignored = 0`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("expected one active api row, count=%d err=%v", count, err)
+	}
+}
+
+func TestRenameStackDBFailureRollsBackFolder(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	stack := Stack{Name: "web", RelativePath: "web", ComposeFile: "compose.yml", AbsolutePath: filepath.Join(root, "web")}
+	err := app.renameStackFilesAndRow(stack, "api", filepath.Join(root, "api"))
+	if err == nil {
+		t.Fatal("expected DB failure")
+	}
+	if _, err := os.Stat(filepath.Join(root, "web", "compose.yml")); err != nil {
+		t.Fatalf("expected old folder restored: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "api")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected destination folder removed by rollback, err=%v", err)
+	}
+}
+
+func renameStackRequest(oldName, newName string) *http.Request {
+	values := url.Values{}
+	values.Set("new_name", newName)
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/"+oldName+"/rename", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", oldName)
+	return req
+}
+
 func TestCreateStackPersistsDockerSocketMountPermissionInConfig(t *testing.T) {
 	root := t.TempDir()
 	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
