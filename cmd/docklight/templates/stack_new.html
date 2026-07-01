@@ -43,21 +43,7 @@
             </div>
           {{end}}
         {{else}}
-          <div class="managed-folder-row">
-            <label>
-              <span>Relative folder path</span>
-              <input name="managed_folder_path" placeholder="data">
-            </label>
-            <label>
-              <span>chmod</span>
-              <input name="managed_folder_chmod" placeholder="0755">
-            </label>
-            <label>
-              <span>chown</span>
-              <input name="managed_folder_chown" placeholder="1000:1000">
-            </label>
-            <button class="button button-ghost" type="button" data-managed-folder-remove>Remove folder</button>
-          </div>
+          <p class="form-hint">No extra folders are currently managed for this stack.</p>
         {{end}}
       </div>
       <button class="button button-secondary" type="button" data-managed-folder-add>Add managed folder</button>
@@ -106,25 +92,7 @@
             </div>
           {{end}}
         {{else}}
-          <div class="managed-file-row">
-            <label>
-              <span>Relative file path</span>
-              <input name="managed_file_path" placeholder="test.conf">
-            </label>
-            <label>
-              <span>File content</span>
-              <textarea name="managed_file_content" spellcheck="false" placeholder="key=value"></textarea>
-            </label>
-            <label>
-              <span>chmod</span>
-              <input name="managed_file_chmod" placeholder="0644">
-            </label>
-            <label>
-              <span>chown</span>
-              <input name="managed_file_chown" placeholder="1000:1000">
-            </label>
-            <button class="button button-ghost" type="button" data-managed-file-remove>Remove file</button>
-          </div>
+          <p class="form-hint">No extra files are currently managed for this stack.</p>
         {{end}}
       </div>
       <button class="button button-secondary" type="button" data-managed-file-add>Add managed file</button>
