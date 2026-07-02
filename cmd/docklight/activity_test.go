@@ -1,6 +1,9 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,5 +55,43 @@ func TestLogActivityWritesVerboseSummaryWhenEnabled(t *testing.T) {
 		if !strings.Contains(logText, want) {
 			t.Fatalf("expected verbose log to contain %q, got %s", want, logText)
 		}
+	}
+}
+
+func TestActivityStatusReturnsActivityJSON(t *testing.T) {
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	id, err := app.createActivity("web", "upgrade", "running", "pulling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.updateActivity(id, "success", "done")
+
+	req := httptest.NewRequest(http.MethodGet, "http://docklight.local/activity/1/status", nil)
+	req.SetPathValue("id", "1")
+	rec := httptest.NewRecorder()
+	app.activityStatus(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected activity status JSON, got %d", rec.Code)
+	}
+	var activity Activity
+	if err := json.Unmarshal(rec.Body.Bytes(), &activity); err != nil {
+		t.Fatal(err)
+	}
+	if activity.ID != id || activity.StackName != "web" || activity.Action != "upgrade" || activity.Status != "success" || activity.Output != "done" {
+		t.Fatalf("unexpected activity payload: %#v", activity)
+	}
+}
+
+func TestInitDBFailsStaleRunningActivities(t *testing.T) {
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO activity_log (stack_name, action, status, output) VALUES ('web', 'upgrade', 'running', 'started')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.initDB(); err != nil {
+		t.Fatal(err)
+	}
+	activity := waitForActivityStatus(t, app, "web", "upgrade", "failed")
+	if !strings.Contains(activity.Output, "Docklight restarted") {
+		t.Fatalf("expected stale operation output, got %q", activity.Output)
 	}
 }

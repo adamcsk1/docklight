@@ -43,6 +43,9 @@ CREATE TABLE IF NOT EXISTS activity_log (
 	if err := app.ensureDefaultSettings(); err != nil {
 		return err
 	}
+	if err := app.failStaleRunningActivities(); err != nil {
+		return err
+	}
 	for _, stmt := range []string{
 		`ALTER TABLE stacks ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0`,
 	} {
@@ -57,6 +60,11 @@ CREATE TABLE IF NOT EXISTS activity_log (
 		return err
 	}
 	_, err = app.db.Exec(`PRAGMA user_version = 1`)
+	return err
+}
+
+func (app *App) failStaleRunningActivities() error {
+	_, err := app.db.Exec(`UPDATE activity_log SET status = 'failed', output = output || char(10) || 'Docklight restarted before this operation completed.' WHERE status IN ('running', 'started')`)
 	return err
 }
 

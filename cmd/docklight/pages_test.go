@@ -35,9 +35,10 @@ func TestCreateStackSuccessRedirectsToDashboard(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	app.createStack(rec, req)
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/" {
-		t.Fatalf("expected redirect to dashboard after successful create, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), "/stacks/new-stack?operation=") {
+		t.Fatalf("expected redirect to stack detail after scheduling create, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
 	}
+	waitForActivityStatus(t, app, "new-stack", "create stack", "success")
 	if !ranComposeUp {
 		t.Fatal("expected create stack to run docker compose up -d")
 	}
@@ -120,6 +121,37 @@ func TestCreateStackSaveOnlyWritesFilesWithoutStarting(t *testing.T) {
 	}
 	if len(activities) != 1 || activities[0].StackName != "saved-stack" || activities[0].Action != "save stack" || activities[0].Status != "success" {
 		t.Fatalf("expected save stack activity, got %#v", activities)
+	}
+}
+
+func TestStackDetailOperationSkipsLiveComposeInspect(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	id, err := app.createActivity("web", "upgrade", "running", "upgrade started")
+	if err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		if strings.Contains(call, " compose ") && strings.Contains(call, " ps") {
+			t.Fatalf("operation status page should not run live compose ps: %s", call)
+		}
+		return "ok", nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "http://docklight.local/stacks/web?operation="+strconv.FormatInt(id, 10), nil)
+	req.SetPathValue("name", "web")
+	rec := httptest.NewRecorder()
+	app.stackDetail(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "upgrade started") {
+		t.Fatalf("expected operation panel without live inspect, code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }
 

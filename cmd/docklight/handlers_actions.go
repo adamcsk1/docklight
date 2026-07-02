@@ -16,6 +16,17 @@ func (app *App) rescan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) rebuildDatabase(w http.ResponseWriter, r *http.Request) {
+	app.operationMu.Lock()
+	defer app.operationMu.Unlock()
+	pending, err := app.hasPendingActivity()
+	if err != nil {
+		app.redirectWithError(w, r, "/settings", err.Error())
+		return
+	}
+	if pending {
+		app.redirectWithError(w, r, "/settings", "database rebuild is blocked while a Docker operation is running")
+		return
+	}
 	if err := app.resetDatabase(); err != nil {
 		app.redirectWithError(w, r, "/settings", err.Error())
 		return
@@ -107,28 +118,14 @@ func (app *App) stackAction(w http.ResponseWriter, r *http.Request) {
 	case "rebuild":
 		args = []string{"up", "-d", "--build"}
 	case "recreate":
-		unlock := app.lockStack(stack.Name)
-		defer unlock()
-
-		outputDown, err := app.runCompose(stack, "down", "--remove-orphans")
-		status := "success"
-		if err != nil {
-			status = "failed"
-			app.logActivity(name, action, status, outputDown)
-			app.redirectWithError(w, r, "/stacks/"+name, outputDown)
-			return
-		}
-		outputUp, err := app.runCompose(stack, "up", "-d", "--force-recreate")
-		output := outputDown + "\n" + outputUp
-		if err != nil {
-			status = "failed"
-		}
-		app.logActivity(name, action, status, output)
-		if err != nil {
-			app.redirectWithError(w, r, "/stacks/"+name, output)
-			return
-		}
-		app.redirectWithMessage(w, r, "/stacks/"+name, "stack recreated")
+		app.startStackAction(w, r, stack, action, func() (string, error) {
+			outputDown, err := app.runCompose(stack, "down", "--remove-orphans")
+			if err != nil {
+				return outputDown, err
+			}
+			outputUp, err := app.runCompose(stack, "up", "-d", "--force-recreate")
+			return outputDown + "\n" + outputUp, err
+		})
 		return
 	case "upgrade":
 		app.runStackUpgrade(w, r, stack, action, false)
@@ -143,20 +140,9 @@ func (app *App) stackAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	unlock := app.lockStack(stack.Name)
-	defer unlock()
-
-	output, err := app.runCompose(stack, args...)
-	status := "success"
-	if err != nil {
-		status = "failed"
-	}
-	app.logActivity(name, action, status, output)
-	if err != nil {
-		app.redirectWithError(w, r, "/stacks/"+name, output)
-		return
-	}
-	app.redirectWithMessage(w, r, "/stacks/"+name, action+" completed")
+	app.startStackAction(w, r, stack, action, func() (string, error) {
+		return app.runCompose(stack, args...)
+	})
 }
 
 func protectedStackAction(action string) bool {
@@ -169,19 +155,23 @@ func protectedStackAction(action string) bool {
 }
 
 func (app *App) runStackUpgrade(w http.ResponseWriter, r *http.Request, stack Stack, action string, recreate bool) {
-	unlock := app.lockStack(stack.Name)
-	defer unlock()
-	output, err := app.performStackUpgradeLocked(stack, recreate)
-	status := "success"
+	app.startStackAction(w, r, stack, action, func() (string, error) {
+		return app.performStackUpgradeLocked(stack, recreate)
+	})
+}
+
+func (app *App) startStackAction(w http.ResponseWriter, r *http.Request, stack Stack, action string, work operationWork) {
+	activityID, started, err := app.startStackOperation(stack.Name, action, action+" started", work)
 	if err != nil {
-		status = "failed"
-	}
-	app.logActivity(stack.Name, action, status, output)
-	if err != nil {
-		app.redirectWithError(w, r, "/stacks/"+stack.Name, output)
+		app.redirectWithError(w, r, "/stacks/"+stack.Name, action+" could not be scheduled: "+err.Error())
 		return
 	}
-	app.redirectWithMessage(w, r, "/stacks/"+stack.Name, action+" completed")
+	if !started {
+		app.redirectWithError(w, r, "/stacks/"+stack.Name, "another operation is already running for "+stack.Name)
+		return
+	}
+	app.setFlashCookie(w, r, "message", action+" started")
+	http.Redirect(w, r, app.withBase(operationStackPath(stack.Name, activityID)), http.StatusFound)
 }
 
 func (app *App) performStackUpgradeLocked(stack Stack, recreate bool) (string, error) {

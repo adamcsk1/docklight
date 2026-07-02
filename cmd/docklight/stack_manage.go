@@ -92,20 +92,21 @@ func (app *App) createStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	unlock := app.lockStack(stack.Name)
-	defer unlock()
-	output, err := app.runCompose(stack, "up", "-d")
-	status := "success"
+	activityID, started, err := app.startStackOperation(name, "create stack", "stack creation started", func() (string, error) {
+		return app.runCompose(stack, "up", "-d")
+	})
 	if err != nil {
-		status = "failed"
-	}
-	app.logActivity(name, "create stack", status, output)
-	if err != nil {
-		app.setFlashCookie(w, r, "error", "stack files were created, but Docker start failed:\n"+output)
+		app.setFlashCookie(w, r, "error", "stack files were created, but Docker start could not be scheduled: "+err.Error())
 		http.Redirect(w, r, app.withBase("/stacks/"+name), http.StatusFound)
 		return
 	}
-	app.redirectWithMessage(w, r, "/", "stack created and started: "+name)
+	if !started {
+		app.setFlashCookie(w, r, "error", "stack files were created, but another operation is already running for "+name)
+		http.Redirect(w, r, app.withBase("/stacks/"+name), http.StatusFound)
+		return
+	}
+	app.setFlashCookie(w, r, "message", "stack creation started: "+name)
+	http.Redirect(w, r, app.withBase(operationStackPath(name, activityID)), http.StatusFound)
 }
 
 func (app *App) editStackPage(w http.ResponseWriter, r *http.Request) {
@@ -197,7 +198,13 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
 	}
+	unlock, locked := app.tryLockStack(stack.Name)
+	if !locked {
+		app.redirectWithError(w, r, "/stacks/"+name, "another operation is already running for "+name)
+		return
+	}
 	if err := app.updateStackFiles(stack, form.ComposeYAML, folders, managedFiles, stackManagedSettingsFromForm(form)); err != nil {
+		unlock()
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return
 	}
@@ -209,48 +216,35 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 	stack.PrivilegedAllowed = form.PrivilegedAllowed
 	stack.SecurityOptAllowed = form.SecurityOptAllowed
 	if r.FormValue("update_mode") == "save" {
+		unlock()
 		app.logActivity(name, "save stack", "success", "stack definition saved without recreate")
 		app.redirectWithMessage(w, r, "/stacks/"+name, "stack changes saved")
 		return
 	}
 
-	unlock := app.lockStack(stack.Name)
-	defer unlock()
-	app.logActivity(name, "update stack", "started", "stack update started")
-	var output string
-	if r.FormValue("remove_images") == "on" {
-		var outputDown string
-		outputDown, err = app.runCompose(stack, "down", "--rmi", "all", "--remove-orphans")
-		if err != nil {
-			app.logActivity(name, "update stack", "failed", outputDown)
-			app.redirectWithError(w, r, "/stacks/"+name, outputDown)
-			return
+	removeImages := r.FormValue("remove_images") == "on"
+	activityID, _, err := app.startStackOperationLocked(name, "update stack", "stack update started", unlock, func() (string, error) {
+		if removeImages {
+			outputDown, err := app.runCompose(stack, "down", "--rmi", "all", "--remove-orphans")
+			if err != nil {
+				return outputDown, err
+			}
+			outputUp, err := app.runCompose(stack, "up", "-d", "--force-recreate")
+			return outputDown + "\n" + outputUp, err
 		}
-		var outputUp string
-		outputUp, err = app.runCompose(stack, "up", "-d", "--force-recreate")
-		output = outputDown + "\n" + outputUp
-	} else {
-		var outputPull string
-		outputPull, err = app.runCompose(stack, "pull")
+		outputPull, err := app.runCompose(stack, "pull")
 		if err != nil {
-			app.logActivity(name, "update stack", "failed", outputPull)
-			app.redirectWithError(w, r, "/stacks/"+name, outputPull)
-			return
+			return outputPull, err
 		}
-		var outputUp string
-		outputUp, err = app.runCompose(stack, "up", "-d", "--force-recreate", "--remove-orphans")
-		output = outputPull + "\n" + outputUp
-	}
-	status := "success"
+		outputUp, err := app.runCompose(stack, "up", "-d", "--force-recreate", "--remove-orphans")
+		return outputPull + "\n" + outputUp, err
+	})
 	if err != nil {
-		status = "failed"
-	}
-	app.logActivity(name, "update stack", status, output)
-	if err != nil {
-		app.redirectWithError(w, r, "/stacks/"+name, output)
+		app.redirectWithError(w, r, "/stacks/"+name, "stack update could not be scheduled: "+err.Error())
 		return
 	}
-	app.redirectWithMessage(w, r, "/stacks/"+name, "stack updated and recreated")
+	app.setFlashCookie(w, r, "message", "stack update started")
+	http.Redirect(w, r, app.withBase(operationStackPath(name, activityID)), http.StatusFound)
 }
 
 func (app *App) renameStackPage(w http.ResponseWriter, r *http.Request) {
@@ -294,6 +288,12 @@ func (app *App) renameStack(w http.ResponseWriter, r *http.Request) {
 
 	unlocked := app.lockStack(stack.Name)
 	defer unlocked()
+	unlockNew, lockedNew := app.tryLockStack(newName)
+	if !lockedNew {
+		app.redirectWithError(w, r, "/stacks/"+oldName, "another operation is already running for "+newName)
+		return
+	}
+	defer unlockNew()
 
 	newPath, err := app.prepareStackRename(stack, newName)
 	if err != nil {

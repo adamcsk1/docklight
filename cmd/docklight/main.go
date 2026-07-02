@@ -29,6 +29,7 @@ func main() {
 		logger.Error("failed to open database", "error", err)
 		os.Exit(1)
 	}
+	db.SetMaxOpenConns(1)
 	defer db.Close()
 
 	app := &App{cfg: cfg, db: db, logger: logger}

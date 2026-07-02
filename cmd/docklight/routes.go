@@ -39,6 +39,7 @@ func (app *App) routes() http.Handler {
 	app.handle(mux, "GET /networks", app.requireAuth(http.HandlerFunc(app.networks)), true)
 	app.handle(mux, "POST /networks/delete", app.requireAuth(http.HandlerFunc(app.deleteSelectedNetworks)), true)
 	app.handle(mux, "GET /activity", app.requireAuth(http.HandlerFunc(app.activity)), true)
+	app.handle(mux, "GET /activity/{id}/status", app.requireAuth(http.HandlerFunc(app.activityStatus)), true)
 	app.handle(mux, "GET /activity/download", app.requireAuth(http.HandlerFunc(app.downloadActivity)), true)
 	app.handle(mux, "GET /settings", app.requireAuth(http.HandlerFunc(app.settings)), true)
 	app.handle(mux, "POST /settings", app.requireAuth(http.HandlerFunc(app.updateSettings)), true)

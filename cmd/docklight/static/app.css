@@ -398,6 +398,7 @@ a { color: inherit; }
   text-transform: uppercase;
 
   &.badge-running,
+  &.badge-started,
   &.badge-success,
   &.badge-healthy {
     color: var(--color-green);

@@ -19,6 +19,7 @@ type PageData struct {
 	Stack               Stack
 	StackForm           StackForm
 	Activities          []Activity
+	StackOperation      *Activity
 	Containers          []DockerContainer
 	Container           DockerContainer
 	ContainerLog        string
@@ -49,6 +50,7 @@ func (app *App) loadTemplates() error {
 		"usageContainerNames": usageContainerNames,
 		"canExecContainer":    canExecContainer,
 		"canExecCompose":      canExecComposeContainer,
+		"activityPending":     activityPending,
 	}
 	t, err := template.New("layout.html").Funcs(funcs).ParseFS(webFS, "templates/*.html")
 	if err != nil {

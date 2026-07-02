@@ -23,6 +23,7 @@ func newTestApp(t *testing.T, cfg Config) (*App, *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	db.SetMaxOpenConns(1)
 	if cfg.ActionTimeout == 0 {
 		cfg.ActionTimeout = time.Minute
 	}
@@ -35,6 +36,33 @@ func newTestApp(t *testing.T, cfg Config) (*App, *sql.DB) {
 	}
 	t.Cleanup(func() { db.Close() })
 	return app, db
+}
+
+func waitForActivityStatus(t *testing.T, app *App, stackName, action, wantStatus string) Activity {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		rows, err := app.db.Query(`SELECT id, stack_name, action, status, output, created_at FROM activity_log WHERE stack_name = ? AND action = ? ORDER BY id DESC LIMIT 1`, stackName, action)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var activity Activity
+		if rows.Next() {
+			if err := rows.Scan(&activity.ID, &activity.StackName, &activity.Action, &activity.Status, &activity.Output, &activity.CreatedAt); err != nil {
+				rows.Close()
+				t.Fatal(err)
+			}
+		}
+		if err := rows.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if activity.ID != 0 && activity.Status == wantStatus {
+			return activity
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s/%s status %s", stackName, action, wantStatus)
+	return Activity{}
 }
 
 func installInventoryRunner(app *App) {

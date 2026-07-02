@@ -88,9 +88,10 @@ func TestCreateStackDockerStartFailureRedirectsToStackDetail(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	app.createStack(rec, req)
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/failed-stack" {
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), "/stacks/failed-stack?operation=") {
 		t.Fatalf("expected redirect to stack detail after start failure, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
 	}
+	waitForActivityStatus(t, app, "failed-stack", "create stack", "failed")
 }
 
 func TestRenameStackStopsRenamesUpdatesDBAndStarts(t *testing.T) {
@@ -1608,7 +1609,7 @@ func TestEditStackUpdatesComposeCreatesFoldersAndRecreatesStack(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.updateStack(rec, req)
 
-	if rec.Code != http.StatusFound || rec.Header().Get("Location") != "/stacks/editable" {
+	if rec.Code != http.StatusFound || !strings.HasPrefix(rec.Header().Get("Location"), "/stacks/editable?operation=") {
 		t.Fatalf("expected redirect to stack detail, code=%d location=%q", rec.Code, rec.Header().Get("Location"))
 	}
 	composeBytes, err := os.ReadFile(filepath.Join(stackDir, "compose.yml"))
@@ -1624,16 +1625,17 @@ func TestEditStackUpdatesComposeCreatesFoldersAndRecreatesStack(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(stackDir, "data.txt")); err != nil {
 		t.Fatalf("expected existing files to remain when recreate is false: %v", err)
 	}
+	waitForActivityStatus(t, app, "editable", "update stack", "success")
 	joined := strings.Join(calls, "\n")
 	if strings.Contains(joined, "down --rmi all --remove-orphans") || !strings.Contains(joined, " pull") || !strings.Contains(joined, "up -d --force-recreate --remove-orphans") {
 		t.Fatalf("expected pull then safe force recreate without destructive down, calls:\n%s", joined)
 	}
 	var startedCount int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM activity_log WHERE stack_name = 'editable' AND action = 'update stack' AND status = 'started'`).Scan(&startedCount); err != nil {
+	if err := db.QueryRow(`SELECT COUNT(*) FROM activity_log WHERE stack_name = 'editable' AND action = 'update stack' AND status = 'success'`).Scan(&startedCount); err != nil {
 		t.Fatal(err)
 	}
 	if startedCount != 1 {
-		t.Fatalf("expected started activity for update, got %d", startedCount)
+		t.Fatalf("expected success activity for update, got %d", startedCount)
 	}
 }
 
@@ -1663,6 +1665,7 @@ func TestEditStackRemoveImagesOptionUsesDestructiveRecreate(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected redirect to stack detail, code=%d", rec.Code)
 	}
+	waitForActivityStatus(t, app, "editable", "update stack", "success")
 	joined := strings.Join(calls, "\n")
 	if !strings.Contains(joined, "down --rmi all --remove-orphans") || !strings.Contains(joined, "up -d --force-recreate") {
 		t.Fatalf("expected destructive down then force recreate, calls:\n%s", joined)
@@ -1701,10 +1704,59 @@ func TestEditStackPullFailureDoesNotStopStack(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected failure redirect, code=%d", rec.Code)
 	}
+	waitForActivityStatus(t, app, "editable", "update stack", "failed")
 	joined := strings.Join(calls, "\n")
 	if strings.Contains(joined, " down ") || strings.Contains(joined, " up ") {
 		t.Fatalf("pull failure should not stop or recreate the stack, calls:\n%s", joined)
 	}
+}
+
+func TestEditStackDoesNotWriteFilesWhenOperationRunning(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "editable")
+	mustWriteCompose(t, stackDir)
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('editable', 'editable', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		if strings.Contains(call, " up -d") {
+			close(started)
+			<-release
+		}
+		return "ok", nil
+	}
+
+	startReq := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/start", nil)
+	startReq.SetPathValue("name", "editable")
+	startReq.SetPathValue("action", "start")
+	app.stackAction(httptest.NewRecorder(), startReq)
+	<-started
+
+	values := url.Values{}
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:changed")
+	req := formRequest("http://docklight.local/stacks/editable/edit", values)
+	req.SetPathValue("name", "editable")
+	rec := httptest.NewRecorder()
+	app.updateStack(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected busy redirect, got %d", rec.Code)
+	}
+	composeBytes, err := os.ReadFile(filepath.Join(stackDir, "compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(composeBytes), "nginx:changed") {
+		t.Fatalf("compose file changed while operation was running: %s", string(composeBytes))
+	}
+	close(release)
+	waitForActivityStatus(t, app, "editable", "start", "success")
 }
 
 func TestUpdateStackAndDeleteStackFailurePaths(t *testing.T) {
@@ -1765,6 +1817,7 @@ func TestUpdateStackAndDeleteStackFailurePaths(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected down failure redirect, got %d", rec.Code)
 	}
+	waitForActivityStatus(t, app, "web", "update stack", "failed")
 
 	req = httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/missing/delete", nil)
 	req.SetPathValue("name", "missing")

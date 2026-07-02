@@ -308,6 +308,7 @@ func TestStackActionRecreateAndUpgradeFailureBranches(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected recreate up failure redirect, got %d", rec.Code)
 	}
+	waitForActivityStatus(t, app, "web", "recreate", "failed")
 
 	req = httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/web/upgrade", nil)
 	req.SetPathValue("name", "web")
@@ -317,6 +318,7 @@ func TestStackActionRecreateAndUpgradeFailureBranches(t *testing.T) {
 	if rec.Code != http.StatusFound {
 		t.Fatalf("expected upgrade up failure redirect, got %d", rec.Code)
 	}
+	waitForActivityStatus(t, app, "web", "upgrade", "failed")
 	if !protectedStackAction("start") || !protectedStackAction("down") {
 		t.Fatal("unexpected protected stack action classification")
 	}
@@ -349,6 +351,7 @@ func TestStackActionMapsAndPersistsCriticalOperations(t *testing.T) {
 		if rec.Code != http.StatusFound {
 			t.Fatalf("%s expected redirect, got %d", action, rec.Code)
 		}
+		waitForActivityStatus(t, app, "web", action, "success")
 	}
 
 	joined := strings.Join(calls, "\n")
@@ -384,6 +387,7 @@ func TestStackActionUpgradeStopsAfterPullFailure(t *testing.T) {
 	req.SetPathValue("action", "upgrade")
 	rec := httptest.NewRecorder()
 	app.stackAction(rec, req)
+	waitForActivityStatus(t, app, "web", "upgrade", "failed")
 	joined := strings.Join(calls, "\n")
 	if strings.Contains(joined, " up -d") {
 		t.Fatalf("up should not run after pull failure:\n%s", joined)
@@ -415,6 +419,7 @@ func TestStackActionUpgradeRecreateStopsAfterPullFailure(t *testing.T) {
 	req.SetPathValue("action", "upgrade-recreate")
 	rec := httptest.NewRecorder()
 	app.stackAction(rec, req)
+	waitForActivityStatus(t, app, "web", "upgrade-recreate", "failed")
 	joined := strings.Join(calls, "\n")
 	if strings.Contains(joined, " up -d --force-recreate") {
 		t.Fatalf("force recreate should not run after pull failure:\n%s", joined)
@@ -443,6 +448,7 @@ func TestStackActionUpgradeRecreateRunsDownBeforeUp(t *testing.T) {
 	req.SetPathValue("action", "upgrade-recreate")
 	rec := httptest.NewRecorder()
 	app.stackAction(rec, req)
+	waitForActivityStatus(t, app, "web", "upgrade-recreate", "success")
 	joined := strings.Join(calls, "\n")
 	pullIdx := strings.Index(joined, " pull")
 	downIdx := strings.Index(joined, " down --remove-orphans")
@@ -477,6 +483,7 @@ func TestStackActionRecreateUnknownAndEditValidation(t *testing.T) {
 	req.SetPathValue("action", "recreate")
 	rec := httptest.NewRecorder()
 	app.stackAction(rec, req)
+	waitForActivityStatus(t, app, "web", "recreate", "success")
 	if rec.Code != http.StatusFound || !strings.Contains(strings.Join(calls, "\n"), "--force-recreate") {
 		t.Fatalf("expected recreate to force recreate, code=%d calls=%v", rec.Code, calls)
 	}
@@ -498,4 +505,48 @@ func TestStackActionRecreateUnknownAndEditValidation(t *testing.T) {
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "compose yaml is required") {
 		t.Fatalf("expected update validation error, code=%d body=%s", rec.Code, rec.Body.String())
 	}
+}
+
+func TestStackActionRunsAsyncAndRejectsConcurrentOperation(t *testing.T) {
+	root := t.TempDir()
+	mustWriteCompose(t, filepath.Join(root, "web"))
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		if strings.Contains(call, " up -d") {
+			close(started)
+			<-release
+		}
+		return "ok", nil
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/web/start", nil)
+	req.SetPathValue("name", "web")
+	req.SetPathValue("action", "start")
+	rec := httptest.NewRecorder()
+	app.stackAction(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected start redirect, got %d", rec.Code)
+	}
+	<-started
+
+	req = httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/web/stop", nil)
+	req.SetPathValue("name", "web")
+	req.SetPathValue("action", "stop")
+	rec = httptest.NewRecorder()
+	app.stackAction(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected concurrent operation redirect, got %d", rec.Code)
+	}
+	if key, message, ok := app.readFlashCookie(requestWithCookie(req, rec.Result().Cookies())); !ok || key != "error" || !strings.Contains(message, "another operation is already running") {
+		t.Fatalf("expected busy flash, key=%q ok=%v message=%q", key, ok, message)
+	}
+
+	close(release)
+	waitForActivityStatus(t, app, "web", "start", "success")
 }

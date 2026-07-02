@@ -2,6 +2,7 @@ package main
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 )
 
@@ -15,12 +16,39 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) stackDetail(w http.ResponseWriter, r *http.Request) {
-	stack, err := app.loadStack(r.PathValue("name"), true)
+	stack, err := app.loadStack(r.PathValue("name"), false)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	app.render(w, r, "stack.html", PageData{Title: stack.Name, Stack: stack, UsageScript: true})
+	operation, ok, err := app.stackPageOperation(r, stack.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	data := PageData{Title: stack.Name, Stack: stack, UsageScript: true}
+	if ok {
+		data.StackOperation = &operation
+	} else {
+		app.enrichLive(&stack)
+		data.Stack = stack
+	}
+	app.render(w, r, "stack.html", data)
+}
+
+func (app *App) stackPageOperation(r *http.Request, stackName string) (Activity, bool, error) {
+	if rawID := r.URL.Query().Get("operation"); rawID != "" {
+		id, err := strconv.ParseInt(rawID, 10, 64)
+		if err != nil || id <= 0 {
+			return Activity{}, false, nil
+		}
+		activity, err := app.loadActivityByID(id)
+		if err != nil || activity.StackName != stackName {
+			return Activity{}, false, nil
+		}
+		return activity, true, nil
+	}
+	return app.loadLatestPendingActivity(stackName)
 }
 
 func (app *App) newStackPage(w http.ResponseWriter, r *http.Request) {
