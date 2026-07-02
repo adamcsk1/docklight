@@ -1625,8 +1625,85 @@ func TestEditStackUpdatesComposeCreatesFoldersAndRecreatesStack(t *testing.T) {
 		t.Fatalf("expected existing files to remain when recreate is false: %v", err)
 	}
 	joined := strings.Join(calls, "\n")
+	if strings.Contains(joined, "down --rmi all --remove-orphans") || !strings.Contains(joined, " pull") || !strings.Contains(joined, "up -d --force-recreate --remove-orphans") {
+		t.Fatalf("expected pull then safe force recreate without destructive down, calls:\n%s", joined)
+	}
+	var startedCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM activity_log WHERE stack_name = 'editable' AND action = 'update stack' AND status = 'started'`).Scan(&startedCount); err != nil {
+		t.Fatal(err)
+	}
+	if startedCount != 1 {
+		t.Fatalf("expected started activity for update, got %d", startedCount)
+	}
+}
+
+func TestEditStackRemoveImagesOptionUsesDestructiveRecreate(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "editable")
+	mustWriteCompose(t, stackDir)
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('editable', 'editable', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return "ok", nil
+	}
+
+	values := url.Values{}
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:1.27")
+	values.Set("remove_images", "on")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "editable")
+	rec := httptest.NewRecorder()
+	app.updateStack(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected redirect to stack detail, code=%d", rec.Code)
+	}
+	joined := strings.Join(calls, "\n")
 	if !strings.Contains(joined, "down --rmi all --remove-orphans") || !strings.Contains(joined, "up -d --force-recreate") {
-		t.Fatalf("expected down --rmi all then force recreate, calls:\n%s", joined)
+		t.Fatalf("expected destructive down then force recreate, calls:\n%s", joined)
+	}
+	if strings.Contains(joined, "up -d --force-recreate --remove-orphans") {
+		t.Fatalf("destructive option should use the explicit down/up path, calls:\n%s", joined)
+	}
+}
+
+func TestEditStackPullFailureDoesNotStopStack(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "editable")
+	mustWriteCompose(t, stackDir)
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('editable', 'editable', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	var calls []string
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		call := name + " " + strings.Join(args, " ")
+		calls = append(calls, call)
+		if strings.HasSuffix(call, " pull") {
+			return "pull failed", errTestBackend
+		}
+		return "ok", nil
+	}
+
+	values := url.Values{}
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:1.27")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/editable/edit", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "editable")
+	rec := httptest.NewRecorder()
+	app.updateStack(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected failure redirect, code=%d", rec.Code)
+	}
+	joined := strings.Join(calls, "\n")
+	if strings.Contains(joined, " down ") || strings.Contains(joined, " up ") {
+		t.Fatalf("pull failure should not stop or recreate the stack, calls:\n%s", joined)
 	}
 }
 
@@ -1681,7 +1758,7 @@ func TestUpdateStackAndDeleteStackFailurePaths(t *testing.T) {
 		})
 	}
 
-	req := formRequest("http://docklight.local/stacks/web/edit", url.Values{"compose_yaml": {"services:\n  app:\n    image: nginx:1.28"}})
+	req := formRequest("http://docklight.local/stacks/web/edit", url.Values{"compose_yaml": {"services:\n  app:\n    image: nginx:1.28"}, "remove_images": {"on"}})
 	req.SetPathValue("name", "web")
 	rec := httptest.NewRecorder()
 	app.updateStack(rec, req)

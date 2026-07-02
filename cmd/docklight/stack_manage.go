@@ -216,14 +216,31 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 
 	unlock := app.lockStack(stack.Name)
 	defer unlock()
-	outputDown, err := app.runCompose(stack, "down", "--rmi", "all", "--remove-orphans")
-	if err != nil {
-		app.logActivity(name, "update stack", "failed", outputDown)
-		app.redirectWithError(w, r, "/stacks/"+name, outputDown)
-		return
+	app.logActivity(name, "update stack", "started", "stack update started")
+	var output string
+	if r.FormValue("remove_images") == "on" {
+		var outputDown string
+		outputDown, err = app.runCompose(stack, "down", "--rmi", "all", "--remove-orphans")
+		if err != nil {
+			app.logActivity(name, "update stack", "failed", outputDown)
+			app.redirectWithError(w, r, "/stacks/"+name, outputDown)
+			return
+		}
+		var outputUp string
+		outputUp, err = app.runCompose(stack, "up", "-d", "--force-recreate")
+		output = outputDown + "\n" + outputUp
+	} else {
+		var outputPull string
+		outputPull, err = app.runCompose(stack, "pull")
+		if err != nil {
+			app.logActivity(name, "update stack", "failed", outputPull)
+			app.redirectWithError(w, r, "/stacks/"+name, outputPull)
+			return
+		}
+		var outputUp string
+		outputUp, err = app.runCompose(stack, "up", "-d", "--force-recreate", "--remove-orphans")
+		output = outputPull + "\n" + outputUp
 	}
-	outputUp, err := app.runCompose(stack, "up", "-d", "--force-recreate")
-	output := outputDown + "\n" + outputUp
 	status := "success"
 	if err != nil {
 		status = "failed"

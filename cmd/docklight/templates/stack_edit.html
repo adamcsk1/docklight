@@ -153,12 +153,17 @@
         <span>allow security options</span>
       </label>
       <p class="form-hint">Allows <code>security_opt</code> entries, which can change container confinement.</p>
+      <label class="switch-label">
+        <input type="checkbox" name="remove_images">
+        <span>remove images before recreate</span>
+      </label>
+      <p class="form-hint">Optional destructive mode. When enabled, Save and recreate runs <code>docker compose down --rmi all --remove-orphans</code> before starting the stack again.</p>
       <div class="actions actions-large">
         <button class="button button-secondary" type="submit" name="update_mode" value="save" data-loading-text="Saving...">Save</button>
-        <button class="button button-primary" type="submit" name="update_mode" value="recreate" data-loading-text="Updating..." data-confirm-action="Save and recreate stack {{.Stack.Name}}? This writes the compose file, runs docker compose down, and force recreates services.">Save and recreate</button>
+        <button class="button button-primary" type="submit" name="update_mode" value="recreate" data-loading-text="Updating..." data-confirm-action="Save and recreate stack {{.Stack.Name}}? This writes the compose file, pulls images, and force recreates services.">Save and recreate</button>
         <a class="button button-ghost" href="{{base "/stacks/"}}{{.Stack.Name}}">Cancel</a>
       </div>
-      <p class="form-hint">Save only writes the compose file, managed folders/files, and stack settings. Save and recreate runs <code>docker compose down --rmi all --remove-orphans</code> and then <code>docker compose up -d --force-recreate</code>.</p>
+      <p class="form-hint">Save only writes the compose file, managed folders/files, and stack settings. Save and recreate runs <code>docker compose pull</code> and then <code>docker compose up -d --force-recreate --remove-orphans</code>.</p>
     </form>
   </section>
 {{template "layout_end" .}}
