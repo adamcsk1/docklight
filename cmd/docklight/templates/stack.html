@@ -42,7 +42,13 @@
       <div><span class="badge badge-{{.Status}}" data-operation-badge>{{.Status}}</span></div>
     </div>
     <p class="muted" data-operation-message>{{if activityPending .Status}}Docker operation is running in the background. This page will update when it finishes.{{else if eq .Status "success"}}Operation completed.{{else}}Operation failed. Output is shown below.{{end}}</p>
-    <pre data-operation-output>{{.Output}}</pre>
+    <div class="output-block">
+      <div class="output-toolbar">
+        <button class="button button-ghost" type="button" data-output-copy>Copy output</button>
+        <span class="muted" data-output-copy-status></span>
+      </div>
+      <textarea class="activity-output" readonly spellcheck="false" wrap="off" data-operation-output data-output-copy-source>{{.Output}}</textarea>
+    </div>
   </section>
   {{end}}
 

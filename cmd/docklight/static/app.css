@@ -546,6 +546,26 @@ pre {
 
 .log-status { margin: var(--space-3) 0; }
 
+.output-block {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.output-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.activity-output {
+  min-height: 14rem;
+  max-height: 65vh;
+  overflow: auto;
+  resize: vertical;
+  white-space: pre;
+}
+
 .log-output {
   min-height: 28rem;
   max-height: 65vh;

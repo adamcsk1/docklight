@@ -55,6 +55,40 @@ func TestPageHandlersRenderOperationalInventories(t *testing.T) {
 	}
 }
 
+func TestActivityPageRendersCopyableScrollableOutput(t *testing.T) {
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	app.logActivity("web", "deploy", "failed", "line 1\nline 2")
+
+	req := httptest.NewRequest(http.MethodGet, "http://docklight.local/activity", nil)
+	rec := httptest.NewRecorder()
+	app.activity(rec, req)
+	body := rec.Body.String()
+	for _, want := range []string{`data-output-copy`, `data-output-copy-source`, `<textarea class="activity-output"`, `line 1`} {
+		if rec.Code != http.StatusOK || !strings.Contains(body, want) {
+			t.Fatalf("expected activity output markup %q, code=%d body=%s", want, rec.Code, body)
+		}
+	}
+}
+
+func TestActivityOutputEscapesTextareaBreakout(t *testing.T) {
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	app.logActivity("web", "deploy", "failed", `</textarea><script>alert(1)</script>`)
+
+	req := httptest.NewRequest(http.MethodGet, "http://docklight.local/activity", nil)
+	rec := httptest.NewRecorder()
+	app.activity(rec, req)
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || strings.Contains(body, `</textarea><script>`) || !strings.Contains(body, `&lt;/textarea&gt;&lt;script&gt;`) {
+		t.Fatalf("expected escaped textarea output, code=%d body=%s", rec.Code, body)
+	}
+}
+
 func TestCommandActionsDisableWhenUnavailable(t *testing.T) {
 	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
 	if err := app.loadTemplates(); err != nil {

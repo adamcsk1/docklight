@@ -3,6 +3,12 @@ document.addEventListener("click", (event) => {
   if (!(target instanceof Element)) return;
 
   const toggle = target.closest(".menu-toggle");
+  const copyOutput = target.closest("[data-output-copy]");
+  if (copyOutput instanceof HTMLButtonElement) {
+    copyOutputText(copyOutput);
+    return;
+  }
+
   if (target.closest("[data-managed-folder-add]")) {
     addManagedRow(target, "folder");
     return;
@@ -148,7 +154,7 @@ function pollOperation(panel) {
         badge.textContent = activity.Status || activity.status || "unknown";
         badge.className = `badge badge-${badge.textContent}`;
       }
-      if (output instanceof HTMLElement) output.textContent = activity.Output || activity.output || "";
+      setOutputValue(output, activity.Output || activity.output || "");
       const status = activity.Status || activity.status || "";
       if (status === "running" || status === "started") {
         window.setTimeout(poll, 2500);
@@ -164,6 +170,62 @@ function pollOperation(panel) {
   };
 
   window.setTimeout(poll, 1000);
+}
+
+function setOutputValue(output, text) {
+  if (output instanceof HTMLTextAreaElement) {
+    output.value = text;
+    return;
+  }
+  if (output instanceof HTMLElement) output.textContent = text;
+}
+
+function outputText(output) {
+  if (output instanceof HTMLTextAreaElement || output instanceof HTMLInputElement) return output.value;
+  if (output instanceof HTMLElement) return output.textContent || "";
+  return "";
+}
+
+function copyWithFallback(text) {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.top = "0";
+  textarea.style.left = "0";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  try {
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    textarea.remove();
+  }
+}
+
+async function copyOutputText(button) {
+  const block = button.closest(".output-block") || button.closest(".panel") || button.closest(".activity-item");
+  const output = block?.querySelector("[data-output-copy-source]");
+  const status = block?.querySelector("[data-output-copy-status]");
+  const text = outputText(output);
+  button.disabled = true;
+  try {
+    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
+      throw new Error("clipboard api unavailable");
+    }
+    await navigator.clipboard.writeText(text);
+    if (status instanceof HTMLElement) status.textContent = "Copied output to clipboard.";
+  } catch {
+    if (copyWithFallback(text)) {
+      if (status instanceof HTMLElement) status.textContent = "Copied output to clipboard.";
+    } else if (status instanceof HTMLElement) {
+      status.textContent = "Copy failed.";
+    }
+  } finally {
+    button.disabled = false;
+  }
 }
 
 function confirmActionSubmit(form, submitter) {

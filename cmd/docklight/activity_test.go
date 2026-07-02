@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func TestActivityLogTruncatesAndOrdersDocklightEntriesLast(t *testing.T) {
+func TestActivityLogPreservesFullOutputAndOrdersDocklightEntriesLast(t *testing.T) {
 	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
 	longOutput := strings.Repeat("x", 13000)
 	app.logActivity("docklight", "self", "success", longOutput)
@@ -24,8 +24,8 @@ func TestActivityLogTruncatesAndOrdersDocklightEntriesLast(t *testing.T) {
 	if len(activities) != 2 || activities[0].StackName != "web" || activities[1].StackName != "docklight" {
 		t.Fatalf("expected non-docklight activity first and docklight last, got %#v", activities)
 	}
-	if len(activities[1].Output) <= 12000 || !strings.Contains(activities[1].Output, "output truncated") {
-		t.Fatalf("expected long activity output to be truncated, len=%d output=%q", len(activities[1].Output), activities[1].Output)
+	if activities[1].Output != longOutput {
+		t.Fatalf("expected full activity output to be preserved, len=%d", len(activities[1].Output))
 	}
 }
 

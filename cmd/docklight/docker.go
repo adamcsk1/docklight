@@ -1,17 +1,15 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 )
-
-const maxCommandOutput = 256 * 1024
 
 type dockerContainerInspect struct {
 	ID     string
@@ -119,11 +117,23 @@ func (app *App) runCommand(dir, name string, args ...string) (string, error) {
 	if dir != "" {
 		cmd.Dir = dir
 	}
-	output := &limitedOutput{limit: maxCommandOutput}
+	output, err := os.CreateTemp("", "docklight-command-*.log")
+	if err != nil {
+		return "", err
+	}
+	defer os.Remove(output.Name())
+	defer output.Close()
 	cmd.Stdout = output
 	cmd.Stderr = output
-	err := cmd.Run()
-	outputText := output.String()
+	err = cmd.Run()
+	if _, seekErr := output.Seek(0, 0); seekErr != nil {
+		return "", seekErr
+	}
+	outputBytes, readErr := io.ReadAll(output)
+	if readErr != nil {
+		return "", readErr
+	}
+	outputText := string(outputBytes)
 	app.verboseLog("command completed", "dir", dir, "command", name+" "+strings.Join(args, " "), "status", commandStatus(err), "duration", time.Since(start).String(), "output_bytes", fmt.Sprintf("%d", len(outputText)))
 	return outputText, err
 }
@@ -133,38 +143,4 @@ func commandStatus(err error) string {
 		return "failed"
 	}
 	return "success"
-}
-
-type limitedOutput struct {
-	mu        sync.Mutex
-	buf       bytes.Buffer
-	limit     int
-	truncated bool
-}
-
-func (w *limitedOutput) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	remaining := w.limit - w.buf.Len()
-	if remaining > 0 {
-		if len(p) > remaining {
-			_, _ = w.buf.Write(p[:remaining])
-			w.truncated = true
-		} else {
-			_, _ = w.buf.Write(p)
-		}
-	} else {
-		w.truncated = true
-	}
-	return len(p), nil
-}
-
-func (w *limitedOutput) String() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	out := w.buf.String()
-	if w.truncated {
-		out += "\n... output truncated"
-	}
-	return out
 }

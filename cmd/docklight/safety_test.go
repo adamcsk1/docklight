@@ -302,17 +302,6 @@ func TestFlashRedirectDoesNotPutMessageInURL(t *testing.T) {
 	}
 }
 
-func TestLimitedOutputCapsCapturedBytes(t *testing.T) {
-	output := &limitedOutput{limit: 5}
-	n, err := output.Write([]byte("hello world"))
-	if err != nil || n != len("hello world") {
-		t.Fatalf("unexpected write result: %d, %v", n, err)
-	}
-	if got := output.String(); got != "hello\n... output truncated" {
-		t.Fatalf("unexpected output: %q", got)
-	}
-}
-
 func TestValidateBaseURL(t *testing.T) {
 	for _, value := range []string{"/", "/docklight", "/nested/path_1"} {
 		if err := validateBaseURL(value); err != nil {

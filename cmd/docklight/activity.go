@@ -65,9 +65,6 @@ func (app *App) logActivity(stackName, action, status, output string) {
 }
 
 func (app *App) createActivity(stackName, action, status, output string) (int64, error) {
-	if len(output) > 12000 {
-		output = output[:12000] + "\n... output truncated"
-	}
 	result, err := app.db.Exec(`INSERT INTO activity_log (stack_name, action, status, output) VALUES (?, ?, ?, ?)`, stackName, action, status, output)
 	if err != nil {
 		app.logger.Warn("failed to write activity", "error", err)
@@ -87,9 +84,6 @@ func (app *App) createActivity(stackName, action, status, output string) (int64,
 }
 
 func (app *App) updateActivity(id int64, status, output string) {
-	if len(output) > 12000 {
-		output = output[:12000] + "\n... output truncated"
-	}
 	if _, err := app.db.Exec(`UPDATE activity_log SET status = ?, output = ? WHERE id = ?`, status, output, id); err != nil {
 		app.logger.Warn("failed to update activity", "error", err)
 		app.verboseLog("activity update failed", "error", err.Error())

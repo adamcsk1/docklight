@@ -150,7 +150,8 @@ func TestStackDetailOperationSkipsLiveComposeInspect(t *testing.T) {
 	req.SetPathValue("name", "web")
 	rec := httptest.NewRecorder()
 	app.stackDetail(rec, req)
-	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "upgrade started") {
+	body := rec.Body.String()
+	if rec.Code != http.StatusOK || !strings.Contains(body, "upgrade started") || !strings.Contains(body, `data-output-copy`) || !strings.Contains(body, `<textarea class="activity-output"`) {
 		t.Fatalf("expected operation panel without live inspect, code=%d body=%s", rec.Code, rec.Body.String())
 	}
 }

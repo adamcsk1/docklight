@@ -16,7 +16,15 @@
           <div><span class="badge badge-{{.Status}}">{{.Status}}</span></div>
         </div>
         <p class="muted">{{.CreatedAt}}</p>
-        {{if .Output}}<pre>{{.Output}}</pre>{{end}}
+        {{if .Output}}
+          <div class="output-block">
+            <div class="output-toolbar">
+              <button class="button button-ghost" type="button" data-output-copy>Copy output</button>
+              <span class="muted" data-output-copy-status></span>
+            </div>
+            <textarea class="activity-output" readonly spellcheck="false" wrap="off" data-output-copy-source>{{.Output}}</textarea>
+          </div>
+        {{end}}
       </article>
     {{else}}
       <p class="muted">No activity yet.</p>
