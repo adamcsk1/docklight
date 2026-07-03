@@ -19,7 +19,7 @@
       <div class="managed-folders" data-managed-folder-list>
         <div>
           <h3>Managed folders</h3>
-          <p class="form-hint">Tracked in <code>.docklight.config.yml</code>. Only missing managed folders are created; existing folders and contents are preserved. Optional chmod uses octal values such as <code>0755</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
+          <p class="form-hint">Tracked in <code>.docklight.config.yml</code>. Removing a folder here only stops Docklight managing it; existing folders and contents remain on disk. Optional chmod uses octal values such as <code>0755</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
         </div>
         {{if .StackForm.ManagedFolders}}
           {{range .StackForm.ManagedFolders}}
@@ -36,7 +36,7 @@
                 <span>chown</span>
                 <input name="managed_folder_chown" value="{{.Chown}}" placeholder="1000:1000">
               </label>
-              <button class="button button-ghost" type="button" data-managed-folder-remove>Remove folder</button>
+              <button class="button button-ghost" type="button" data-managed-folder-remove>Stop managing folder</button>
             </div>
           {{end}}
         {{else}}
@@ -58,13 +58,13 @@
             <span>chown</span>
             <input name="managed_folder_chown" placeholder="1000:1000">
           </label>
-          <button class="button button-ghost" type="button" data-managed-folder-remove>Remove folder</button>
+          <button class="button button-ghost" type="button" data-managed-folder-remove>Stop managing folder</button>
         </div>
       </template>
       <div class="managed-files" data-managed-file-list>
         <div>
           <h3>Managed files</h3>
-          <p class="form-hint">Only files listed in <code>.docklight.config.yml</code> are shown here. Add <code>.env</code> to manage Compose interpolation values. Manual files are left untouched unless added as managed files. Optional chmod uses octal values such as <code>0644</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
+          <p class="form-hint">Only files listed in <code>.docklight.config.yml</code> are shown here. Removing a file here only stops Docklight managing it; existing files remain on disk, except a removed managed <code>.env</code> is deleted to avoid stale Compose interpolation. Optional chmod uses octal values such as <code>0644</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
         </div>
         {{if .StackForm.ManagedFiles}}
           {{range .StackForm.ManagedFiles}}
@@ -85,7 +85,7 @@
                 <span>chown</span>
                 <input name="managed_file_chown" value="{{.Chown}}" placeholder="1000:1000">
               </label>
-              <button class="button button-ghost" type="button" data-managed-file-remove>Remove file</button>
+              <button class="button button-ghost" type="button" data-managed-file-remove>{{if eq .Path ".env"}}Stop managing and delete .env{{else}}Stop managing file{{end}}</button>
             </div>
           {{end}}
         {{else}}
@@ -111,7 +111,7 @@
             <span>chown</span>
             <input name="managed_file_chown" placeholder="1000:1000">
           </label>
-          <button class="button button-ghost" type="button" data-managed-file-remove>Remove file</button>
+          <button class="button button-ghost" type="button" data-managed-file-remove>Stop managing file</button>
         </div>
       </template>
       <div>
