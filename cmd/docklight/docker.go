@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -105,9 +106,16 @@ func (app *App) dockerContainerExec(container, command string) (string, error) {
 }
 
 func (app *App) runCommand(dir, name string, args ...string) (string, error) {
+	return app.runCommandProgress(dir, name, nil, args...)
+}
+
+func (app *App) runCommandProgress(dir, name string, progress operationProgress, args ...string) (string, error) {
 	start := time.Now()
 	if app.runner != nil {
 		output, err := app.runner(dir, name, args...)
+		if progress != nil {
+			progress(output)
+		}
 		app.verboseLog("command completed", "dir", dir, "command", name+" "+strings.Join(args, " "), "status", commandStatus(err), "duration", time.Since(start).String(), "output_bytes", fmt.Sprintf("%d", len(output)))
 		return output, err
 	}
@@ -123,21 +131,105 @@ func (app *App) runCommand(dir, name string, args ...string) (string, error) {
 	}
 	defer os.Remove(output.Name())
 	defer output.Close()
-	cmd.Stdout = output
-	cmd.Stderr = output
+	writer := &commandProgressWriter{file: output, progress: progress}
+	stopProgress := writer.startProgress()
+	cmd.Stdout = writer
+	cmd.Stderr = writer
 	err = cmd.Run()
-	if _, seekErr := output.Seek(0, 0); seekErr != nil {
-		return "", seekErr
+	if stopProgress != nil {
+		stopProgress()
 	}
-	outputBytes, readErr := io.ReadAll(output)
+	outputText, readErr := writer.String()
 	if readErr != nil {
 		return "", readErr
 	}
-	outputText := string(outputBytes)
 	app.verboseLog("command completed", "dir", dir, "command", name+" "+strings.Join(args, " "), "status", commandStatus(err), "duration", time.Since(start).String(), "output_bytes", fmt.Sprintf("%d", len(outputText)))
 	return outputText, err
 }
 
+type commandProgressWriter struct {
+	mu       sync.Mutex
+	file     *os.File
+	progress operationProgress
+}
+
+func (w *commandProgressWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.file.Write(p)
+}
+
+func (w *commandProgressWriter) startProgress() func() {
+	if w.progress == nil {
+		return nil
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		lastOutput := ""
+		offset := int64(0)
+		ticker := time.NewTicker(operationProgressInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				chunk, nextOffset, err := w.readSince(offset)
+				if err == nil && chunk != "" {
+					offset = nextOffset
+					lastOutput += chunk
+					w.progress(lastOutput)
+				}
+			case <-stop:
+				return
+			}
+		}
+	}()
+	return func() {
+		close(stop)
+		<-done
+	}
+}
+
+func (w *commandProgressWriter) String() (string, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stringLocked()
+}
+
+func (w *commandProgressWriter) readSince(offset int64) (string, int64, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, err := w.file.Seek(offset, 0); err != nil {
+		return "", offset, err
+	}
+	outputBytes, err := io.ReadAll(w.file)
+	if err != nil {
+		return "", offset, err
+	}
+	nextOffset, err := w.file.Seek(0, io.SeekCurrent)
+	if err != nil {
+		return "", offset, err
+	}
+	if _, err := w.file.Seek(0, io.SeekEnd); err != nil {
+		return "", offset, err
+	}
+	return string(outputBytes), nextOffset, nil
+}
+
+func (w *commandProgressWriter) stringLocked() (string, error) {
+	if _, err := w.file.Seek(0, 0); err != nil {
+		return "", err
+	}
+	outputBytes, err := io.ReadAll(w.file)
+	if err != nil {
+		return "", err
+	}
+	if _, err := w.file.Seek(0, io.SeekEnd); err != nil {
+		return "", err
+	}
+	return string(outputBytes), nil
+}
 func commandStatus(err error) string {
 	if err != nil {
 		return "failed"

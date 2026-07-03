@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,44 @@ func TestActivityStatusReturnsActivityJSON(t *testing.T) {
 	}
 }
 
+func TestRunningOperationPublishesProgressOutput(t *testing.T) {
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	progressed := make(chan struct{})
+	release := make(chan struct{})
+	id, started, err := app.startStackOperationLocked("web", "upgrade", "upgrade started", func() {}, func(progress operationProgress) (string, error) {
+		progress("pulling image layer")
+		close(progressed)
+		<-release
+		return "operation complete", nil
+	})
+	if err != nil || !started {
+		t.Fatalf("expected operation to start, started=%v err=%v", started, err)
+	}
+	<-progressed
+
+	activity := waitForActivityOutput(t, app, id, "running", "pulling image layer")
+	if activity.Output != "pulling image layer" {
+		t.Fatalf("expected live progress output, got %#v", activity)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://docklight.local/activity/1/status", nil)
+	req.SetPathValue("id", strconv.FormatInt(id, 10))
+	rec := httptest.NewRecorder()
+	app.activityStatus(rec, req)
+	var payload Activity
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatal(err)
+	}
+	if rec.Code != http.StatusOK || payload.Status != "running" || payload.Output != "pulling image layer" {
+		t.Fatalf("expected running progress payload, code=%d payload=%#v", rec.Code, payload)
+	}
+
+	close(release)
+	activity = waitForActivityStatus(t, app, "web", "upgrade", "success")
+	if activity.Output != "operation complete" {
+		t.Fatalf("expected final output, got %q", activity.Output)
+	}
+}
+
 func TestInitDBFailsStaleRunningActivities(t *testing.T) {
 	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
 	if _, err := db.Exec(`INSERT INTO activity_log (stack_name, action, status, output) VALUES ('web', 'upgrade', 'running', 'started')`); err != nil {
@@ -108,4 +147,21 @@ func TestInitDBLeavesHistoricalStartedActivities(t *testing.T) {
 	if strings.Contains(activity.Output, "Docklight restarted") {
 		t.Fatalf("historical started activity was marked stale: %q", activity.Output)
 	}
+}
+
+func waitForActivityOutput(t *testing.T, app *App, id int64, wantStatus, wantOutput string) Activity {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		activity, err := app.loadActivityByID(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if activity.Status == wantStatus && activity.Output == wantOutput {
+			return activity
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for activity %d status=%s output=%q", id, wantStatus, wantOutput)
+	return Activity{}
 }

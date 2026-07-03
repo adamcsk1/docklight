@@ -33,6 +33,10 @@ func (app *App) composeContainers(stack Stack) ([]Container, error) {
 }
 
 func (app *App) runCompose(stack Stack, args ...string) (string, error) {
+	return app.runComposeProgress(stack, nil, args...)
+}
+
+func (app *App) runComposeProgress(stack Stack, progress operationProgress, args ...string) (string, error) {
 	composePath := filepath.Join(stack.AbsolutePath, stack.ComposeFile)
 	if err := app.ensureStackPathSafe(stack.AbsolutePath); err != nil {
 		return "", err
@@ -56,7 +60,7 @@ func (app *App) runCompose(stack Stack, args ...string) (string, error) {
 	}
 	defer cleanup()
 	cmdArgs := append([]string{"compose", "--project-name", stack.Name, "--project-directory", stack.AbsolutePath, "-f", composeFile}, args...)
-	return app.runCommand(stack.AbsolutePath, "docker", cmdArgs...)
+	return app.runCommandProgress(stack.AbsolutePath, "docker", progress, cmdArgs...)
 }
 
 func (app *App) composeFileForCommand(stack Stack, composePath string) (string, func(), error) {

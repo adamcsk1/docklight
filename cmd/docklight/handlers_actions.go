@@ -121,12 +121,16 @@ func (app *App) stackAction(w http.ResponseWriter, r *http.Request) {
 	case "rebuild":
 		args = []string{"up", "-d", "--build"}
 	case "recreate":
-		app.startStackAction(w, r, stack, action, func() (string, error) {
-			outputDown, err := app.runCompose(stack, "down", "--remove-orphans")
+		app.startStackAction(w, r, stack, action, func(progress operationProgress) (string, error) {
+			var output string
+			stepProgress := prefixedProgress(&output, progress)
+			outputDown, err := app.runComposeProgress(stack, stepProgress, "down", "--remove-orphans")
+			output = outputDown
 			if err != nil {
 				return outputDown, err
 			}
-			outputUp, err := app.runCompose(stack, "up", "-d", "--force-recreate")
+			stepProgress = prefixedProgress(&output, progress)
+			outputUp, err := app.runComposeProgress(stack, stepProgress, "up", "-d", "--force-recreate")
 			return outputDown + "\n" + outputUp, err
 		})
 		return
@@ -143,8 +147,8 @@ func (app *App) stackAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	app.startStackAction(w, r, stack, action, func() (string, error) {
-		return app.runCompose(stack, args...)
+	app.startStackAction(w, r, stack, action, func(progress operationProgress) (string, error) {
+		return app.runComposeProgress(stack, progress, args...)
 	})
 }
 
@@ -158,8 +162,8 @@ func protectedStackAction(action string) bool {
 }
 
 func (app *App) runStackUpgrade(w http.ResponseWriter, r *http.Request, stack Stack, action string, recreate bool) {
-	app.startStackAction(w, r, stack, action, func() (string, error) {
-		return app.performStackUpgradeLocked(stack, recreate)
+	app.startStackAction(w, r, stack, action, func(progress operationProgress) (string, error) {
+		return app.performStackUpgradeLocked(stack, recreate, progress)
 	})
 }
 
@@ -177,23 +181,50 @@ func (app *App) startStackAction(w http.ResponseWriter, r *http.Request, stack S
 	http.Redirect(w, r, app.withBase(operationStackPath(stack.Name, activityID)), http.StatusFound)
 }
 
-func (app *App) performStackUpgradeLocked(stack Stack, recreate bool) (string, error) {
-	outputPull, err := app.runCompose(stack, "pull")
+func (app *App) performStackUpgradeLocked(stack Stack, recreate bool, progress operationProgress) (string, error) {
+	var output string
+	stepProgress := prefixedProgress(&output, progress)
+	outputPull, err := app.runComposeProgress(stack, stepProgress, "pull")
 	if err != nil {
 		return outputPull, err
 	}
+	output = outputPull
 	outputs := []string{outputPull}
 	upArgs := []string{"up", "-d"}
 	if recreate {
-		outputDown, err := app.runCompose(stack, "down", "--remove-orphans")
+		stepProgress = prefixedProgress(&output, progress)
+		outputDown, err := app.runComposeProgress(stack, stepProgress, "down", "--remove-orphans")
 		outputs = append(outputs, outputDown)
+		output = joinOutputs(outputs)
 		if err != nil {
-			return outputPull + "\n" + outputDown, err
+			return output, err
 		}
 		upArgs = append(upArgs, "--force-recreate")
 	}
-	outputUp, err := app.runCompose(stack, upArgs...)
+	stepProgress = prefixedProgress(&output, progress)
+	outputUp, err := app.runComposeProgress(stack, stepProgress, upArgs...)
 	outputs = append(outputs, outputUp)
+	output = joinOutputs(outputs)
+	if err != nil {
+		return output, err
+	}
+	return output, nil
+}
+
+func prefixedProgress(prefix *string, progress operationProgress) operationProgress {
+	if progress == nil {
+		return nil
+	}
+	return func(output string) {
+		if *prefix == "" {
+			progress(output)
+			return
+		}
+		progress(*prefix + "\n" + output)
+	}
+}
+
+func joinOutputs(outputs []string) string {
 	output := ""
 	for _, part := range outputs {
 		if output != "" {
@@ -201,8 +232,5 @@ func (app *App) performStackUpgradeLocked(stack Stack, recreate bool) (string, e
 		}
 		output += part
 	}
-	if err != nil {
-		return output, err
-	}
-	return output, nil
+	return output
 }

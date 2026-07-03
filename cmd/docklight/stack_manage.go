@@ -92,8 +92,8 @@ func (app *App) createStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	activityID, started, err := app.startStackOperation(name, "create stack", "stack creation started", func() (string, error) {
-		return app.runCompose(stack, "up", "-d")
+	activityID, started, err := app.startStackOperation(name, "create stack", "stack creation started", func(progress operationProgress) (string, error) {
+		return app.runComposeProgress(stack, progress, "up", "-d")
 	})
 	if err != nil {
 		app.setFlashCookie(w, r, "error", "stack files were created, but Docker start could not be scheduled: "+err.Error())
@@ -223,20 +223,27 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 	}
 
 	removeImages := r.FormValue("remove_images") == "on"
-	activityID, _, err := app.startStackOperationLocked(name, "update stack", "stack update started", unlock, func() (string, error) {
+	activityID, _, err := app.startStackOperationLocked(name, "update stack", "stack update started", unlock, func(progress operationProgress) (string, error) {
+		var output string
 		if removeImages {
-			outputDown, err := app.runCompose(stack, "down", "--rmi", "all", "--remove-orphans")
+			stepProgress := prefixedProgress(&output, progress)
+			outputDown, err := app.runComposeProgress(stack, stepProgress, "down", "--rmi", "all", "--remove-orphans")
+			output = outputDown
 			if err != nil {
 				return outputDown, err
 			}
-			outputUp, err := app.runCompose(stack, "up", "-d", "--force-recreate")
+			stepProgress = prefixedProgress(&output, progress)
+			outputUp, err := app.runComposeProgress(stack, stepProgress, "up", "-d", "--force-recreate")
 			return outputDown + "\n" + outputUp, err
 		}
-		outputPull, err := app.runCompose(stack, "pull")
+		stepProgress := prefixedProgress(&output, progress)
+		outputPull, err := app.runComposeProgress(stack, stepProgress, "pull")
+		output = outputPull
 		if err != nil {
 			return outputPull, err
 		}
-		outputUp, err := app.runCompose(stack, "up", "-d", "--force-recreate", "--remove-orphans")
+		stepProgress = prefixedProgress(&output, progress)
+		outputUp, err := app.runComposeProgress(stack, stepProgress, "up", "-d", "--force-recreate", "--remove-orphans")
 		return outputPull + "\n" + outputUp, err
 	})
 	if err != nil {

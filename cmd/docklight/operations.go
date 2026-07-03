@@ -3,9 +3,13 @@ package main
 import (
 	"fmt"
 	"strconv"
+	"time"
 )
 
-type operationWork func() (string, error)
+const operationProgressInterval = time.Second
+
+type operationProgress func(string)
+type operationWork func(operationProgress) (string, error)
 
 func (app *App) startStackOperation(stackName, action, startedOutput string, work operationWork) (int64, bool, error) {
 	unlock, ok := app.tryLockStack(stackName)
@@ -26,13 +30,21 @@ func (app *App) startStackOperationLocked(stackName, action, startedOutput strin
 	go func() {
 		defer app.operationMu.RUnlock()
 		defer unlock()
+		lastOutput := startedOutput
+		progress := func(output string) {
+			if output == lastOutput {
+				return
+			}
+			lastOutput = output
+			app.updateActivity(id, "running", output)
+		}
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				app.updateActivity(id, "failed", fmt.Sprintf("operation panicked: %v", recovered))
 			}
 		}()
 
-		output, err := work()
+		output, err := work(progress)
 		status := "success"
 		if err != nil {
 			status = "failed"
