@@ -9,7 +9,9 @@
   <link rel="stylesheet" href="{{base "/static/app.css"}}">
   <script src="{{base "/static/htmx.min.js"}}" defer></script>
   <script src="{{base "/static/app.js"}}" defer></script>
+  {{if or .ClipboardScript .StackOperationScript .ContainerLogScript}}<script src="{{base "/static/clipboard.js"}}" defer></script>{{end}}
   {{if .UsageScript}}<script src="{{base "/static/usage.js"}}" defer></script>{{end}}
+  {{if .StackOperationScript}}<script src="{{base "/static/operations.js"}}" defer></script>{{end}}
   {{if .ContainerLogScript}}<script src="{{base "/static/container_logs.js"}}" defer></script>{{end}}
 </head>
 <body>

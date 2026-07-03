@@ -198,6 +198,22 @@ func TestActionHandlersDatabaseErrorRedirects(t *testing.T) {
 
 }
 
+func TestRebuildDatabaseFailsFastWhenOperationRunning(t *testing.T) {
+	app, _ := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	app.operationMu.RLock()
+	defer app.operationMu.RUnlock()
+
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/database/rebuild", nil)
+	rec := httptest.NewRecorder()
+	app.rebuildDatabase(rec, req)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected rebuild blocked redirect, got %d", rec.Code)
+	}
+	if key, message, ok := app.readFlashCookie(requestWithCookie(req, rec.Result().Cookies())); !ok || key != "error" || !strings.Contains(message, "blocked while a Docker operation is running") {
+		t.Fatalf("expected blocked rebuild flash, key=%q ok=%v message=%q", key, ok, message)
+	}
+}
+
 func TestDBHelpersReportClosedDatabaseErrors(t *testing.T) {
 	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
 	if err := db.Close(); err != nil {

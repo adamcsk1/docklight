@@ -26,43 +26,12 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   };
 
-  const copyWithFallback = (text) => {
-    const textarea = document.createElement("textarea");
-    textarea.value = text;
-    textarea.setAttribute("readonly", "");
-    textarea.style.position = "fixed";
-    textarea.style.top = "0";
-    textarea.style.left = "0";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    try {
-      return document.execCommand("copy");
-    } catch {
-      return false;
-    } finally {
-      textarea.remove();
-    }
-  };
-
   const copyLogs = async () => {
     const text = output.textContent || "";
     copy.disabled = true;
-    try {
-      if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-        throw new Error("clipboard api unavailable");
-      }
-      await navigator.clipboard.writeText(text);
-      status.textContent = "Copied log output to clipboard.";
-    } catch {
-      if (copyWithFallback(text)) {
-        status.textContent = "Copied log output to clipboard.";
-      } else {
-        status.textContent = "Copy failed.";
-      }
-    } finally {
-      copy.disabled = false;
-    }
+    const copied = await window.DocklightClipboard.copyText(text);
+    status.textContent = copied ? "Copied log output to clipboard." : "Copy failed.";
+    copy.disabled = false;
   };
 
   refresh.addEventListener("click", refreshLogs);

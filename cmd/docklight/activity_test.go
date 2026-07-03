@@ -95,3 +95,17 @@ func TestInitDBFailsStaleRunningActivities(t *testing.T) {
 		t.Fatalf("expected stale operation output, got %q", activity.Output)
 	}
 }
+
+func TestInitDBLeavesHistoricalStartedActivities(t *testing.T) {
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: t.TempDir(), SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if _, err := db.Exec(`INSERT INTO activity_log (stack_name, action, status, output) VALUES ('web', 'update stack', 'started', 'stack update started')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := app.initDB(); err != nil {
+		t.Fatal(err)
+	}
+	activity := waitForActivityStatus(t, app, "web", "update stack", "started")
+	if strings.Contains(activity.Output, "Docklight restarted") {
+		t.Fatalf("historical started activity was marked stale: %q", activity.Output)
+	}
+}

@@ -44,7 +44,7 @@ func (app *App) loadActivityByID(id int64) (Activity, error) {
 
 func (app *App) loadLatestPendingActivity(stackName string) (Activity, bool, error) {
 	var activity Activity
-	err := app.db.QueryRow(`SELECT id, stack_name, action, status, output, created_at FROM activity_log WHERE stack_name = ? AND status IN ('running', 'started') ORDER BY id DESC LIMIT 1`, stackName).Scan(&activity.ID, &activity.StackName, &activity.Action, &activity.Status, &activity.Output, &activity.CreatedAt)
+	err := app.db.QueryRow(`SELECT id, stack_name, action, status, output, created_at FROM activity_log WHERE stack_name = ? AND status = 'running' ORDER BY id DESC LIMIT 1`, stackName).Scan(&activity.ID, &activity.StackName, &activity.Action, &activity.Status, &activity.Output, &activity.CreatedAt)
 	if err == nil {
 		return activity, true, nil
 	}
@@ -56,7 +56,7 @@ func (app *App) loadLatestPendingActivity(stackName string) (Activity, bool, err
 
 func (app *App) hasPendingActivity() (bool, error) {
 	var count int
-	err := app.db.QueryRow(`SELECT COUNT(*) FROM activity_log WHERE status IN ('running', 'started')`).Scan(&count)
+	err := app.db.QueryRow(`SELECT COUNT(*) FROM activity_log WHERE status = 'running'`).Scan(&count)
 	return count > 0, err
 }
 

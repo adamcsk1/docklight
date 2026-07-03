@@ -3,12 +3,6 @@ document.addEventListener("click", (event) => {
   if (!(target instanceof Element)) return;
 
   const toggle = target.closest(".menu-toggle");
-  const copyOutput = target.closest("[data-output-copy]");
-  if (copyOutput instanceof HTMLButtonElement) {
-    copyOutputText(copyOutput);
-    return;
-  }
-
   if (target.closest("[data-managed-folder-add]")) {
     addManagedRow(target, "folder");
     return;
@@ -112,121 +106,6 @@ document.addEventListener("submit", (event) => {
     }
   }
 });
-
-document.addEventListener("DOMContentLoaded", () => {
-  for (const panel of document.querySelectorAll("[data-operation-status-url]")) {
-    if (panel instanceof HTMLElement) handleOperationPanel(panel);
-  }
-});
-
-function handleOperationPanel(panel) {
-  if (panel.dataset.operationPending === "true") {
-    pollOperation(panel);
-    return;
-  }
-  if (panel.dataset.operationStatus === "success") {
-    refreshOperationPage();
-  }
-}
-
-function refreshOperationPage() {
-  window.setTimeout(() => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete("operation");
-    window.location.assign(url.toString());
-  }, 1500);
-}
-
-function pollOperation(panel) {
-  const url = panel.dataset.operationStatusUrl;
-  if (!url || panel.dataset.operationPending !== "true") return;
-
-  const badge = panel.querySelector("[data-operation-badge]");
-  const message = panel.querySelector("[data-operation-message]");
-  const output = panel.querySelector("[data-operation-output]");
-
-  const poll = async () => {
-    try {
-      const response = await fetch(url, { headers: { Accept: "application/json" } });
-      if (!response.ok) throw new Error(`status ${response.status}`);
-      const activity = await response.json();
-      if (badge instanceof HTMLElement) {
-        badge.textContent = activity.Status || activity.status || "unknown";
-        badge.className = `badge badge-${badge.textContent}`;
-      }
-      setOutputValue(output, activity.Output || activity.output || "");
-      const status = activity.Status || activity.status || "";
-      if (status === "running" || status === "started") {
-        window.setTimeout(poll, 2500);
-        return;
-      }
-      panel.dataset.operationPending = "false";
-      if (message instanceof HTMLElement) message.textContent = status === "success" ? "Operation completed. Refreshing stack state..." : "Operation failed. Output is shown below.";
-      if (status === "success") refreshOperationPage();
-    } catch (error) {
-      if (message instanceof HTMLElement) message.textContent = `Could not poll operation status: ${error}`;
-      window.setTimeout(poll, 5000);
-    }
-  };
-
-  window.setTimeout(poll, 1000);
-}
-
-function setOutputValue(output, text) {
-  if (output instanceof HTMLTextAreaElement) {
-    output.value = text;
-    return;
-  }
-  if (output instanceof HTMLElement) output.textContent = text;
-}
-
-function outputText(output) {
-  if (output instanceof HTMLTextAreaElement || output instanceof HTMLInputElement) return output.value;
-  if (output instanceof HTMLElement) return output.textContent || "";
-  return "";
-}
-
-function copyWithFallback(text) {
-  const textarea = document.createElement("textarea");
-  textarea.value = text;
-  textarea.setAttribute("readonly", "");
-  textarea.style.position = "fixed";
-  textarea.style.top = "0";
-  textarea.style.left = "0";
-  textarea.style.opacity = "0";
-  document.body.appendChild(textarea);
-  textarea.select();
-  try {
-    return document.execCommand("copy");
-  } catch {
-    return false;
-  } finally {
-    textarea.remove();
-  }
-}
-
-async function copyOutputText(button) {
-  const block = button.closest(".output-block") || button.closest(".panel") || button.closest(".activity-item");
-  const output = block?.querySelector("[data-output-copy-source]");
-  const status = block?.querySelector("[data-output-copy-status]");
-  const text = outputText(output);
-  button.disabled = true;
-  try {
-    if (!navigator.clipboard || typeof navigator.clipboard.writeText !== "function") {
-      throw new Error("clipboard api unavailable");
-    }
-    await navigator.clipboard.writeText(text);
-    if (status instanceof HTMLElement) status.textContent = "Copied output to clipboard.";
-  } catch {
-    if (copyWithFallback(text)) {
-      if (status instanceof HTMLElement) status.textContent = "Copied output to clipboard.";
-    } else if (status instanceof HTMLElement) {
-      status.textContent = "Copy failed.";
-    }
-  } finally {
-    button.disabled = false;
-  }
-}
 
 function confirmActionSubmit(form, submitter) {
   const action = submitter?.dataset.confirmAction || form.dataset.confirmAction;

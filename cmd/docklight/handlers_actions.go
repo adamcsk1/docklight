@@ -16,7 +16,10 @@ func (app *App) rescan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) rebuildDatabase(w http.ResponseWriter, r *http.Request) {
-	app.operationMu.Lock()
+	if !app.operationMu.TryLock() {
+		app.redirectWithError(w, r, "/settings", "database rebuild is blocked while a Docker operation is running")
+		return
+	}
 	defer app.operationMu.Unlock()
 	pending, err := app.hasPendingActivity()
 	if err != nil {

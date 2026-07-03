@@ -66,7 +66,7 @@ func TestActivityPageRendersCopyableScrollableOutput(t *testing.T) {
 	rec := httptest.NewRecorder()
 	app.activity(rec, req)
 	body := rec.Body.String()
-	for _, want := range []string{`data-output-copy`, `data-output-copy-source`, `<textarea class="activity-output"`, `line 1`} {
+	for _, want := range []string{`/static/clipboard.js`, `data-output-copy`, `data-output-copy-source`, `<textarea class="activity-output"`, `line 1`} {
 		if rec.Code != http.StatusOK || !strings.Contains(body, want) {
 			t.Fatalf("expected activity output markup %q, code=%d body=%s", want, rec.Code, body)
 		}

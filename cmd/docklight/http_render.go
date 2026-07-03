@@ -13,32 +13,34 @@ import (
 const maxFlashMessage = 3000
 
 type PageData struct {
-	Title               string
-	Path                string
-	Stacks              []Stack
-	Stack               Stack
-	StackForm           StackForm
-	Activities          []Activity
-	StackOperation      *Activity
-	Containers          []DockerContainer
-	Container           DockerContainer
-	ContainerLog        string
-	ContainerCommand    string
-	ContainerExecOutput string
-	ContainerExecFailed bool
-	Images              []DockerImage
-	Volumes             []DockerVolume
-	Networks            []DockerNetwork
-	Config              Config
-	Settings            AppSettings
-	RetentionDayOptions []int
-	VerboseLogFiles     []string
-	BuildDate           string
-	Error               string
-	Message             string
-	CSRFToken           string
-	UsageScript         bool
-	ContainerLogScript  bool
+	Title                string
+	Path                 string
+	Stacks               []Stack
+	Stack                Stack
+	StackForm            StackForm
+	Activities           []Activity
+	StackOperation       *Activity
+	Containers           []DockerContainer
+	Container            DockerContainer
+	ContainerLog         string
+	ContainerCommand     string
+	ContainerExecOutput  string
+	ContainerExecFailed  bool
+	Images               []DockerImage
+	Volumes              []DockerVolume
+	Networks             []DockerNetwork
+	Config               Config
+	Settings             AppSettings
+	RetentionDayOptions  []int
+	VerboseLogFiles      []string
+	BuildDate            string
+	Error                string
+	Message              string
+	CSRFToken            string
+	ClipboardScript      bool
+	UsageScript          bool
+	StackOperationScript bool
+	ContainerLogScript   bool
 }
 
 func (app *App) loadTemplates() error {

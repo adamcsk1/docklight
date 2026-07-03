@@ -29,6 +29,7 @@ func (app *App) stackDetail(w http.ResponseWriter, r *http.Request) {
 	data := PageData{Title: stack.Name, Stack: stack, UsageScript: true}
 	if ok {
 		data.StackOperation = &operation
+		data.StackOperationScript = true
 	} else {
 		app.enrichLive(&stack)
 		data.Stack = stack
@@ -61,7 +62,7 @@ func (app *App) activity(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	app.render(w, r, "activity.html", PageData{Title: "Activity", Activities: activities})
+	app.render(w, r, "activity.html", PageData{Title: "Activity", Activities: activities, ClipboardScript: true})
 }
 
 func (app *App) settings(w http.ResponseWriter, r *http.Request) {

@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS activity_log (
 }
 
 func (app *App) failStaleRunningActivities() error {
-	_, err := app.db.Exec(`UPDATE activity_log SET status = 'failed', output = output || char(10) || 'Docklight restarted before this operation completed.' WHERE status IN ('running', 'started')`)
+	_, err := app.db.Exec(`UPDATE activity_log SET status = 'failed', output = output || char(10) || 'Docklight restarted before this operation completed.' WHERE status = 'running'`)
 	return err
 }
 
