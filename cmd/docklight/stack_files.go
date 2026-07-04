@@ -121,12 +121,28 @@ func (app *App) writeStackFiles(name, composeYAML string, folders []StackManaged
 	return app.writeManagedStackConfig(stackDir, folders, managedFiles, settings)
 }
 
+type managedPathDeletes struct {
+	Folders []string
+	Files   []string
+}
+
 func (app *App) updateStackFiles(stack Stack, composeYAML string, folders []StackManagedConfigFolder, managedFiles []managedFileWrite, settings StackManagedSettings) error {
+	return app.updateStackFilesWithDeletes(stack, composeYAML, folders, managedFiles, settings, managedPathDeletes{})
+}
+
+func (app *App) updateStackFilesWithDeletes(stack Stack, composeYAML string, folders []StackManagedConfigFolder, managedFiles []managedFileWrite, settings StackManagedSettings, deletes managedPathDeletes) error {
 	if err := app.ensureStackPathSafe(stack.AbsolutePath); err != nil {
 		return err
 	}
 	previousConfig, err := app.loadManagedStackConfig(stack.AbsolutePath)
 	if err != nil {
+		return err
+	}
+	deletes, err = validateManagedPathDeletes(previousConfig, folders, managedFiles, deletes)
+	if err != nil {
+		return err
+	}
+	if err := preflightManagedDeleteTargets(stack.AbsolutePath, deletes); err != nil {
 		return err
 	}
 	composePath := filepath.Join(stack.AbsolutePath, stack.ComposeFile)
@@ -160,13 +176,168 @@ func (app *App) updateStackFiles(stack Stack, composeYAML string, folders []Stac
 	if err := app.writeManagedFiles(stack.AbsolutePath, folders, managedFiles); err != nil {
 		return err
 	}
-	if managedConfigTracksEnv(previousConfig) && !managedFilesTrackEnv(managedFiles) {
-		err := os.Remove(filepath.Join(stack.AbsolutePath, ".env"))
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := app.deleteRemovedManagedPaths(stack.AbsolutePath, deletes); err != nil {
+		return err
+	}
+	return app.writeManagedStackConfig(stack.AbsolutePath, folders, managedFiles, settings)
+}
+
+func validateManagedPathDeletes(previousConfig StackManagedConfig, folders []StackManagedConfigFolder, files []managedFileWrite, deletes managedPathDeletes) (managedPathDeletes, error) {
+	currentFolders := make(map[string]bool)
+	for _, folder := range folders {
+		currentFolders[folder.Path] = true
+	}
+	currentFiles := make(map[string]bool)
+	for _, file := range files {
+		currentFiles[file.Path] = true
+	}
+	previousFolders := make(map[string]bool)
+	for _, folder := range previousConfig.Folders {
+		previousFolders[folder.Path] = true
+	}
+	previousFiles := make(map[string]bool)
+	for _, file := range previousConfig.Files {
+		previousFiles[file.Path] = true
+	}
+	currentFolderKeys := make(map[string]string)
+	for path := range currentFolders {
+		currentFolderKeys[managedPathKey(path)] = path
+	}
+	currentFileKeys := make(map[string]string)
+	for path := range currentFiles {
+		currentFileKeys[managedPathKey(path)] = path
+	}
+	var parsed managedPathDeletes
+	for _, rawPath := range deletes.Files {
+		file, err := parseManagedFile(StackManagedConfigFile{Path: rawPath})
+		if err != nil {
+			return parsed, err
+		}
+		fileKey := managedPathKey(file.Path)
+		if !previousFiles[file.Path] || currentFileKeys[fileKey] != "" {
+			return parsed, fmt.Errorf("delete request must target a removed managed file: %s", file.Path)
+		}
+		parsed.Files = append(parsed.Files, file.Path)
+	}
+	for _, rawPath := range deletes.Folders {
+		folder, err := parseManagedFolder(StackManagedConfigFolder{Path: rawPath})
+		if err != nil {
+			return parsed, err
+		}
+		folderKey := managedPathKey(folder.Path)
+		if !previousFolders[folder.Path] || currentFolderKeys[folderKey] != "" {
+			return parsed, fmt.Errorf("delete request must target a removed managed folder: %s", folder.Path)
+		}
+		if currentFile := currentFileKeys[folderKey]; currentFile != "" {
+			return parsed, fmt.Errorf("delete request would remove a still-managed file: %s", currentFile)
+		}
+		for currentFolderKey, currentFolder := range currentFolderKeys {
+			if strings.HasPrefix(currentFolderKey, folderKey+"/") {
+				return parsed, fmt.Errorf("delete request would remove a still-managed folder: %s", currentFolder)
+			}
+		}
+		for currentFileKey, currentFile := range currentFileKeys {
+			if strings.HasPrefix(currentFileKey, folderKey+"/") {
+				return parsed, fmt.Errorf("delete request would remove a still-managed file: %s", currentFile)
+			}
+		}
+		parsed.Folders = append(parsed.Folders, folder.Path)
+	}
+	return parsed, nil
+}
+
+func managedPathKey(path string) string {
+	return strings.ToLower(path)
+}
+
+func (app *App) deleteRemovedManagedPaths(stackDir string, deletes managedPathDeletes) error {
+	for _, path := range deletes.Files {
+		if err := deleteManagedFileFromDisk(stackDir, path); err != nil {
 			return err
 		}
 	}
-	return app.writeManagedStackConfig(stack.AbsolutePath, folders, managedFiles, settings)
+	for _, path := range deletes.Folders {
+		if err := deleteManagedFolderFromDisk(stackDir, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func preflightManagedDeleteTargets(stackDir string, deletes managedPathDeletes) error {
+	for _, path := range deletes.Files {
+		if err := validateManagedFileDeleteTarget(stackDir, path); err != nil {
+			return err
+		}
+	}
+	for _, path := range deletes.Folders {
+		if err := validateManagedFolderDeleteTarget(stackDir, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func deleteManagedFileFromDisk(stackDir, relativePath string) error {
+	if err := validateManagedFileDeleteTarget(stackDir, relativePath); err != nil {
+		return err
+	}
+	filePath := filepath.Join(stackDir, filepath.FromSlash(relativePath))
+	err := os.Remove(filePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return err
+}
+
+func validateManagedFileDeleteTarget(stackDir, relativePath string) error {
+	filePath := filepath.Join(stackDir, filepath.FromSlash(relativePath))
+	if err := ensurePathInside(stackDir, filePath); err != nil {
+		return err
+	}
+	if err := ensureNoSymlinkInStackPath(stackDir, relativePath); err != nil {
+		return err
+	}
+	info, err := os.Lstat(filePath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.IsDir() {
+		return fmt.Errorf("managed file delete target is a folder: %s", relativePath)
+	}
+	return nil
+}
+
+func deleteManagedFolderFromDisk(stackDir, relativePath string) error {
+	if err := validateManagedFolderDeleteTarget(stackDir, relativePath); err != nil {
+		return err
+	}
+	folderPath := filepath.Join(stackDir, filepath.FromSlash(relativePath))
+	return os.RemoveAll(folderPath)
+}
+
+func validateManagedFolderDeleteTarget(stackDir, relativePath string) error {
+	folderPath := filepath.Join(stackDir, filepath.FromSlash(relativePath))
+	if err := ensurePathInside(stackDir, folderPath); err != nil {
+		return err
+	}
+	if err := ensureNoSymlinkInStackPath(stackDir, relativePath); err != nil {
+		return err
+	}
+	info, err := os.Lstat(folderPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("managed folder delete target is not a folder: %s", relativePath)
+	}
+	return nil
 }
 
 func (app *App) createManagedFolder(stackDir, folderPath string, folder StackManagedConfigFolder) error {

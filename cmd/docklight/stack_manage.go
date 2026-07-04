@@ -203,7 +203,8 @@ func (app *App) updateStack(w http.ResponseWriter, r *http.Request) {
 		app.redirectWithError(w, r, "/stacks/"+name, "another operation is already running for "+name)
 		return
 	}
-	if err := app.updateStackFiles(stack, form.ComposeYAML, folders, managedFiles, stackManagedSettingsFromForm(form)); err != nil {
+	deletes := managedPathDeletes{Folders: form.DeleteManagedFolders, Files: form.DeleteManagedFiles}
+	if err := app.updateStackFilesWithDeletes(stack, form.ComposeYAML, folders, managedFiles, stackManagedSettingsFromForm(form), deletes); err != nil {
 		unlock()
 		app.render(w, r, "stack_edit.html", PageData{Title: "Edit " + stack.Name, Stack: stack, Error: err.Error(), StackForm: form})
 		return

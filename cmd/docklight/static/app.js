@@ -10,7 +10,7 @@ document.addEventListener("click", (event) => {
 
   const removeManagedFolder = target.closest("[data-managed-folder-remove]");
   if (removeManagedFolder) {
-    removeManagedFolder.closest(".managed-folder-row")?.remove();
+    removeManagedRow(removeManagedFolder, "folder");
     return;
   }
 
@@ -21,7 +21,7 @@ document.addEventListener("click", (event) => {
 
   const removeManagedFile = target.closest("[data-managed-file-remove]");
   if (removeManagedFile) {
-    removeManagedFile.closest(".managed-file-row")?.remove();
+    removeManagedRow(removeManagedFile, "file");
     return;
   }
 
@@ -43,6 +43,64 @@ function addManagedRow(target, type) {
   if (!(list instanceof HTMLElement) || !(template instanceof HTMLTemplateElement)) return;
 
   list.append(template.content.cloneNode(true));
+}
+
+function removeManagedRow(target, type) {
+  const row = target.closest(`.managed-${type}-row`);
+  if (!(row instanceof HTMLElement)) return;
+
+  if (row.dataset.pendingDelete === "true") {
+    undoPendingManagedDelete(row, type, target);
+    return;
+  }
+
+  const deleteInput = row.querySelector(`[data-delete-managed-${type}]`);
+  const existingPath = row.querySelector(`input[name="existing_managed_${type}_path"]`);
+  if (deleteInput instanceof HTMLInputElement && deleteInput.checked && existingPath instanceof HTMLInputElement) {
+    markPendingManagedDelete(row, type, existingPath.value, target);
+    return;
+  }
+
+  row.remove();
+}
+
+function markPendingManagedDelete(row, type, path, button) {
+  const hidden = document.createElement("input");
+  hidden.type = "hidden";
+  hidden.name = `delete_managed_${type}_path`;
+  hidden.value = path;
+  hidden.dataset.pendingManagedDelete = "true";
+  row.append(hidden);
+
+  for (const control of row.querySelectorAll("input, textarea")) {
+    if (control !== hidden && (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement)) {
+      control.disabled = true;
+    }
+  }
+
+  const note = document.createElement("p");
+  note.className = "form-hint";
+  note.dataset.pendingManagedDeleteNote = "true";
+  note.textContent = `Will stop managing and delete ${path} from disk when saved.`;
+  row.append(note);
+  row.dataset.pendingDelete = "true";
+  button.textContent = `Keep managing ${type}`;
+}
+
+function undoPendingManagedDelete(row, type, button) {
+  row.querySelector("[data-pending-managed-delete]")?.remove();
+  row.querySelector("[data-pending-managed-delete-note]")?.remove();
+  for (const control of row.querySelectorAll("input, textarea")) {
+    if (control instanceof HTMLInputElement || control instanceof HTMLTextAreaElement) {
+      control.disabled = false;
+    }
+  }
+  const deleteInput = row.querySelector(`[data-delete-managed-${type}]`);
+  if (deleteInput instanceof HTMLInputElement) {
+    deleteInput.checked = false;
+  }
+  delete row.dataset.pendingDelete;
+  button.textContent = `Stop managing ${type}`;
 }
 
 document.addEventListener("change", (event) => {
@@ -108,21 +166,33 @@ document.addEventListener("submit", (event) => {
 });
 
 function confirmActionSubmit(form, submitter) {
+  const managedDeleteText = managedDiskDeleteText(form);
   const action = submitter?.dataset.confirmAction || form.dataset.confirmAction;
   if (action) {
-    return window.confirm(action);
+    const irreversibleText = managedDeleteText ? "\n\nThis cannot be undone." : "";
+    return window.confirm(action + managedDeleteText + irreversibleText);
   }
 
   const target = submitter?.dataset.confirmDelete || form.dataset.confirmDelete;
-  if (!target) return true;
+  if (!target) {
+    if (!managedDeleteText) return true;
+    return window.confirm(`Delete managed paths from disk?${managedDeleteText}\n\nThis cannot be undone.`);
+  }
 
   const selected = selectedForForm(form).length;
   const countText = selected > 0 ? `\nSelected items: ${selected}` : "";
   const force = form.querySelector('input[name="force"]:checked');
   const forceText = force ? "\n\nForce is enabled. Docker may remove running or in-use resources if allowed by the server." : "";
-  const message = `Delete ${target}?${countText}${forceText}\n\nThis cannot be undone.`;
+  const message = `Delete ${target}?${countText}${forceText}${managedDeleteText}\n\nThis cannot be undone.`;
 
   return window.confirm(message);
+}
+
+function managedDiskDeleteText(form) {
+  const deletes = form.querySelectorAll('input[name="delete_managed_file_path"]:checked:not(:disabled), input[name="delete_managed_file_path"][type="hidden"]:not(:disabled), input[name="delete_managed_folder_path"]:checked:not(:disabled), input[name="delete_managed_folder_path"][type="hidden"]:not(:disabled)');
+  if (deletes.length === 0) return "";
+  const paths = [...deletes].map((input) => input.value).filter(Boolean);
+  return `\n\nManaged paths marked for disk deletion:\n- ${paths.join("\n- ")}`;
 }
 
 function selectedForForm(form) {

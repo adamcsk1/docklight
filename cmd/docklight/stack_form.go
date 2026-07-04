@@ -11,6 +11,8 @@ type StackForm struct {
 	ComposeYAML                string
 	ManagedFolders             []ManagedFolderForm
 	ManagedFiles               []ManagedFileForm
+	DeleteManagedFolders       []string
+	DeleteManagedFiles         []string
 	ExternalBindMountsAllowed  bool
 	DockerSocketMountsAllowed  bool
 	USBDeviceBindMountsAllowed bool
@@ -39,6 +41,8 @@ func newStackFormFromRequest(r *http.Request) StackForm {
 		ComposeYAML:                strings.TrimSpace(r.FormValue("compose_yaml")),
 		ManagedFolders:             managedFoldersFromRequest(r),
 		ManagedFiles:               managedFilesFromRequest(r),
+		DeleteManagedFolders:       managedDeletePathsFromRequest(r, "delete_managed_folder_path"),
+		DeleteManagedFiles:         managedDeletePathsFromRequest(r, "delete_managed_file_path"),
 		ExternalBindMountsAllowed:  r.FormValue("external_bind_mounts_allowed") == "on",
 		DockerSocketMountsAllowed:  r.FormValue("docker_socket_mounts_allowed") == "on",
 		USBDeviceBindMountsAllowed: r.FormValue("usb_device_bind_mounts_allowed") == "on",
@@ -49,12 +53,26 @@ func newStackFormFromRequest(r *http.Request) StackForm {
 	}
 }
 
+func managedDeletePathsFromRequest(r *http.Request, name string) []string {
+	values := r.Form[name]
+	paths := make([]string, 0, len(values))
+	for _, value := range values {
+		path := strings.TrimSpace(value)
+		if path != "" {
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
 func updateStackFormFromRequest(r *http.Request, name string) StackForm {
 	return StackForm{
 		Name:                       name,
 		ComposeYAML:                strings.TrimSpace(r.FormValue("compose_yaml")),
 		ManagedFolders:             managedFoldersFromRequest(r),
 		ManagedFiles:               managedFilesFromRequest(r),
+		DeleteManagedFolders:       managedDeletePathsFromRequest(r, "delete_managed_folder_path"),
+		DeleteManagedFiles:         managedDeletePathsFromRequest(r, "delete_managed_file_path"),
 		ExternalBindMountsAllowed:  r.FormValue("external_bind_mounts_allowed") == "on",
 		DockerSocketMountsAllowed:  r.FormValue("docker_socket_mounts_allowed") == "on",
 		USBDeviceBindMountsAllowed: r.FormValue("usb_device_bind_mounts_allowed") == "on",

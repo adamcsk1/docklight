@@ -19,11 +19,12 @@
       <div class="managed-folders" data-managed-folder-list>
         <div>
           <h3>Managed folders</h3>
-          <p class="form-hint">Tracked in <code>.docklight.config.yml</code>. Removing a folder here only stops Docklight managing it; existing folders and contents remain on disk. Optional chmod uses octal values such as <code>0755</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
+          <p class="form-hint">Tracked in <code>.docklight.config.yml</code>. Stopping management leaves folders and contents on disk unless you mark that row for disk deletion before stopping management. Optional chmod uses octal values such as <code>0755</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
         </div>
         {{if .StackForm.ManagedFolders}}
           {{range .StackForm.ManagedFolders}}
             <div class="managed-folder-row">
+              <input type="hidden" name="existing_managed_folder_path" value="{{.Path}}">
               <label>
                 <span>Relative folder path</span>
                 <input name="managed_folder_path" value="{{.Path}}" placeholder="data">
@@ -36,11 +37,24 @@
                 <span>chown</span>
                 <input name="managed_folder_chown" value="{{.Chown}}" placeholder="1000:1000">
               </label>
+              <label class="switch-label">
+                <input type="checkbox" data-delete-managed-folder>
+                <span>also delete from disk if stopped managing</span>
+              </label>
               <button class="button button-ghost" type="button" data-managed-folder-remove>Stop managing folder</button>
             </div>
           {{end}}
         {{else}}
           <p class="form-hint">No extra folders are currently managed for this stack.</p>
+        {{end}}
+        {{range .StackForm.DeleteManagedFolders}}
+          <div class="managed-folder-row">
+            <label class="switch-label">
+              <input type="checkbox" name="delete_managed_folder_path" value="{{.}}" checked>
+              <span>delete {{.}} from disk when saved</span>
+            </label>
+            <p class="form-hint">Uncheck to stop managing without deleting from disk. To keep managing this folder, cancel and reopen the edit page.</p>
+          </div>
         {{end}}
       </div>
       <button class="button button-secondary" type="button" data-managed-folder-add>Add managed folder</button>
@@ -64,11 +78,12 @@
       <div class="managed-files" data-managed-file-list>
         <div>
           <h3>Managed files</h3>
-          <p class="form-hint">Only files listed in <code>.docklight.config.yml</code> are shown here. Removing a file here only stops Docklight managing it; existing files remain on disk, except a removed managed <code>.env</code> is deleted to avoid stale Compose interpolation. Optional chmod uses octal values such as <code>0644</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
+          <p class="form-hint">Only files listed in <code>.docklight.config.yml</code> are shown here. Stopping management leaves files on disk unless you mark that row for disk deletion before stopping management. Add <code>.env</code> to manage Compose interpolation values. Optional chmod uses octal values such as <code>0644</code>; optional chown uses numeric values such as <code>1000:1000</code>.</p>
         </div>
         {{if .StackForm.ManagedFiles}}
           {{range .StackForm.ManagedFiles}}
             <div class="managed-file-row">
+              <input type="hidden" name="existing_managed_file_path" value="{{.Path}}">
               <label>
                 <span>Relative file path</span>
                 <input name="managed_file_path" value="{{.Path}}" placeholder="test.conf">
@@ -85,11 +100,24 @@
                 <span>chown</span>
                 <input name="managed_file_chown" value="{{.Chown}}" placeholder="1000:1000">
               </label>
-              <button class="button button-ghost" type="button" data-managed-file-remove>{{if eq .Path ".env"}}Stop managing and delete .env{{else}}Stop managing file{{end}}</button>
+              <label class="switch-label">
+                <input type="checkbox" data-delete-managed-file>
+                <span>also delete from disk if stopped managing</span>
+              </label>
+              <button class="button button-ghost" type="button" data-managed-file-remove>Stop managing file</button>
             </div>
           {{end}}
         {{else}}
           <p class="form-hint">No extra files are currently managed for this stack.</p>
+        {{end}}
+        {{range .StackForm.DeleteManagedFiles}}
+          <div class="managed-file-row">
+            <label class="switch-label">
+              <input type="checkbox" name="delete_managed_file_path" value="{{.}}" checked>
+              <span>delete {{.}} from disk when saved</span>
+            </label>
+            <p class="form-hint">Uncheck to stop managing without deleting from disk. To keep managing this file, cancel and reopen the edit page.</p>
+          </div>
         {{end}}
       </div>
       <button class="button button-secondary" type="button" data-managed-file-add>Add managed file</button>

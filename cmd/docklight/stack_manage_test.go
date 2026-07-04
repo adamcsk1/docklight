@@ -1310,7 +1310,7 @@ func TestEditStackRejectsManagedFileMissingParentBeforeWritingCompose(t *testing
 	}
 }
 
-func TestStackManagedEnvFilePersistence(t *testing.T) {
+func TestStackManagedEnvFilePersistsWhenStoppedManagingWithoutDelete(t *testing.T) {
 	root := t.TempDir()
 	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
 	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx:${TAG}", nil, []managedFileWrite{{Path: ".env", Content: "TAG=1.27\n"}}, StackManagedSettings{}); err != nil {
@@ -1336,8 +1336,285 @@ func TestStackManagedEnvFilePersistence(t *testing.T) {
 	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(filepath.Join(root, "web", ".env")); err != nil {
+		t.Fatalf("expected previously managed .env to remain unless explicitly deleted, got %v", err)
+	}
+}
+
+func TestUpdateStackDeletesRemovedManagedEnvFileWhenRequested(t *testing.T) {
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx:${TAG}", nil, []managedFileWrite{{Path: ".env", Content: "TAG=1.27\n"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stack := Stack{Name: "web", AbsolutePath: filepath.Join(root, "web"), ComposeFile: "docker-compose.yml"}
+
+	if err := app.updateStackFilesWithDeletes(stack, "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}, managedPathDeletes{Files: []string{".env"}}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := os.Stat(filepath.Join(root, "web", ".env")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("expected previously managed .env to be removed when untracked, got %v", err)
+		t.Fatalf("expected explicitly deleted .env to be removed, got %v", err)
+	}
+}
+
+func TestUpdateStackDeletesRemovedManagedFileWhenRequested(t *testing.T) {
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", nil, []managedFileWrite{{Path: "test.conf", Content: "delete"}, {Path: "keep.conf", Content: "keep"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "docker-compose.yml"}
+
+	if err := app.updateStackFilesWithDeletes(stack, "services:\n  app:\n    image: nginx", nil, []managedFileWrite{{Path: "keep.conf", Content: "keep"}}, StackManagedSettings{}, managedPathDeletes{Files: []string{"test.conf"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(stackDir, "test.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected removed managed file to be deleted, got %v", err)
+	}
+	if content, err := os.ReadFile(filepath.Join(stackDir, "keep.conf")); err != nil || string(content) != "keep" {
+		t.Fatalf("expected remaining managed file to be preserved, content=%q err=%v", string(content), err)
+	}
+}
+
+func TestEditStackDeletesRemovedManagedFileFromForm(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	mustWriteCompose(t, stackDir)
+	if err := os.WriteFile(filepath.Join(stackDir, "test.conf"), []byte("delete"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStackManagedConfig(stackDir, StackManagedConfig{Files: []StackManagedConfigFile{{Path: "test.conf"}}}); err != nil {
+		t.Fatal(err)
+	}
+	app, db := newTestApp(t, Config{BaseURL: "/", StacksRoot: root, SessionSecret: "secret", AdminUser: "admin", AdminPassword: "pw"})
+	if err := app.loadTemplates(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO stacks (name, relative_path, compose_file) VALUES ('web', 'web', 'compose.yml')`); err != nil {
+		t.Fatal(err)
+	}
+	app.runner = func(dir, name string, args ...string) (string, error) {
+		return "ok", nil
+	}
+
+	values := url.Values{}
+	values.Set("compose_yaml", "services:\n  app:\n    image: nginx")
+	values.Set("delete_managed_file_path", "test.conf")
+	values.Set("update_mode", "save")
+	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/web/edit", strings.NewReader(values.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "web")
+	rec := httptest.NewRecorder()
+	app.updateStack(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected edit save redirect, code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(filepath.Join(stackDir, "test.conf")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected form-requested managed file delete, got %v", err)
+	}
+}
+
+func TestUpdateStackDeletesRemovedManagedFolderWhenRequested(t *testing.T) {
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", managedTestFolders("data"), []managedFileWrite{{Path: "data/file.conf", Content: "delete"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "docker-compose.yml"}
+
+	if err := app.updateStackFilesWithDeletes(stack, "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}, managedPathDeletes{Folders: []string{"data"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(stackDir, "data")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected removed managed folder to be deleted, got %v", err)
+	}
+}
+
+func TestUpdateStackPreservesRemovedManagedPathsWithoutDeleteRequest(t *testing.T) {
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", managedTestFolders("data"), []managedFileWrite{{Path: "test.conf", Content: "keep"}, {Path: "data/file.conf", Content: "keep"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "docker-compose.yml"}
+
+	if err := app.updateStackFiles(stack, "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"test.conf", filepath.Join("data", "file.conf")} {
+		if _, err := os.Stat(filepath.Join(stackDir, path)); err != nil {
+			t.Fatalf("expected removed managed path to remain without delete request: %s: %v", path, err)
+		}
+	}
+}
+
+func TestUpdateStackRejectsDeleteRequestForUnmanagedPath(t *testing.T) {
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	if err := os.WriteFile(filepath.Join(stackDir, "manual.conf"), []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originalCompose, err := os.ReadFile(filepath.Join(stackDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "docker-compose.yml"}
+
+	err = app.updateStackFilesWithDeletes(stack, "services:\n  app:\n    image: nginx:changed", nil, nil, StackManagedSettings{}, managedPathDeletes{Files: []string{"manual.conf"}})
+	if err == nil || !strings.Contains(err.Error(), "delete request must target a removed managed file") {
+		t.Fatalf("expected unmanaged delete request to be rejected, got %v", err)
+	}
+	currentCompose, err := os.ReadFile(filepath.Join(stackDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(currentCompose) != string(originalCompose) {
+		t.Fatalf("expected invalid delete request to leave compose unchanged, got %q", string(currentCompose))
+	}
+	if content, err := os.ReadFile(filepath.Join(stackDir, "manual.conf")); err != nil || string(content) != "keep" {
+		t.Fatalf("expected unmanaged file to be preserved, content=%q err=%v", string(content), err)
+	}
+}
+
+func TestUpdateStackRejectsFolderDeleteWithManagedChild(t *testing.T) {
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", managedTestFolders("data"), []managedFileWrite{{Path: "data/file.conf", Content: "keep"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "docker-compose.yml"}
+
+	err := app.updateStackFilesWithDeletes(stack, "services:\n  app:\n    image: nginx", nil, []managedFileWrite{{Path: "data/file.conf", Content: "keep"}}, StackManagedSettings{}, managedPathDeletes{Folders: []string{"data"}})
+	if err == nil || !strings.Contains(err.Error(), "delete request would remove a still-managed file") {
+		t.Fatalf("expected managed child protection, got %v", err)
+	}
+	if content, err := os.ReadFile(filepath.Join(stackDir, "data", "file.conf")); err != nil || string(content) != "keep" {
+		t.Fatalf("expected managed child file to be preserved, content=%q err=%v", string(content), err)
+	}
+}
+
+func TestUpdateStackRejectsFolderDeleteWithExactManagedFile(t *testing.T) {
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	if err := os.MkdirAll(filepath.Join(stackDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stackDir, "docker-compose.yml"), []byte("services:\n  app:\n    image: nginx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeStackManagedConfig(stackDir, StackManagedConfig{Folders: []StackManagedConfigFolder{{Path: "data"}}}); err != nil {
+		t.Fatal(err)
+	}
+	originalCompose, err := os.ReadFile(filepath.Join(stackDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "docker-compose.yml"}
+
+	err = app.updateStackFilesWithDeletes(stack, "services:\n  app:\n    image: nginx:changed", nil, []managedFileWrite{{Path: "data", Content: "file"}}, StackManagedSettings{}, managedPathDeletes{Folders: []string{"data"}})
+	if err == nil || !strings.Contains(err.Error(), "delete request would remove a still-managed file") {
+		t.Fatalf("expected exact managed file protection, got %v", err)
+	}
+	currentCompose, err := os.ReadFile(filepath.Join(stackDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(currentCompose) != string(originalCompose) {
+		t.Fatalf("expected exact managed file validation to leave compose unchanged, got %q", string(currentCompose))
+	}
+}
+
+func TestUpdateStackRejectsDeleteManagedFileSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink handling differs on Windows")
+	}
+	root := t.TempDir()
+	stackDir := filepath.Join(root, "web")
+	outsideFile := filepath.Join(root, "outside.conf")
+	if err := os.MkdirAll(stackDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stackDir, "docker-compose.yml"), []byte("services:\n  app:\n    image: nginx\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	originalCompose, err := os.ReadFile(filepath.Join(stackDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outsideFile, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(stackDir, "test.conf")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := writeStackManagedConfig(stackDir, StackManagedConfig{Files: []StackManagedConfigFile{{Path: "test.conf"}}}); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "docker-compose.yml"}
+
+	err = app.updateStackFilesWithDeletes(stack, "services:\n  app:\n    image: nginx:changed", nil, nil, StackManagedSettings{}, managedPathDeletes{Files: []string{"test.conf"}})
+	if err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected symlink delete rejection, got %v", err)
+	}
+	currentCompose, err := os.ReadFile(filepath.Join(stackDir, "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(currentCompose) != string(originalCompose) {
+		t.Fatalf("expected delete target preflight failure to leave compose unchanged, got %q", string(currentCompose))
+	}
+	if content, err := os.ReadFile(outsideFile); err != nil || string(content) != "keep" {
+		t.Fatalf("expected outside symlink target to be preserved, content=%q err=%v", string(content), err)
+	}
+}
+
+func TestUpdateStackRejectsCaseOnlyDeleteOfCurrentManagedFile(t *testing.T) {
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", nil, []managedFileWrite{{Path: "test.conf", Content: "keep"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "docker-compose.yml"}
+
+	err := app.updateStackFilesWithDeletes(stack, "services:\n  app:\n    image: nginx", nil, []managedFileWrite{{Path: "TEST.conf", Content: "keep"}}, StackManagedSettings{}, managedPathDeletes{Files: []string{"test.conf"}})
+	if err == nil || !strings.Contains(err.Error(), "delete request must target a removed managed file") {
+		t.Fatalf("expected case-only retained file delete to be rejected, got %v", err)
+	}
+	if content, err := os.ReadFile(filepath.Join(stackDir, "test.conf")); err != nil || string(content) != "keep" {
+		t.Fatalf("expected case-only current managed file to be preserved, content=%q err=%v", string(content), err)
+	}
+}
+
+func TestUpdateStackRejectsCaseVariantDeleteOfUnmanagedFile(t *testing.T) {
+	root := t.TempDir()
+	app := &App{cfg: Config{StacksRoot: root, ActionTimeout: time.Minute}}
+	if err := app.writeStackFiles("web", "services:\n  app:\n    image: nginx", nil, []managedFileWrite{{Path: "test.conf", Content: "managed"}}, StackManagedSettings{}); err != nil {
+		t.Fatal(err)
+	}
+	stackDir := filepath.Join(root, "web")
+	if err := os.WriteFile(filepath.Join(stackDir, "TEST.conf"), []byte("unmanaged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stack := Stack{Name: "web", AbsolutePath: stackDir, ComposeFile: "docker-compose.yml"}
+
+	err := app.updateStackFilesWithDeletes(stack, "services:\n  app:\n    image: nginx", nil, nil, StackManagedSettings{}, managedPathDeletes{Files: []string{"TEST.conf"}})
+	if err == nil || !strings.Contains(err.Error(), "delete request must target a removed managed file") {
+		t.Fatalf("expected case-variant unmanaged delete to be rejected, got %v", err)
+	}
+	if content, err := os.ReadFile(filepath.Join(stackDir, "TEST.conf")); err != nil || string(content) != "unmanaged" {
+		t.Fatalf("expected unmanaged case-variant file to be preserved, content=%q err=%v", string(content), err)
 	}
 }
 
@@ -1399,6 +1676,7 @@ func TestEditStackValidationIgnoresRemovedManagedEnvFile(t *testing.T) {
 
 	values := url.Values{}
 	values.Set("compose_yaml", "services:\n  app:\n    image: nginx:${TAG:?required}")
+	values.Set("delete_managed_file_path", "./.env")
 	values.Set("update_mode", "save")
 	req := httptest.NewRequest(http.MethodPost, "http://docklight.local/stacks/web/edit", strings.NewReader(values.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
