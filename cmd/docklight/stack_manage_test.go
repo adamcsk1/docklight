@@ -111,6 +111,7 @@ func TestRenameStackStopsRenamesUpdatesDBAndStarts(t *testing.T) {
 	}
 
 	req := renameStackRequest("web", "api")
+	req.Header.Set("Referer", "http://docklight.local/stacks/web/rename")
 	rec := httptest.NewRecorder()
 	app.renameStack(rec, req)
 

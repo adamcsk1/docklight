@@ -344,7 +344,8 @@ func (app *App) renameStack(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	app.logActivity(newName, "rename stack", "success", output)
-	app.redirectWithMessage(w, r, "/stacks/"+newName, "stack renamed and recreated: "+newName)
+	app.setFlashCookie(w, r, "message", "stack renamed and recreated: "+newName)
+	http.Redirect(w, r, app.withBase("/stacks/"+newName), http.StatusFound)
 }
 
 func (app *App) prepareStackRename(stack Stack, newName string) (string, error) {
