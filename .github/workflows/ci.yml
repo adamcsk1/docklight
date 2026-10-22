@@ -79,6 +79,7 @@ jobs:
         run: |
           if [ '${{ matrix.target }}' = agent ]; then
             docker run --rm --platform '${{ matrix.platform }}' --entrypoint docker docklight-agent:ci compose version
+            docker run --rm --platform '${{ matrix.platform }}' --entrypoint docker docklight-agent:ci buildx version
           fi
           # No credentials: both binaries must execute and fail with configuration error, not an architecture error.
           set +e

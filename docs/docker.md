@@ -87,6 +87,16 @@ The UI refuses agent redirects, preventing credentials from being forwarded else
 
 ## Updates and private registries
 
+### Locally built application images
+
+**Build** appears for application services with a resolved Compose `build:` section. It runs `docker compose build` for the selected service (all replicas), or the existing buildable services in the selected stack. Only after a successful build does it run `up -d --no-deps --no-build --pull never` for those services. A failed build leaves existing containers running. Deployment failures after a successful build can still affect availability.
+
+Build uses normal Docker caching; it does not force a base-image pull, disable cache, deploy dependencies or clean build cache. The agent needs access to the build context, Dockerfile and any referenced files, normally through the same-path read-only stack mount. SSH forwarding and extra build-secret mounts are not configured by Docklight. Build output is retained with the operation and may contain anything printed by Dockerfile commands; avoid printing secrets.
+
+**Upgrade** pulls and deploys only services without `build:`. In mixed stacks, local services are left untouched. A service containing both `image:` and `build:` uses Build, not Upgrade. Missing or invalid Compose configuration disables build discovery with an explanation; resolved configuration and its diagnostics are not exposed through inventory. Build discovery is reused within each project's inventory request.
+
+Build jobs allow two hours instead of the usual ten minutes. Mutations remain serialized per host while a build runs. Build does not apply to protected management containers: their dedicated Update action remains registry-based.
+
 UI and agent image labels protect management containers from ordinary actions. Compose deployments should also set the role labels explicitly as above. Dedicated **Update** actions pull and recreate only the selected UI/agent service through a detached helper. Helpers use the current agent image ID and inherited read-only mounts; they continue running if the agent/UI is replaced. Results are read from the helper after reconnection.
 
 Keep the Docklight deployment and its `.env` within the agent's mounted root. Runtime-only shell variables are not inherited by update helpers; put required Compose substitutions in the project's `.env` or files referenced by Compose. Use matching release tags for UI and agent. Pinned image digests do not advance automatically; edit the Compose configuration outside Docklight to change them.
@@ -113,6 +123,6 @@ Only one agent instance may use a given data directory and Docker daemon for mut
 
 UI: `ADDR` (`:8080`), `BASE_URL` (`/`), required `ADMIN_PASSWORD`, `SESSION_SECRET`, `DB_PATH` (`/data/sessions.db`), `HOSTS_FILE` (`/data/hosts.yml`), `COOKIE_SECURE` (`false`). Login is password-only.
 
-Agent: `ADDR` (`:8081`), required `AGENT_TOKEN`, `STACKS_ROOT` (`/stacks`), `DATA_DIR` (`/data`), optional paired `TLS_CERT`/`TLS_KEY`. Docker commands have a ten-minute timeout. Compose paths must be absolute and resolve within `STACKS_ROOT`; symlink escapes are rejected.
+Agent: `ADDR` (`:8081`), required `AGENT_TOKEN`, `STACKS_ROOT` (`/stacks`), `DATA_DIR` (`/data`), optional paired `TLS_CERT`/`TLS_KEY`. Operations have a ten-minute timeout, except Build (two hours). Compose paths must be absolute and resolve within `STACKS_ROOT`; symlink escapes are rejected.
 
 For Windows Docker Desktop development, use the development example and WSL/Linux-side Compose project paths for Compose management. Linux-style paths in Docker labels must be accessible inside the Linux agent. Arbitrary Windows-native host path translation is not supported by the identical-path model.

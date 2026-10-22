@@ -7,7 +7,7 @@
     <span class="badge badge-{{.Status}}">{{.Status}}</span>
   </div>
   <p class="muted">{{.Started}} · target={{.Action.ID}}</p>
-  {{if eq .Status "running"}}<p class="form-hint" role="status">Operation running. This page refreshes every three seconds.</p>{{end}}
+  {{if eq .Status "running"}}<p class="form-hint" role="status">{{if eq .Action.Operation "build"}}Build running; other mutations on this host are blocked. Builds may take up to two hours.{{else}}Operation running.{{end}} This page refreshes every three seconds.</p>{{end}}
   {{if eq .Status "updating"}}<p class="form-hint" role="status">Management update running. The agent may briefly disconnect. Refresh to reconnect.</p>{{end}}
   <pre class="activity-output" aria-label="Operation output">{{.Output}}</pre>
 </section>
@@ -15,7 +15,7 @@
 
 <section class="resource-section" id="containers" aria-labelledby="containers-title">
   <div class="section-head"><h2 id="containers-title">Containers</h2><span class="badge">{{len .Inventory.Containers}} total</span></div>
-  <p class="form-hint">Recreate preserves exact current images without pulling or building. Upgrade pulls first. Stop containers before deletion; volumes and Compose files are preserved.</p>
+   <p class="form-hint">Recreate preserves exact current images. Upgrade pulls registry images only. Build compiles local images, then deploys only after success. Stop containers before deletion; volumes and Compose files are preserved.</p>
   {{if .Inventory.Containers}}
   {{range .ContainerGroups}}
   <details class="stack-group" data-base="{{$.Base}}" data-host="{{$.HostID}}" data-project="{{.Project}}" aria-label="{{if .Project}}Compose stack {{.Project}}{{else}}Standalone containers{{end}}">
@@ -46,12 +46,14 @@
               <button class="button button-primary" name="operation" value="start" type="submit">Start</button>
               <button class="button" name="operation" value="stop" type="submit">Stop</button>
               {{if .ComposeAvailable}}<button class="button" name="operation" value="recreate" type="submit">Recreate</button><button class="button button-secondary" name="operation" value="upgrade" type="submit">Upgrade</button>{{end}}
+              {{if .Buildable}}<button class="button button-secondary" name="operation" value="build" type="submit">Build</button>{{end}}
             </div>
             <div class="delete-action">
               <label class="switch-label"><input type="checkbox" name="confirmed" value="yes"><span>confirm deletion</span></label>
               <button class="button button-danger" name="operation" value="delete" type="submit" {{if not (or (eq .State "exited") (eq .State "created") (eq .State "dead"))}}disabled title="Stop this container before deleting"{{end}}>Delete stopped</button>
             </div>
             {{if not .ComposeAvailable}}<p class="muted">Recreate/upgrade require accessible Compose files.</p>{{end}}
+            {{if .BuildError}}<p class="muted">Build unavailable: {{.BuildError}}</p>{{end}}
           {{end}}
         </form>
       </div>

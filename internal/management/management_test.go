@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -26,6 +28,9 @@ type fixture struct {
 	mu         sync.Mutex
 	calls      [][]string
 	failPull   bool
+	failBuild  bool
+	failConfig bool
+	buildable  map[string]bool
 	override   map[string]map[string]map[string]string
 }
 
@@ -75,6 +80,25 @@ func (f *fixture) run(ctx context.Context, dir string, out io.Writer, args ...st
 	}
 	if args[0] == "compose" {
 		for i, arg := range args {
+			if arg == "--output" {
+				if f.failConfig {
+					return errors.New("secret config diagnostic")
+				}
+				services := map[string]any{}
+				for _, c := range f.containers {
+					service := map[string]any{"image": c.Config.Image}
+					if f.buildable[c.Config.Labels[ServiceLabel]] {
+						service["build"] = map[string]string{"context": f.e.Root}
+					}
+					services[c.Config.Labels[ServiceLabel]] = service
+				}
+				b, _ := json.Marshal(map[string]any{"services": services})
+				_, _ = io.WriteString(out, "warning: not JSON\n")
+				return os.WriteFile(args[i+1], b, 0600)
+			}
+			if arg == "build" && f.failBuild {
+				return errors.New("compilation failed")
+			}
 			if arg == "pull" && f.failPull {
 				return errors.New("registry unavailable")
 			}
@@ -91,6 +115,158 @@ func (f *fixture) run(ctx context.Context, dir string, out io.Writer, args ...st
 	}
 	_, err := io.WriteString(out, "completed\n")
 	return err
+}
+
+func TestBuildAndMixedUpgrade(t *testing.T) {
+	for _, operation := range []string{"build", "upgrade"} {
+		for _, fail := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/fail=%v", operation, fail), func(t *testing.T) {
+				f := newFixture(t)
+				worker := f.containers[0]
+				worker.Config.Labels = map[string]string{}
+				for k, v := range f.containers[0].Config.Labels {
+					worker.Config.Labels[k] = v
+				}
+				worker.ID = strings.Repeat("c", 64)
+				worker.Config.Labels[ServiceLabel] = "worker"
+				f.containers = append(f.containers, worker)
+				f.buildable = map[string]bool{"worker": true}
+				f.failBuild, f.failPull = fail, fail
+				err := f.e.Execute(context.Background(), Action{Kind: "container", ID: testID, Operation: operation, Scope: "stack"}, io.Discard)
+				if (err != nil) != fail {
+					t.Fatalf("error: %v", err)
+				}
+				var steps []string
+				for _, call := range f.calls {
+					for _, arg := range call {
+						if arg == "build" || arg == "pull" || arg == "up" {
+							steps = append(steps, arg)
+							want := "web"
+							if operation == "build" {
+								want = "worker"
+							}
+							if call[len(call)-1] != want {
+								t.Fatalf("wrong service: %v", call)
+							}
+							if arg == "up" && (!slices.Contains(call, "--no-build") || !slices.Contains(call, "--no-deps")) {
+								t.Fatalf("unsafe up: %v", call)
+							}
+						}
+						if arg == "down" || arg == "--force-recreate" || arg == "--with-dependencies" {
+							t.Fatalf("unsafe step %v", call)
+						}
+					}
+				}
+				first := "pull"
+				if operation == "build" {
+					first = "build"
+				}
+				want := []string{first}
+				if !fail {
+					want = append(want, "up")
+				}
+				if !reflect.DeepEqual(steps, want) {
+					t.Fatalf("steps %v, want %v", steps, want)
+				}
+			})
+		}
+	}
+}
+
+func TestBuildDiscoveryAndFailure(t *testing.T) {
+	f := newFixture(t)
+	f.buildable = map[string]bool{"web": true}
+	f.containers = append(f.containers, f.containers[0])
+	inv, err := f.e.Inventory(context.Background())
+	if err != nil || !inv.Containers[0].Buildable {
+		t.Fatalf("inventory: %+v %v", inv, err)
+	}
+	count := 0
+	for _, call := range f.calls {
+		if slices.Contains(call, "config") {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("discovered project %d times", count)
+	}
+	f.failConfig = true
+	inv, err = f.e.Inventory(context.Background())
+	if err != nil || inv.Containers[0].BuildError == "" || inv.Containers[0].Buildable {
+		t.Fatalf("failed discovery: %+v %v", inv, err)
+	}
+	if strings.Contains(inv.Containers[0].BuildError, "secret") {
+		t.Fatal("leaked resolved config diagnostic")
+	}
+	f.calls = nil
+	if err = f.e.Execute(context.Background(), Action{Kind: "container", ID: testID, Operation: "build", Scope: "service"}, io.Discard); err == nil {
+		t.Fatal("built without valid config")
+	}
+	for _, call := range f.calls {
+		if slices.Contains(call, "build") || slices.Contains(call, "up") {
+			t.Fatalf("mutated: %v", call)
+		}
+	}
+	files, _ := filepath.Glob(filepath.Join(f.e.DataDir, ".compose-*"))
+	if len(files) != 0 {
+		t.Fatalf("resolved secrets left behind: %v", files)
+	}
+}
+
+func TestNoMatchingComposeServicesNeverDeploys(t *testing.T) {
+	for _, operation := range []string{"build", "upgrade"} {
+		f := newFixture(t)
+		f.buildable = map[string]bool{"web": operation == "upgrade"}
+		err := f.e.Execute(context.Background(), Action{Kind: "container", ID: testID, Operation: operation, Scope: "service"}, io.Discard)
+		if err == nil {
+			t.Fatalf("%s accepted empty selection", operation)
+		}
+		for _, call := range f.calls {
+			if call[0] == "compose" && !slices.Contains(call, "config") {
+				t.Fatalf("empty selection mutated: %v", call)
+			}
+		}
+	}
+}
+
+func TestBuildJobUsesSeparateTimeout(t *testing.T) {
+	f := newFixture(t)
+	f.buildable = map[string]bool{"web": true}
+	f.e.Timeout = time.Nanosecond
+	f.e.BuildTimeout = time.Minute
+	run := f.e.Run
+	f.e.Run = func(ctx context.Context, dir string, out io.Writer, args ...string) error {
+		if deadline, ok := ctx.Deadline(); !ok || time.Until(deadline) < 30*time.Second {
+			return errors.New("build used ordinary timeout")
+		}
+		return run(ctx, dir, out, args...)
+	}
+	s, err := NewServer(f.e, testToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := agentRequest(s, "POST", "/v1/jobs", `{"kind":"container","id":"`+testID+`","operation":"build","scope":"service"}`, testToken)
+	if w.Code != 202 {
+		t.Fatalf("submit: %d %s", w.Code, w.Body.String())
+	}
+	var job Job
+	if err = json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+		s.mu.Lock()
+		status := s.jobs[job.ID].Status
+		output := s.jobs[job.ID].Output
+		s.mu.Unlock()
+		if status == "success" {
+			return
+		}
+		if status == "failed" {
+			t.Fatal(output)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("build job did not finish")
 }
 
 func TestRecreatePinsExactImageAndNeverPullsBuildsOrDowns(t *testing.T) {
@@ -166,6 +342,8 @@ func TestProtectedAndUnsafeActionsNeverMutate(t *testing.T) {
 		{"standalone recreate", Action{Kind: "container", ID: testID, Operation: "recreate", Scope: "service"}, func(f *fixture) { delete(f.containers[0].Config.Labels, ProjectLabel) }},
 		{"out of root", Action{Kind: "container", ID: testID, Operation: "upgrade", Scope: "service"}, func(f *fixture) { f.containers[0].Config.Labels[WorkingDirLabel] = t.TempDir() }},
 		{"no scope recreate", Action{Kind: "container", ID: testID, Operation: "recreate"}, nil},
+		{"no scope build", Action{Kind: "container", ID: testID, Operation: "build"}, nil},
+		{"protected build", Action{Kind: "container", ID: testID, Operation: "build", Scope: "service"}, func(f *fixture) { f.containers[0].Config.Labels[RoleLabel] = "agent" }},
 		{"used image", Action{Kind: "image", ID: "sha256:" + strings.Repeat("b", 64), Operation: "delete", Confirmed: true}, nil},
 		{"stopped volume reference", Action{Kind: "volume", ID: "used-volume", Operation: "delete", Confirmed: true}, func(f *fixture) { f.containers[0].State.Status = "exited" }},
 		{"used network", Action{Kind: "network", ID: "used-network-id", Operation: "delete", Confirmed: true}, nil},
@@ -182,7 +360,7 @@ func TestProtectedAndUnsafeActionsNeverMutate(t *testing.T) {
 				t.Fatal("unsafe action accepted")
 			}
 			for _, call := range f.calls {
-				if call[0] == "compose" || len(call) > 1 && (call[1] == "rm" || call[1] == "stop") {
+				if call[0] == "compose" && !slices.Contains(call, "config") || len(call) > 1 && (call[1] == "rm" || call[1] == "stop") {
 					t.Fatalf("mutation before validation: %v", call)
 				}
 			}

@@ -18,8 +18,8 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 	actions := make(chan management.Action, 32)
 	inv := management.Inventory{
 		Containers: []management.Container{
-			{ID: "running-id", Name: "web-running", Image: "registry.example/web:latest", State: "running", Project: "web", Service: "web", ComposeAvailable: true},
-			{ID: "stopped-id", Name: "web-stopped", Image: "registry.example/web:latest", State: "exited", Project: "web", Service: "worker", ComposeAvailable: true},
+			{ID: "running-id", Name: "web-running", Image: "registry.example/web:latest", State: "running", Project: "web", Service: "web", ComposeAvailable: true, BuildError: "Compose config unavailable; check mounted files, .env and required variables on the agent"},
+			{ID: "stopped-id", Name: "web-stopped", Image: "local-worker:latest", State: "exited", Project: "web", Service: "worker", ComposeAvailable: true, Buildable: true},
 			{ID: "agent-id", Name: "docklight-agent", Image: "ghcr.io/adamcsk1/docklight-agent:latest", State: "running", Project: "docklight", Service: "agent", Protected: true, ComposeAvailable: true},
 			{ID: "standalone-id", Name: "standalone", Image: strings.Repeat("very-long-image-name-", 12), State: "exited"},
 		},
@@ -142,14 +142,18 @@ func TestBrowserPresentation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(actions) != 8 {
+			if len(actions) != 12 {
 				t.Fatalf("unexpected browser mutation count: %d", len(actions))
 			}
-			for i := 0; i < 8; i++ {
+			for i := 0; i < 12; i++ {
 				action := <-actions
-				if i%2 == 0 {
+				if i%3 == 0 {
 					if action.Kind != "container" || action.Operation != "start" || action.ID != "stopped-id" || action.Scope != "service" {
 						t.Fatalf("wrong start payload: %#v", action)
+					}
+				} else if i%3 == 1 {
+					if action.Kind != "container" || action.Operation != "build" || action.ID != "stopped-id" || action.Scope != "service" {
+						t.Fatalf("wrong build payload: %#v", action)
 					}
 				} else if action.Kind != "volume" || action.Operation != "delete" || action.ID != "unused-volume" || !action.Confirmed {
 					t.Fatalf("wrong cleanup payload: %#v", action)

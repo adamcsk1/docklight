@@ -11,6 +11,8 @@ type Container struct {
 	Service          string
 	Protected        bool
 	ComposeAvailable bool
+	Buildable        bool
+	BuildError       string
 }
 
 type Resource struct {

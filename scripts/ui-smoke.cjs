@@ -93,6 +93,9 @@ const path = require("node:path");
       assert.equal(await row("docklight-agent").getByRole("button").count(), 1);
       assert.equal(await row("docklight-agent").getByRole("button", { name: "Update", exact: true }).count(), 1);
       assert.equal(await row("standalone").getByRole("button", { name: "Recreate", exact: true }).count(), 0);
+      assert.equal(await row("web-stopped").getByRole("button", { name: "Build", exact: true }).count(), 1);
+      for (const name of ["web-running", "docklight-agent", "standalone"]) assert.equal(await row(name).getByRole("button", { name: "Build", exact: true }).count(), 0);
+      assert((await webGroup.getByRole("row").filter({ has: page.getByText("web-running", { exact: true }) }).textContent()).includes("Build unavailable: Compose config unavailable"));
       assert.equal(await row("used-volume").locator("form").count(), 0);
       assert.equal(await row("bridge").locator("form").count(), 0);
       if (screenshots) {
@@ -107,6 +110,9 @@ const path = require("node:path");
       await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
       await assertLayout();
       assert((await page.getByLabel("Operation output").textContent()).includes("<script>not executable</script>"));
+      await webGroup.locator("summary").click();
+      await row("web-stopped").getByRole("button", { name: "Build", exact: true }).click();
+      await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
       // Required confirmation must stop an unchecked resource delete in the browser.
       const unused = row("unused-volume");
       await unused.getByRole("button", { name: "Delete", exact: true }).click();

@@ -19,10 +19,11 @@ const maxOutput = 256 << 10
 type Runner func(context.Context, string, io.Writer, ...string) error
 
 type Engine struct {
-	Root    string
-	DataDir string
-	Timeout time.Duration
-	Run     Runner
+	Root         string
+	DataDir      string
+	Timeout      time.Duration
+	BuildTimeout time.Duration
+	Run          Runner
 }
 
 func Command(ctx context.Context, dir string, out io.Writer, args ...string) error {
@@ -100,10 +101,35 @@ func (e *Engine) Inventory(ctx context.Context) (Inventory, error) {
 		return inv, err
 	}
 	images, volumes, networks := map[string][]string{}, map[string][]string{}, map[string][]string{}
+	type discovery struct {
+		services map[string]composeService
+		err      error
+	}
+	projects := map[string]discovery{}
 	for _, c := range containers {
-		_, composeErr := e.composeTarget(c)
+		t, composeErr := e.composeTarget(c)
+		var buildable bool
+		var buildError string
+		if composeErr == nil {
+			key, _ := json.Marshal(t)
+			d, ok := projects[string(key)]
+			if !ok {
+				d.services, d.err = e.composeServices(ctx, t)
+				projects[string(key)] = d
+			}
+			if d.err != nil {
+				buildError = d.err.Error()
+			} else {
+				service, exists := d.services[c.Config.Labels[ServiceLabel]]
+				if !exists {
+					buildError = "Service missing from current Compose configuration"
+				} else {
+					buildable = service.Build != nil
+				}
+			}
+		}
 		name := strings.TrimPrefix(c.Name, "/")
-		inv.Containers = append(inv.Containers, Container{ID: c.ID, Name: name, Image: c.Config.Image, ImageID: c.Image, State: c.State.Status, Project: c.Config.Labels[ProjectLabel], Service: c.Config.Labels[ServiceLabel], Protected: protected(c), ComposeAvailable: composeErr == nil})
+		inv.Containers = append(inv.Containers, Container{ID: c.ID, Name: name, Image: c.Config.Image, ImageID: c.Image, State: c.State.Status, Project: c.Config.Labels[ProjectLabel], Service: c.Config.Labels[ServiceLabel], Protected: protected(c), ComposeAvailable: composeErr == nil, Buildable: buildable, BuildError: buildError})
 		images[c.Image] = append(images[c.Image], name)
 		for _, m := range c.Mounts {
 			if m.Type == "volume" {
@@ -179,6 +205,44 @@ func (e *Engine) Inventory(ctx context.Context) (Inventory, error) {
 type composeTarget struct {
 	Dir, Project string
 	Files        []string
+}
+
+type composeService struct {
+	Build json.RawMessage `json:"build"`
+}
+
+func (e *Engine) composeServices(ctx context.Context, t composeTarget) (map[string]composeService, error) {
+	// Resolved configuration may contain secrets; never send it or parser warnings to job logs.
+	f, err := os.CreateTemp(e.DataDir, ".compose-*.json")
+	if err != nil {
+		return nil, errors.New("cannot create private Compose discovery file")
+	}
+	defer os.Remove(f.Name())
+	if err = f.Close(); err != nil {
+		return nil, err
+	}
+	args := append(t.args(), "config", "--format", "json", "--no-env-resolution", "--output", f.Name())
+	if err = e.Run(ctx, t.Dir, io.Discard, args...); err != nil {
+		return nil, errors.New("Compose config unavailable; check mounted files, .env and required variables on the agent")
+	}
+	f, err = os.Open(f.Name())
+	if err != nil {
+		return nil, errors.New("cannot read Compose configuration")
+	}
+	defer f.Close()
+	var config struct {
+		Services map[string]composeService `json:"services"`
+	}
+	if err = json.NewDecoder(io.LimitReader(f, 16<<20)).Decode(&config); err != nil || len(config.Services) == 0 {
+		return nil, errors.New("invalid or oversized Compose configuration")
+	}
+	for name, service := range config.Services {
+		if string(service.Build) == "null" {
+			service.Build = nil
+			config.Services[name] = service
+		}
+	}
+	return config.Services, nil
 }
 
 func (e *Engine) safePath(path string) (string, error) {

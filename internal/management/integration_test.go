@@ -122,4 +122,50 @@ func TestDockerIntegration(t *testing.T) {
 	if err = e.Execute(ctx, Action{Kind: "volume", ID: volumeID, Operation: "delete", Confirmed: true}, &output); err != nil {
 		t.Fatalf("unused volume: %v", err)
 	}
+	// Compile first; failed builds must preserve the running container.
+	content = "services:\n  web:\n    image: docklight-local-test:latest\n    build: .\n    command: [sh, -c, 'sleep 3600']\n"
+	if err = os.WriteFile(file, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	dockerfile := filepath.Join(root, "Dockerfile")
+	writeBuild := func(version string) {
+		t.Helper()
+		if err := os.WriteFile(dockerfile, []byte("FROM alpine:3.23\nLABEL test.version="+version+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBuild("one")
+	docker("compose", "-p", project, "-f", file, "up", "-d", "--build")
+	id = docker("compose", "-p", project, "-f", file, "ps", "-q", "web")
+	original = docker("inspect", "--format", "{{.Image}}", id)
+	inv, err = e.Inventory(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range inv.Containers {
+		if c.ID == id {
+			found = c.Buildable
+		}
+	}
+	if !found {
+		t.Fatal("local service not discovered as buildable")
+	}
+	writeBuild("two")
+	if err = e.Execute(ctx, Action{Kind: "container", ID: id, Operation: "build", Scope: "service"}, &output); err != nil {
+		t.Fatalf("build: %v\n%s", err, output.String())
+	}
+	newID = docker("compose", "-p", project, "-f", file, "ps", "-q", "web")
+	if newID == id || docker("inspect", "--format", "{{.Image}}", newID) == original {
+		t.Fatal("build did not deploy new image")
+	}
+	if err = os.WriteFile(dockerfile, []byte("FROM alpine:3.23\nRUN exit 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Execute(ctx, Action{Kind: "container", ID: newID, Operation: "build", Scope: "service"}, &output); err == nil {
+		t.Fatal("broken build succeeded")
+	}
+	if got := docker("compose", "-p", project, "-f", file, "ps", "-q", "web"); got != newID {
+		t.Fatal("failed build replaced running container")
+	}
 }

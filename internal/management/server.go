@@ -43,6 +43,9 @@ func NewServer(engine *Engine, token string) (*Server, error) {
 	if engine.Timeout == 0 {
 		engine.Timeout = 10 * time.Minute
 	}
+	if engine.BuildTimeout == 0 {
+		engine.BuildTimeout = 2 * time.Hour
+	}
 	if !filepath.IsAbs(engine.Root) || !filepath.IsAbs(engine.DataDir) {
 		return nil, errors.New("STACKS_ROOT and DATA_DIR must be absolute")
 	}
@@ -187,7 +190,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.busy {
-		http.Error(w, "another host operation is running", 409)
+		http.Error(w, "another host operation is running (builds can take up to two hours)", 409)
 		return
 	}
 	for _, j := range s.jobs {
@@ -233,7 +236,11 @@ func (s *Server) execute(id string) {
 	s.mu.Lock()
 	a := s.jobs[id].Action
 	s.mu.Unlock()
-	ctx, cancel := context.WithTimeout(context.Background(), s.Engine.Timeout)
+	timeout := s.Engine.Timeout
+	if a.Operation == "build" {
+		timeout = s.Engine.BuildTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	out := jobWriter{s, id}
 	var err error

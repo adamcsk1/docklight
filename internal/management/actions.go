@@ -23,7 +23,7 @@ func validateAction(a Action) error {
 	switch a.Kind {
 	case "container":
 		switch a.Operation {
-		case "start", "stop", "delete", "recreate", "upgrade", "update":
+		case "start", "stop", "delete", "recreate", "upgrade", "build", "update":
 		default:
 			return errors.New("unknown operation")
 		}
@@ -97,7 +97,7 @@ func (e *Engine) Execute(ctx context.Context, a Action, out io.Writer) error {
 			args = append(args, c.ID)
 		}
 		return e.Run(ctx, "", out, args...)
-	case "recreate", "upgrade":
+	case "recreate", "upgrade", "build":
 		// Compose recreation always affects every replica of the selected service.
 		if a.Scope == "" {
 			return errors.New("Compose recreation requires service or stack scope")
@@ -127,8 +127,31 @@ func (e *Engine) Execute(ctx context.Context, a Action, out io.Writer) error {
 		}
 		sort.Strings(services)
 		args := t.args()
-		if a.Operation == "upgrade" {
-			if err = e.Run(ctx, t.Dir, out, append(append([]string{}, args...), append([]string{"pull", "--policy", "always"}, services...)...)...); err != nil {
+		if a.Operation == "upgrade" || a.Operation == "build" {
+			config, err := e.composeServices(ctx, t)
+			if err != nil {
+				return err
+			}
+			var filtered []string
+			for _, service := range services {
+				definition, ok := config[service]
+				if !ok {
+					return fmt.Errorf("service %s missing from Compose configuration", service)
+				}
+				if (definition.Build != nil) == (a.Operation == "build") {
+					filtered = append(filtered, service)
+				}
+			}
+			services = filtered
+			if len(services) == 0 {
+				return errors.New("no matching services: use Build for local images or Upgrade for registry images")
+			}
+			step := []string{"pull", "--ignore-buildable", "--policy", "always"}
+			if a.Operation == "build" {
+				step = []string{"build"}
+			}
+			fmt.Fprintf(out, "%s selected Compose services: %s\n", a.Operation, strings.Join(services, ", "))
+			if err = e.Run(ctx, t.Dir, out, append(append([]string{}, args...), append(step, services...)...)...); err != nil {
 				return err
 			}
 		} else {
