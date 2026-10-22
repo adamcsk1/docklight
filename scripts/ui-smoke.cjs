@@ -110,9 +110,14 @@ const path = require("node:path");
       await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
       await assertLayout();
       assert((await page.getByLabel("Operation output").textContent()).includes("<script>not executable</script>"));
+      await page.getByRole("link", { name: "Close output", exact: true }).click();
+      await page.waitForURL(`${base}/?host=pi&job=presentation-job&output=hidden`);
+      assert.equal(await page.getByLabel("Operation output").isVisible(), false);
+      assert.equal(await page.getByRole("link", { name: "Show output", exact: true }).isVisible(), true);
       await webGroup.locator("summary").click();
       await row("web-stopped").getByRole("button", { name: "Build", exact: true }).click();
       await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
+      assert.equal(await page.getByLabel("Operation output").isVisible(), true, "new operation must reopen output");
       // Required confirmation must stop an unchecked resource delete in the browser.
       const unused = row("unused-volume");
       await unused.getByRole("button", { name: "Delete", exact: true }).click();
@@ -224,9 +229,19 @@ const path = require("node:path");
       await page.getByRole("button", { name: "Login", exact: true }).click();
       await page.waitForURL(`${base}/`);
       const url = `${base}/?host=pi&job=live-${terminal}`;
+      if (terminal === "failed") await context.addInitScript(() => {
+        Object.defineProperty(window, "localStorage", { get() { throw new DOMException("Storage disabled for test", "SecurityError"); } });
+      });
       await page.goto(url);
       let navigations = 0;
-      page.on("framenavigated", frame => { if (frame === page.mainFrame()) navigations++; });
+      let inventoryRequests = 0;
+      page.on("request", request => {
+        if (request.url().includes("/inventory?")) {
+          inventoryRequests++;
+          assert.equal(new URL(request.url()).searchParams.get("host"), "pi", "inventory poll switched hosts");
+        }
+      });
+      page.on("request", request => { if (request.isNavigationRequest() && request.frame() === page.mainFrame()) navigations++; });
       const output = page.getByLabel("Operation output");
       const atEnd = async () => {
         await page.waitForFunction(() => {
@@ -238,6 +253,8 @@ const path = require("node:path");
       assert.equal(await atEnd(), true, "initial log not scrolled to end");
       await output.evaluate(log => { log.scrollTop = 0; });
       await page.evaluate(() => { window.operationPageMarker = "unchanged"; });
+      const web = page.locator('details.stack-group[data-project="web"]');
+      await web.locator("summary").click();
       await page.waitForFunction(() => document.querySelector(".operation-output").textContent.endsWith("running output"));
       assert((await page.locator("[data-operation-message]").textContent()).includes("two hours"), "poll discarded build timeout notice");
       assert.equal(await atEnd(), true, "new output not scrolled to end");
@@ -256,10 +273,30 @@ const path = require("node:path");
       assert.equal(await output.locator("script").count(), 0, "polled output executed as markup");
       assert((await output.textContent()).includes("<script>not executable</script>"));
       assert.equal(navigations, 0, "running operation navigated page");
+      await page.getByRole("link", { name: "Close output", exact: true }).click();
+      assert.equal(await output.isVisible(), false, "Close output did not hide panel");
+      assert.equal(navigations, 0, "closing output navigated page");
+      await page.getByRole("link", { name: "Show output", exact: true }).click();
+      assert.equal(await output.isVisible(), true, "Show output did not restore panel");
+      assert.equal(await atEnd(), true, "reopened output lost auto-scroll");
+      assert.equal(navigations, 0, "reopening output navigated page");
+      await page.getByRole("link", { name: "Close output", exact: true }).click();
       await page.waitForFunction(status => document.querySelector("[data-operation-status]").textContent === status, terminal);
-      assert.equal(navigations, 1, "completion must reload full page exactly once");
+      assert.equal(navigations, 0, "completion must update inventory without page navigation");
+      assert.equal(await output.isVisible(), false, "completion reopened dismissed panel");
+      await page.waitForFunction(() => document.querySelector("[data-operation-message]").textContent.includes("inventory temporarily unavailable"));
+      assert.equal(await page.getByRole("row").filter({ has: page.getByText("standalone", { exact: true }) }).count(), 0, "standalone group should remain collapsed");
+      assert.equal(await page.locator('details.stack-group[data-project=""]').count(), 1, "inventory failure wiped existing rows");
+      await page.waitForFunction(() => document.querySelector("[data-inventory]").textContent.includes("web-updated"));
+      assert.equal(inventoryRequests, 3, "completion must perform three bounded inventory checks");
+      assert.equal(await web.evaluate(group => group.open), true, "inventory replacement lost accordion state");
+      assert.equal(await web.locator('[name="id"][value="updated-id"]').count(), 1, "update kept old container ID");
+      assert.equal(await web.getByRole("row").filter({ has: page.getByText("web-running", { exact: true }) }).locator(".badge-exited").count(), 1, "stop left stale running state");
+      assert.equal(await page.locator('details.stack-group[data-project=""]').count(), 0, "deleted container remained listed");
+      assert.equal(await page.locator('[name="id"][value="unused-volume"]').count(), 0, "deleted resource remained listed");
+      await page.getByRole("link", { name: "Show output", exact: true }).click();
       assert.equal(await atEnd(), true, "completed log not scrolled to end");
-      assert.equal(await page.evaluate(() => window.operationPageMarker), undefined, "completion did not reload inventory page");
+      assert.equal(await page.evaluate(() => window.operationPageMarker), "unchanged", "inventory refresh replaced full page");
       await output.evaluate(log => { log.scrollTop = 0; });
       await page.reload();
       await page.waitForFunction(() => {
@@ -272,7 +309,7 @@ const path = require("node:path");
         return log.scrollHeight - log.clientHeight - log.scrollTop <= 2;
       }, null, { timeout: 1000 });
       assert.deepEqual(errors, [], "operation polling caused JavaScript errors");
-      console.log(`PASS ${base}: async log/status, auto-scroll, reconnect and one completion reload (${terminal})`);
+      console.log(`PASS ${base}: async log/status/inventory, delayed Docker state, preserved accordions/output and reconnect (${terminal})`);
       await context.close();
     }
     {

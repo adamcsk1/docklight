@@ -1,18 +1,25 @@
 {{template "layout_start" .}}
 
 {{with .Job}}
-<section class="panel" aria-labelledby="operation-title" data-operation-url="{{$.Base}}/operation?host={{$.HostID}}&amp;job={{.ID}}" data-status="{{.Status}}">
+<p data-operation-reopen {{if not $.HideOutput}}hidden{{end}}><a class="button button-ghost" data-operation-toggle="show" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}">Show output</a></p>
+<section id="operation-panel" class="panel" aria-labelledby="operation-title" data-operation-url="{{$.Base}}/operation?host={{$.HostID}}&amp;job={{.ID}}" data-status="{{.Status}}" {{if $.HideOutput}}hidden{{end}}>
   <div class="operation-head">
     <h2 id="operation-title">{{.Action.Kind}} {{.Action.Operation}}</h2>
     <span class="badge badge-{{.Status}}" data-operation-status>{{.Status}}</span>
+    <a class="button button-ghost" data-operation-toggle="hide" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}&amp;output=hidden">Close output</a>
   </div>
   <p class="muted">{{.Started}} · target={{.Action.ID}}</p>
-  <p class="form-hint" role="status" data-operation-message>{{if eq .Status "running"}}{{if eq .Action.Operation "build"}}Build running; other mutations on this host are blocked. Builds may take up to two hours.{{else}}Operation running.{{end}} Output updates every three seconds; the page reloads when finished.{{else if eq .Status "updating"}}Management update running. Reconnecting automatically if the agent briefly disconnects.{{end}}</p>
+  <p class="form-hint" role="status" data-operation-message>{{if eq .Status "running"}}{{if eq .Action.Operation "build"}}Build running; other mutations on this host are blocked. Builds may take up to two hours.{{else}}Operation running.{{end}} Output updates every three seconds; inventory refreshes when finished.{{else if eq .Status "updating"}}Management update running. Reconnecting automatically if the agent briefly disconnects.{{end}}</p>
   <noscript><p class="form-hint">Reload this page to update operation status and output; automatic updates require JavaScript.</p></noscript>
   <pre class="operation-output" aria-label="Operation output">{{.Output}}</pre>
 </section>
 {{end}}
 
+{{template "inventory" .}}
+{{template "layout_end" .}}
+
+{{define "inventory"}}
+<div data-inventory data-inventory-url="{{.Base}}/inventory?host={{.HostID}}">
 <section class="resource-section" id="containers" aria-labelledby="containers-title">
   <div class="section-head"><h2 id="containers-title">Containers</h2><span class="badge">{{len .Inventory.Containers}} total</span></div>
    <p class="form-hint">Recreate preserves exact current images. Upgrade pulls registry images only. Build compiles local images, then deploys only after success. Stop containers before deletion; volumes and Compose files are preserved.</p>
@@ -92,4 +99,5 @@
 </section>
 {{end}}
 
-{{template "layout_end" .}}
+</div>
+{{end}}

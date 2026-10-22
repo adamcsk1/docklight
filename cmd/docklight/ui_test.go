@@ -290,6 +290,25 @@ func TestHostIsolationTokenSecrecyAndEscapedOutput(t *testing.T) {
 		}
 	}
 	values := url.Values{"host": {"b"}, "kind": {"container"}, "id": {"id"}, "operation": {"stop"}}
+	r = httptest.NewRequest("GET", "https://docklight.local/docklight/inventory?host=b", nil)
+	r.AddCookie(c)
+	w = httptest.NewRecorder()
+	a.routes().ServeHTTP(w, r)
+	if w.Code != 200 || callsA.Load() != 0 || callsB.Load() != 4 || !strings.Contains(w.Body.String(), `data-inventory`) || strings.Contains(w.Body.String(), `class="topbar"`) || strings.Contains(w.Body.String(), "<script>") || strings.Contains(w.Body.String(), tb) {
+		t.Fatalf("unsafe inventory fragment: %d %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `name="csrf_token" value="`+a.csrfToken(c.Value)+`"`) || !strings.Contains(w.Body.String(), `name="host" value="b"`) {
+		t.Fatal("refreshed action forms lost CSRF or selected host")
+	}
+	for _, query := range []string{"", "host=unknown"} {
+		r = httptest.NewRequest("GET", "https://docklight.local/docklight/inventory?"+query, nil)
+		r.AddCookie(c)
+		w = httptest.NewRecorder()
+		a.routes().ServeHTTP(w, r)
+		if w.Code != 400 || callsA.Load() != 0 || callsB.Load() != 4 {
+			t.Fatal("inventory fell back to wrong host")
+		}
+	}
 	w = httptest.NewRecorder()
 	a.routes().ServeHTTP(w, formRequest(a, c, "/action", values))
 	if w.Code != 303 || !strings.Contains(w.Header().Get("Location"), "host=b") {
@@ -303,6 +322,38 @@ func TestHostIsolationTokenSecrecyAndEscapedOutput(t *testing.T) {
 		if w.Code != 400 || callsB.Load() != before {
 			t.Fatal("unknown host fell back")
 		}
+	}
+}
+
+func TestDashboardReadsJobBeforeInventory(t *testing.T) {
+	a := newTestApp(t)
+	var finished atomic.Bool
+	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/jobs/test-job":
+			finished.Store(true)
+			_ = json.NewEncoder(w).Encode(management.Job{ID: "test-job", Status: "success"})
+		case "/v1/inventory":
+			state := "running"
+			if finished.Load() {
+				state = "exited"
+			}
+			_ = json.NewEncoder(w).Encode(management.Inventory{Containers: []management.Container{{Name: "stopped-container", State: state}}})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer agent.Close()
+	a.cfg.Hosts = []Host{{ID: "local", Name: "Local", URL: agent.URL, Token: strings.Repeat("t", 32), AllowHTTP: true}}
+	if err := configureHosts(a.cfg.Hosts); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("GET", "https://docklight.local/docklight/?host=local&job=test-job", nil)
+	r.AddCookie(session(t, a))
+	w := httptest.NewRecorder()
+	a.routes().ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `class="badge badge-exited"`) {
+		t.Fatalf("completed job rendered stale inventory: %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -342,6 +393,17 @@ func TestOperationProgressSurvivesHistoryRemoval(t *testing.T) {
 			}
 			if strings.Contains(body, "activity") || strings.Contains(body, "Activity") {
 				t.Fatal("activity feature still rendered")
+			}
+			if !strings.Contains(body, `data-operation-reopen hidden`) || !strings.Contains(body, `>Close output</a>`) {
+				t.Fatal("new operation must show output with close control")
+			}
+			r = httptest.NewRequest("GET", "https://docklight.local/docklight/?host=local&job=test-job&output=hidden", nil)
+			r.AddCookie(cookie)
+			w = httptest.NewRecorder()
+			a.routes().ServeHTTP(w, r)
+			body = w.Body.String()
+			if w.Code != 200 || !strings.Contains(body, `data-status="`+status+`" hidden`) || strings.Contains(body, `data-operation-reopen hidden`) || !strings.Contains(body, `>Show output</a>`) {
+				t.Fatalf("dismissed operation must remain reopenable: %s", body)
 			}
 		})
 	}
@@ -392,7 +454,7 @@ func TestTLSAndRedirectsFailClosed(t *testing.T) {
 
 func TestRoutesRequireAuthenticationAndRemovedFeaturesUnavailable(t *testing.T) {
 	a := newTestApp(t)
-	for _, path := range []string{"/docklight/", "/docklight/action", "/docklight/operation?host=local&job=test-job"} {
+	for _, path := range []string{"/docklight/", "/docklight/action", "/docklight/operation?host=local&job=test-job", "/docklight/inventory?host=local"} {
 		method := "GET"
 		if strings.HasSuffix(path, "action") {
 			method = "POST"

@@ -34,6 +34,7 @@ type PageData struct {
 	ContainerGroups                  []containerGroup
 	ResourceSections                 []resourceSection
 	Job                              *management.Job
+	HideOutput                       bool
 }
 
 func groupContainers(containers []management.Container) []containerGroup {
@@ -115,6 +116,7 @@ func (app *App) routes() http.Handler {
 	mux.Handle("POST "+app.withBase("/logout"), app.requireAuth(http.HandlerFunc(app.logout)))
 	mux.Handle("GET "+app.withBase("/{$}"), app.requireAuth(http.HandlerFunc(app.dashboard)))
 	mux.Handle("GET "+app.withBase("/operation"), app.requireAuth(http.HandlerFunc(app.operation)))
+	mux.Handle("GET "+app.withBase("/inventory"), app.requireAuth(http.HandlerFunc(app.inventory)))
 	mux.Handle("POST "+app.withBase("/action"), app.requireAuth(http.HandlerFunc(app.action)))
 	if app.cfg.BaseURL != "/" {
 		mux.HandleFunc("GET "+app.cfg.BaseURL, func(w http.ResponseWriter, r *http.Request) {
@@ -186,21 +188,9 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	d := PageData{Title: "Containers", HostID: h.ID}
+	d := PageData{Title: "Containers", HostID: h.ID, HideOutput: r.URL.Query().Get("output") == "hidden"}
 	for _, host := range app.cfg.Hosts {
 		d.Hosts = append(d.Hosts, hostView{host.ID, host.Name})
-	}
-	if err = h.request(r, "GET", "/v1/inventory", nil, &d.Inventory); err != nil {
-		d.Error = err.Error()
-	}
-	d.ContainerGroups = groupContainers(d.Inventory.Containers)
-	d.ResourceSections = []resourceSection{{Kind: "image", Title: "Images"}, {Kind: "volume", Title: "Volumes"}, {Kind: "network", Title: "Networks"}}
-	for _, resource := range d.Inventory.Resources {
-		for i := range d.ResourceSections {
-			if d.ResourceSections[i].Kind == resource.Kind {
-				d.ResourceSections[i].Items = append(d.ResourceSections[i].Items, resource)
-			}
-		}
 	}
 	if id := r.URL.Query().Get("job"); id != "" {
 		if !validID(id) {
@@ -214,7 +204,49 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			d.Job = &job
 		}
 	}
+	// Read inventory after job status so a completed job cannot describe an earlier snapshot.
+	if err = app.loadInventory(r, h, &d); err != nil {
+		d.Error = err.Error()
+	}
 	app.render(w, r, "manage.html", d)
+}
+
+func (app *App) loadInventory(r *http.Request, h *Host, d *PageData) error {
+	if err := h.request(r, "GET", "/v1/inventory", nil, &d.Inventory); err != nil {
+		return err
+	}
+	d.ContainerGroups = groupContainers(d.Inventory.Containers)
+	d.ResourceSections = []resourceSection{{Kind: "image", Title: "Images"}, {Kind: "volume", Title: "Volumes"}, {Kind: "network", Title: "Networks"}}
+	for _, resource := range d.Inventory.Resources {
+		for i := range d.ResourceSections {
+			if d.ResourceSections[i].Kind == resource.Kind {
+				d.ResourceSections[i].Items = append(d.ResourceSections[i].Items, resource)
+			}
+		}
+	}
+	return nil
+}
+
+func (app *App) inventory(w http.ResponseWriter, r *http.Request) {
+	hostID := r.URL.Query().Get("host")
+	if hostID == "" {
+		http.Error(w, "explicit host required", http.StatusBadRequest)
+		return
+	}
+	h, err := app.host(hostID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
+	defer cancel()
+	r = r.WithContext(ctx)
+	d := PageData{HostID: h.ID}
+	if err = app.loadInventory(r, h, &d); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	app.render(w, r, "inventory", d)
 }
 
 func (app *App) operation(w http.ResponseWriter, r *http.Request) {

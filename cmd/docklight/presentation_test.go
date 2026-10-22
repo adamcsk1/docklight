@@ -34,11 +34,28 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 		},
 	}
 	var successPolls, failedPolls, expiredPolls atomic.Int32
+	var completed atomic.Bool
+	var inventoryChecks atomic.Int32
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.URL.Path == "/v1/inventory":
-			_ = json.NewEncoder(w).Encode(inv)
+			snapshot := inv
+			if completed.Load() {
+				n := inventoryChecks.Add(1)
+				if n == 1 {
+					http.Error(w, "agent reconnecting", 502)
+					return
+				}
+				if n >= 3 {
+					snapshot.Containers = append([]management.Container(nil), inv.Containers[:3]...)
+					snapshot.Containers[0].State = "exited"
+					snapshot.Containers[1].Name = "web-updated"
+					snapshot.Containers[1].ID = "updated-id"
+					snapshot.Resources = append([]management.Resource(nil), inv.Resources[:3]...)
+				}
+			}
+			_ = json.NewEncoder(w).Encode(snapshot)
 		case r.URL.Path == "/v1/jobs" && r.Method == "POST":
 			var action management.Action
 			if err := json.NewDecoder(r.Body).Decode(&action); err != nil {
@@ -65,6 +82,10 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 				counter = &expiredPolls
 			}
 			n := counter.Add(1)
+			if n == 1 {
+				completed.Store(false)
+				inventoryChecks.Store(0)
+			}
 			if n == 4 {
 				http.Error(w, "agent temporarily restarting", 502)
 				return
@@ -75,6 +96,7 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 			}
 			if n >= 6 {
 				status = terminal
+				completed.Store(true)
 			}
 			tail := status + " output"
 			if n == 1 {

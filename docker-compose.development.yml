@@ -27,6 +27,7 @@ services:
     environment:
       AGENT_TOKEN: ${AGENT_TOKEN:?required}
       STACKS_ROOT: ${COMPOSE_ROOT:?required}
+      BUILDX_CONFIG: /data/buildx
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${COMPOSE_ROOT:?required}:${COMPOSE_ROOT:?required}:ro

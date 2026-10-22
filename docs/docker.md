@@ -51,6 +51,7 @@ services:
     environment:
       AGENT_TOKEN: ${AGENT_TOKEN:?required}
       STACKS_ROOT: /srv/compose
+      BUILDX_CONFIG: /data/buildx # Writable Buildx state, separate from registry credentials.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /srv/compose:/srv/compose:ro
@@ -103,17 +104,19 @@ Keep the Docklight deployment and its `.env` within the agent's mounted root. Ru
 
 For private registries, mount a dedicated Docker CLI configuration into the agent at `/root/.docker:ro`. Helpers inherit this mount. Authenticate that configuration beforehand with `docker --config <directory> login <registry>`. Desktop credential-helper configurations will not work unless the helper exists inside the agent image. Do not mount unrelated host credentials.
 
+Keep `BUILDX_CONFIG: /data/buildx` in both local and remote agent environments. Buildx writes builder state and activity timestamps, so its directory must be writable even when `/root/.docker` is mounted read-only for registry credentials. The existing agent `/data` mount provides persistent writable storage; do not make the credentials mount writable. After changing the environment, recreate the agent with `docker compose up -d docklight-agent` before retrying Build.
+
 After an update finishes, the agent saves its helper logs in the job result, then removes the exited helper so old images can become unused. If cleanup fails or no client reconnects to collect the result, inspect the helper manually (`docker logs docklight-update-...`, then `docker rm docklight-update-...` after it exits). Helpers have `io.docklight.role=updater` and are protected from ordinary Docklight deletion. Cleanup verifies ownership labels and never force-removes a helper.
 
 ## Storage and recovery
 
 - UI `/data`: `sessions.db` for signed login sessions, host configuration and optional CA certificates.
-- Agent `/data`: persisted jobs/results (latest 100 completed operations), temporary image overrides.
+- Agent `/data`: persisted jobs/results (latest 100 completed operations), temporary image overrides and Buildx state when `BUILDX_CONFIG=/data/buildx`.
 - Original Compose files and application volumes are never edited/deleted by Docklight.
 
 There is no Activity menu or operation-history list. After submitting an action, its result page shows progress, output and errors. Keep that URL to revisit the result. Agents retain bounded job records for result retrieval, restart recovery and management-update safety; removing the history UI does not remove these safeguards or delete existing records. Login failures and submitted-operation receipts are written to UI container logs.
 
-With JavaScript enabled, running operations refresh only their status and output every three seconds. The output box starts at the end and scrolls to new output automatically. Temporary agent disconnects are retried without reloading or resubmitting the operation. The full page reloads once on success or failure to refresh the container/resource inventory. Without JavaScript, reload manually to see progress.
+With JavaScript enabled, running operations refresh their status and output every three seconds. The output box starts at the end and scrolls to new output automatically. Temporary agent disconnects are retried without reloading or resubmitting the operation. On success or failure, container/resource lists refresh in place, with three checks spaced three seconds apart to catch delayed Docker state changes. Failed inventory requests keep the existing lists visible and show a retry/error message in the output panel. Accordion choices and hidden-output state are preserved. Without JavaScript, reload manually to see progress or current inventory.
 
 The history-list API (`GET /v1/jobs`) has also been removed. Update the UI and agents together: older UIs still request that endpoint. Submitting operations (`POST /v1/jobs`) and retrieving a specific result (`GET /v1/jobs/{id}`) remain supported.
 
