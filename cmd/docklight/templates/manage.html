@@ -18,7 +18,7 @@
   <p class="form-hint">Recreate preserves exact current images without pulling or building. Upgrade pulls first. Stop containers before deletion; volumes and Compose files are preserved.</p>
   {{if .Inventory.Containers}}
   {{range .ContainerGroups}}
-  <details class="stack-group" open aria-label="{{if .Project}}Compose stack {{.Project}}{{else}}Standalone containers{{end}}">
+  <details class="stack-group" data-base="{{$.Base}}" data-host="{{$.HostID}}" data-project="{{.Project}}" aria-label="{{if .Project}}Compose stack {{.Project}}{{else}}Standalone containers{{end}}">
     <summary class="stack-summary"><span class="stack-heading"><span class="stack-name">{{if .Project}}{{.Project}}{{else}}Standalone containers{{end}}</span><span class="badge {{if eq .Running (len .Containers)}}badge-running{{else if .Running}}badge-partial{{else}}badge-stopped{{end}}">{{.Running}} / {{len .Containers}} running</span></span></summary>
   <div class="resource-table" role="table" aria-label="{{if .Project}}Containers in {{.Project}}{{else}}Standalone containers{{end}}">
     <div class="resource-row resource-head resource-row-containers" role="row">

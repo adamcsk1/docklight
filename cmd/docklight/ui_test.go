@@ -109,18 +109,78 @@ func TestPasswordOnlyFormAndRejectedPasswords(t *testing.T) {
 	}
 }
 
-func TestCSPAllowsOnlySameOriginStylesAndImages(t *testing.T) {
+func TestAuthenticatedLoginPageRedirects(t *testing.T) {
+	for _, base := range []string{"/", "/docklight"} {
+		t.Run(base, func(t *testing.T) {
+			a := newTestApp(t)
+			a.cfg.BaseURL = base
+			cookie := session(t, a)
+			r := httptest.NewRequest("GET", "https://docklight.local"+a.withBase("/login"), nil)
+			r.AddCookie(cookie)
+			w := httptest.NewRecorder()
+			a.routes().ServeHTTP(w, r)
+			if w.Code != http.StatusFound || w.Header().Get("Location") != a.withBase("/") {
+				t.Fatalf("authenticated user shown login page: HTTP %d, location %q", w.Code, w.Header().Get("Location"))
+			}
+			if !a.validSession(cookie.Value) {
+				t.Fatal("opening login page invalidated session")
+			}
+			if len(w.Result().Cookies()) != 0 {
+				t.Fatal("opening login page changed the existing session cookie")
+			}
+		})
+	}
+}
+
+func TestLoginPageDoesNotRedirectInvalidSessions(t *testing.T) {
+	for _, state := range []string{"missing", "tampered", "expired", "revoked", "storage-error"} {
+		t.Run(state, func(t *testing.T) {
+			a := newTestApp(t)
+			cookie := session(t, a)
+			switch state {
+			case "tampered":
+				cookie.Value += "tampered"
+			case "expired":
+				if _, err := a.db.Exec(`UPDATE sessions SET expires_at=?`, time.Now().Add(-time.Hour).Format(time.RFC3339)); err != nil {
+					t.Fatal(err)
+				}
+			case "revoked":
+				if _, err := a.db.Exec(`DELETE FROM sessions`); err != nil {
+					t.Fatal(err)
+				}
+			case "storage-error":
+				if _, err := a.db.Exec(`DROP TABLE sessions`); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r := httptest.NewRequest("GET", "https://docklight.local/docklight/login", nil)
+			if state != "missing" {
+				r.AddCookie(cookie)
+			}
+			w := httptest.NewRecorder()
+			a.routes().ServeHTTP(w, r)
+			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `name="password"`) || w.Header().Get("Location") != "" {
+				t.Fatalf("invalid session bypassed login: %d %s", w.Code, w.Body.String())
+			}
+			if len(w.Result().Cookies()) != 0 {
+				t.Fatal("invalid session was refreshed")
+			}
+		})
+	}
+}
+
+func TestCSPAllowsOnlySameOriginAssets(t *testing.T) {
 	a := newTestApp(t)
 	for _, base := range []string{"/", "/docklight"} {
 		a.cfg.BaseURL = base
-		for _, path := range []string{"/login", "/static/app.css", "/static/logo.ico"} {
+		for _, path := range []string{"/login", "/static/app.css", "/static/app.js", "/static/logo.ico"} {
 			w := httptest.NewRecorder()
 			a.routes().ServeHTTP(w, httptest.NewRequest("GET", "https://docklight.local"+a.withBase(path), nil))
 			if w.Code != http.StatusOK {
 				t.Fatalf("%s: HTTP %d", path, w.Code)
 			}
 			policy := w.Header().Get("Content-Security-Policy")
-			want := "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+			want := "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 			if policy != want {
 				t.Fatalf("unexpected CSP: %q", policy)
 			}

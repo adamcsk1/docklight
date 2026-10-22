@@ -5,7 +5,7 @@ Small, single-admin Docker manager for a home lab. One password-protected web UI
 ## Scope
 
 - Start, stop and delete containers, individually or by Compose service/stack.
-- Show containers in collapsible Compose-stack groups with running/total counts, with standalone containers listed separately.
+- Show containers in Compose-stack groups with running/total counts and a separate standalone group. Groups start collapsed; browser-local storage remembers each host/stack's expanded or collapsed state across reloads.
 - Recreate Compose services using the **exact image IDs currently in use**, without pulling or building.
 - Upgrade Compose services with `docker compose pull` followed by `docker compose up -d`. A failed pull prevents the up step.
 - Delete selected unused images, volumes and networks. Referenced resources remain read-only, including references from stopped containers.

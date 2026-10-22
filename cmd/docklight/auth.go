@@ -17,6 +17,10 @@ import (
 )
 
 func (app *App) loginPage(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie("docklight_session"); err == nil && app.validSession(cookie.Value) {
+		http.Redirect(w, r, app.withBase("/"), http.StatusFound)
+		return
+	}
 	app.render(w, r, "login.html", PageData{Title: "Login"})
 }
 

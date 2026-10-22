@@ -89,7 +89,7 @@ func TestRestoredPresentationAndEmbeddedAssets(t *testing.T) {
 				t.Fatalf("missing/duplicate section %s", id)
 			}
 		}
-		for _, forbidden := range []string{`style=`, `<style`, `<script`, `htmx`, `name="username"`, `/exec`, `/stacks/new`, `UI activity`, `legacy history`, `history-panel`} {
+		for _, forbidden := range []string{`style=`, `<style`, `<script>`, `htmx`, `name="username"`, `/exec`, `/stacks/new`, `UI activity`, `legacy history`, `history-panel`} {
 			if strings.Contains(body, forbidden) {
 				t.Fatalf("obsolete/inline content: %s", forbidden)
 			}
@@ -99,10 +99,16 @@ func TestRestoredPresentationAndEmbeddedAssets(t *testing.T) {
 				t.Fatalf("missing stack grouping: %s", label)
 			}
 		}
-		if strings.Count(body, `class="stack-group" open`) != 3 {
-			t.Fatal("stack groups must all start expanded")
+		if strings.Contains(body, `class="stack-group" open`) || strings.Count(body, `class="stack-group"`) != 3 {
+			t.Fatal("stack groups must all start collapsed")
 		}
-		for path, contentType := range map[string]string{"/static/app.css": "text/css", "/static/logo.ico": "image/"} {
+		if strings.Count(body, "<script") != 1 || !strings.Contains(body, `<script src="`+a.withBase("/static/app.js")+`" defer></script>`) {
+			t.Fatal("dashboard must load only the external accordion script")
+		}
+		if !strings.Contains(body, `data-host="pi" data-project="web"`) {
+			t.Fatal("missing host/stack storage scope")
+		}
+		for path, contentType := range map[string]string{"/static/app.css": "text/css", "/static/app.js": "text/javascript", "/static/logo.ico": "image/"} {
 			asset := httptest.NewRecorder()
 			a.routes().ServeHTTP(asset, httptest.NewRequest("GET", "https://docklight.local"+a.withBase(path), nil))
 			if asset.Code != 200 || !strings.HasPrefix(asset.Header().Get("Content-Type"), contentType) {

@@ -15,7 +15,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-//go:embed templates/*.html static/app.css static/logo.ico
+//go:embed templates/*.html static/app.css static/app.js static/logo.ico
 var webFS embed.FS
 
 type App struct {

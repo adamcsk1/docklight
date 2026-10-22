@@ -101,7 +101,7 @@ func (app *App) render(w http.ResponseWriter, r *http.Request, name string, data
 
 func (app *App) routes() http.Handler {
 	mux := http.NewServeMux()
-	for _, asset := range []string{"app.css", "logo.ico"} {
+	for _, asset := range []string{"app.css", "app.js", "logo.ico"} {
 		mux.HandleFunc("GET "+app.withBase("/static/"+asset), func(w http.ResponseWriter, r *http.Request) {
 			http.ServeFileFS(w, r, webFS, "static/"+asset)
 		})
@@ -130,7 +130,7 @@ func (app *App) routes() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		r.Body = http.MaxBytesReader(w, r.Body, 8192)
 		mux.ServeHTTP(w, r)
 	})

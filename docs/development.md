@@ -19,9 +19,13 @@ Use a fully patched supported Go toolchain for local builds. The Dockerfile and 
 
 ## Browser presentation checks
 
-The UI retains Docklight's original dark monospace palette, resource grids, buttons and badges. Containers are grouped by Compose project in native collapsible sections, expanded by default, with running/total counts and a separate standalone group. Groups and containers are sorted by name. It uses no JavaScript or inline styles. Navigation remains visible on mobile and scrolls horizontally when needed. The Content Security Policy permits only same-origin CSS and images; it does not allow inline styles or scripts.
+The UI retains Docklight's original dark monospace palette, resource grids, buttons and badges. Containers are grouped by Compose project in native collapsible sections, collapsed by default, with running/total counts and a separate standalone group. Groups and containers are sorted by name. A small external script remembers accordion state in local storage, scoped by base URL, host and stack. If JavaScript or browser storage is disabled, the native controls still work without persistence. Navigation remains visible on mobile and scrolls horizontally when needed. The Content Security Policy permits same-origin scripts, CSS and images, but no inline code/styles or evaluation.
 
 CI uses Playwright as an isolated test tool, not an application dependency. The browser test starts a temporary UI with a fake agent; it never calls Docker. It checks login, stack grouping/counts and keyboard collapse, host selection, protected/read-only actions, confirmation, operation output escaping and logout at 1440, 900, 390 and 320 pixel widths, both at `/` and `/docklight`, with JavaScript disabled. It also checks overflow, original design colors, section navigation and browser/CSP errors. Go tests cover the session-only database schema, persisted sessions and refusal to modify incompatible databases.
+
+Additional JavaScript-enabled checks verify collapsed defaults, open/closed state restoration, host/stack isolation, standalone state and resize/reload persistence. Malformed stored values are ignored, and disabled local storage must not cause browser errors or disable native accordions. Only presentation preferences go into local storage; authentication remains in the HttpOnly session cookie and server-side session database.
+
+Session regression checks also resize and reload the same authenticated browser context, switch mobile device metrics and user agent, then restore desktop mode. The session cookie must remain unchanged. Opening `/login` with a valid session must redirect to the dashboard rather than show a login form; expired, tampered, revoked or unavailable sessions must still require authentication.
 
 To run locally on Linux:
 
