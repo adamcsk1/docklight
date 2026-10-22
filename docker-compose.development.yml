@@ -1,31 +1,38 @@
+# Create ./data/hosts.yml as shown in docs/docker.md before starting.
+# Set COMPOSE_ROOT to your Linux/WSL-side absolute Compose root.
 services:
   docklight:
-    build: .
-    container_name: docklight
-    mem_limit: 256m
+    build:
+      context: .
+      target: ui
+    image: docklight:dev
+    labels:
+      io.docklight.role: ui
     ports:
-      - "7070:8080"
+      - "127.0.0.1:7070:8080"
     environment:
-      BASE_URL: /
-      ADMIN_USER: admin
-      ADMIN_PASSWORD: change-this-password
-      SESSION_SECRET: replace-with-a-long-random-secret
-      DOCKER_CONFIG: /root/.docker
-      # Set this to the host path mounted at /stacks when they differ.
-      # This keeps relative bind mounts like ./data pointed at the host stack folder.
-      # STACKS_HOST_ROOT: /absolute/host/path/to/stacks
-      # Optional Linux-only uid:gid for files Docklight creates under /stacks.
-      # STACKS_FILE_OWNER: "1000:1000"
-      # Optional Linux-only uid:gid for Docklight-created files under /data.
-      # DATA_FILE_OWNER: "1000:1000"
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
+      SESSION_SECRET: ${SESSION_SECRET:?required}
     volumes:
-      # Docker socket access is powerful even if the bind is marked read-only.
-      - /var/run/docker.sock:/var/run/docker.sock
-      # Docklight writes stack compose files, managed files, settings, and database state.
-      - ./stacks:/stacks
       - ./data:/data
-      - ./docker-config:/root/.docker
-      # Optional: required for Config > Maintenance > Update Docklight.
-      # Mount this compose project at the same absolute path used on the host.
-      # - /absolute/host/path/to/docklight:/absolute/host/path/to/docklight:ro
-    restart: unless-stopped
+      - ./data/hosts.yml:/data/hosts.yml:ro
+    networks: [management]
+  docklight-agent:
+    build:
+      context: .
+      target: agent
+    image: docklight-agent:dev
+    labels:
+      io.docklight.role: agent
+    environment:
+      AGENT_TOKEN: ${AGENT_TOKEN:?required}
+      STACKS_ROOT: ${COMPOSE_ROOT:?required}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${COMPOSE_ROOT:?required}:${COMPOSE_ROOT:?required}:ro
+      - ./agent-data:/data
+    networks: [management, outbound]
+networks:
+  management:
+    internal: true
+  outbound: {}

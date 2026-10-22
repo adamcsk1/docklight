@@ -1,6 +1,14 @@
 .git
 .opencode
 data
+agent-data
+docker-config
+*.bak
+hosts.yml
+**/hosts.yml
+**/.env
+**/*.key
+**/*.pem
 node_modules
 cmd/docklight/static/htmx.min.js
 *.db
@@ -8,6 +16,8 @@ cmd/docklight/static/htmx.min.js
 *.db-wal
 /docklight
 /docklight.exe
+/docklight-agent
+/docklight-agent.exe
 /cmd/docklight/docklight
 /cmd/docklight/docklight.exe
 /stacks/

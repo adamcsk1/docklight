@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{{if .Refresh}}<meta http-equiv="refresh" content="3">{{end}}<title>Docklight</title><link rel="stylesheet" href="{{.Base}}/static/manage.css"></head>
+<body><main><header><h1>Docklight</h1><form method="post" action="{{.Base}}/logout"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button>Sign out</button></form></header>
+<nav aria-label="Docker hosts">{{range .Hosts}}<a href="{{$.Base}}/?host={{.ID}}" {{if eq $.HostID .ID}}aria-current="page"{{end}}>{{.Name}}</a>{{end}}</nav>
+{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
+{{with .Job}}<section><h2>Operation: {{.Action.Operation}} — {{.Status}}</h2><p>{{.Started}}</p><pre>{{.Output}}</pre>{{if eq .Status "updating"}}<p>Management update running. Agent may briefly disconnect. Refresh to reconnect.</p>{{end}}</section>{{end}}
+<h2>Containers</h2><p>Start/stop/delete work for all containers. Recreate and upgrade require accessible Compose files. Recreate preserves exact current images; upgrade pulls first. Stop before deleting. Data volumes are never removed with containers.</p>
+<div class="table"><table><thead><tr><th>Stack / container</th><th>Image</th><th>State</th><th>Actions</th></tr></thead><tbody>
+{{range .Inventory.Containers}}<tr><td>{{if .Project}}<strong>{{.Project}}</strong><br>{{end}}{{.Name}}{{if .Service}}<small>{{.Service}}</small>{{end}}</td><td>{{.Image}}</td><td>{{.State}}{{if .Protected}}<small>Protected management container</small>{{end}}</td><td>
+<form method="post" action="{{$.Base}}/action"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="kind" value="container">
+{{if .Protected}}{{if .ComposeAvailable}}<label><input type="checkbox" name="confirmed" value="yes" required> Confirm management update</label><button name="operation" value="update">Update</button>{{else}}Update unavailable: Compose files not mounted{{end}}
+{{else}}
+{{if .ComposeAvailable}}<label>Target <select name="scope"><option value="service">Compose service (all replicas)</option><option value="stack">Whole stack</option><option value="">This container (start/stop/delete only)</option></select></label>{{end}}
+<div class="buttons"><button name="operation" value="start">Start</button><button name="operation" value="stop">Stop</button>{{if .ComposeAvailable}}<button name="operation" value="recreate">Recreate</button><button name="operation" value="upgrade">Upgrade</button>{{end}}</div>
+<label><input type="checkbox" name="confirmed" value="yes"> Confirm deletion</label><button class="danger" name="operation" value="delete">Delete stopped</button>
+{{end}}</form></td></tr>{{else}}<tr><td colspan="4">No containers found.</td></tr>{{end}}
+</tbody></table></div>
+<h2>Images, volumes and networks</h2><p>Referenced resources are read-only, including references from stopped containers. Deleting unused volumes permanently destroys their data.</p>
+<div class="table"><table><thead><tr><th>Kind</th><th>Name</th><th>Usage</th><th>Action</th></tr></thead><tbody>
+{{range .Inventory.Resources}}<tr><td>{{.Kind}}</td><td>{{.Name}}</td><td>{{range .UsedBy}}{{.}}<br>{{else}}Unused{{end}}</td><td>{{if or .UsedBy .Protected}}Read-only{{else}}<form method="post" action="{{$.Base}}/action"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="kind" value="{{.Kind}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="operation" value="delete"><label><input type="checkbox" name="confirmed" value="yes" required> Permanently delete</label><button class="danger">Delete</button></form>{{end}}</td></tr>{{end}}
+</tbody></table></div>
+<h2>Host operations</h2><ul>{{range .Jobs}}<li><a href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}">{{.Started}} · {{.Action.Kind}} {{.Action.Operation}} · {{.Status}}</a></li>{{else}}<li>No operations yet.</li>{{end}}</ul>
+<details><summary>UI activity and retained legacy history</summary>{{range .History}}<p>{{.Created}} · {{.Host}} · {{.Action}} · {{.Status}}</p><pre>{{.Output}}</pre>{{end}}</details>
+</main></body></html>

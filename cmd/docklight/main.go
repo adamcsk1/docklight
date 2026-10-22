@@ -2,71 +2,61 @@ package main
 
 import (
 	"database/sql"
+	"embed"
 	"errors"
-	"log/slog"
+	"html/template"
+	"log"
 	"net/http"
 	"os"
+	"path/filepath"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
 )
 
+//go:embed templates/login.html templates/manage.html static/manage.css
+var webFS embed.FS
+
+type App struct {
+	cfg       Config
+	db        *sql.DB
+	templates *template.Template
+	loginMu   sync.Mutex
+	logins    map[string]loginAttempt
+}
+type loginAttempt struct {
+	Count     int
+	FirstSeen int64
+}
+
 func main() {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	cfg, err := loadConfig()
 	if err != nil {
-		logger.Error("configuration error", "error", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
-
-	if err := ensureDataStorage(cfg); err != nil {
-		logger.Error("failed to create data directory", "error", err)
-		os.Exit(1)
+	if err = os.MkdirAll(filepath.Dir(cfg.DBPath), 0700); err != nil {
+		log.Fatal(err)
 	}
-
 	db, err := sql.Open("sqlite", cfg.DBPath)
 	if err != nil {
-		logger.Error("failed to open database", "error", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
-	db.SetMaxOpenConns(1)
 	defer db.Close()
-
-	app := &App{cfg: cfg, db: db, logger: logger}
-	if err := app.initDB(); err != nil {
-		logger.Error("failed to initialize database", "error", err)
-		os.Exit(1)
+	db.SetMaxOpenConns(1)
+	app := &App{cfg: cfg, db: db}
+	if err = app.initDB(); err != nil {
+		log.Fatal(err)
 	}
-	if err := app.chownDataFiles(); err != nil {
-		logger.Error("failed to set data file ownership", "error", err)
-		os.Exit(1)
+	if err = os.Chmod(cfg.DBPath, 0600); err != nil {
+		log.Fatal(err)
 	}
-	if err := app.purgeExpiredActivity(); err != nil {
-		logger.Warn("startup activity purge failed", "error", err)
+	if err = app.loadTemplates(); err != nil {
+		log.Fatal(err)
 	}
-	if err := app.purgeExpiredVerboseLogs(); err != nil {
-		logger.Warn("startup verbose log purge failed", "error", err)
-	}
-	if err := app.loadTemplates(); err != nil {
-		logger.Error("failed to load templates", "error", err)
-		os.Exit(1)
-	}
-	if err := app.rescanStacks(); err != nil {
-		logger.Warn("startup rescan failed", "error", err)
-	}
-
-	server := &http.Server{
-		Addr:              cfg.Addr,
-		Handler:           app.routes(),
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      cfg.ActionTimeout + 30*time.Second,
-		IdleTimeout:       2 * time.Minute,
-	}
-
-	logger.Info("docklight listening", "addr", cfg.Addr, "base_url", cfg.BaseURL, "stacks_root", cfg.StacksRoot)
-	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Error("server failed", "error", err)
-		os.Exit(1)
+	server := &http.Server{Addr: cfg.Addr, Handler: app.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: time.Minute, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10}
+	log.Printf("Docklight listening on %s%s", cfg.Addr, cfg.BaseURL)
+	if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
 	}
 }

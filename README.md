@@ -1,112 +1,37 @@
 # Docklight
 
-Docklight is a small Docker Compose stack monitor and manager. It runs in one container, uses the Docker socket, scans a mounted compose root, and stores only stable preferences in SQLite.
+Small, single-admin Docker manager for a home lab. One password-protected web UI connects to a management agent on each Docker host, including the local machine.
 
-## Purpose
+## Scope
 
-Docklight is built for a family NAS or home lab where services are managed as simple Docker Compose stacks. It is intentionally not a full Docker management platform like Portainer and does not try to cover every Docker feature or every deployment style.
+- Start, stop and delete containers, individually or by Compose service/stack.
+- Recreate Compose services using the **exact image IDs currently in use**, without pulling or building.
+- Upgrade Compose services with `docker compose pull` followed by `docker compose up -d`. A failed pull prevents the up step.
+- Delete selected unused images, volumes and networks. Referenced resources remain read-only, including references from stopped containers.
+- Update Docklight and its agents through detached helpers.
+- Inspect operation progress and retained results.
 
-The goal is to keep common stack-based workflows straightforward: see what is running, start and stop stacks, pull updates, recreate containers when needed, and keep a small activity trail. If you need broad Docker administration, cluster management, complex role-based access, or deep container editing, Docklight is probably not the right tool.
+Standalone containers support start, stop and delete only. Docklight does not edit Compose files, create stacks, provide a terminal, or monitor CPU/memory.
 
-## Features
+## Deployment
 
-- Scan compose folders under `STACKS_ROOT` on startup and on demand.
-- Detect `docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, and `compose.yaml`.
-- Show live Docker Compose container state.
-- Start, stop, restart, rebuild, upgrade, and down compose stacks.
-- Store stack preferences, sessions, and activity logs in SQLite.
-- Create and edit stack-local managed folders, files, and stack safety options tracked in `.docklight.config.yml`.
-- Configurable activity retention, with a 30 day default.
-- Optional verbose troubleshooting logs in the data folder.
-- One admin user from environment variables.
-- Configurable base URL, including `/docklight` behind a reverse proxy.
-- Plain dark responsive UI with server-rendered HTML and small vanilla JavaScript.
-- Linux and Windows Docker Desktop compatible when paths are mounted into the container.
+Published images:
+
+```text
+ghcr.io/adamcsk1/docklight
+ghcr.io/adamcsk1/docklight-agent
+```
+
+Both images target `linux/amd64`, `linux/arm64` and `linux/arm/v7`. Raspberry Pi Zero 2 W, Pi 4 and Pi 5 are supported architectures; **64-bit Raspberry Pi OS is recommended**. The original Pi Zero/Zero W (ARMv6) is not supported. A Zero 2 W has only 512 MB RAM: prefer running just the agent there, with the UI on another machine. Architecture builds and emulated smoke tests do not replace testing on physical hardware.
+
+See [deployment instructions](docs/docker.md) for a complete example, TLS, remote hosts, updates and migration. See [development](docs/development.md) for tests and publishing.
 
 ## Security
 
-Mounting `/var/run/docker.sock` gives Docklight powerful control over the Docker host. Do not expose it publicly without a trusted reverse proxy and HTTPS.
+The UI requires only an admin password (`ADMIN_PASSWORD`) to sign in, plus `SESSION_SECRET` (at least 32 characters) for session protection. It retains signed, expiring sessions, CSRF protection and login throttling. Put the UI behind HTTPS; do not expose either component directly to the public internet.
 
-The app refuses to start unless these are set:
+Every agent requires its own random `AGENT_TOKEN` of at least 32 characters. Treat it as a host administrator credential: access to the Docker socket is effectively root access. Tokens stay in the UI's server-side host configuration, never in browser requests or URLs.
 
-- `ADMIN_USER`
-- `ADMIN_PASSWORD`
-- `SESSION_SECRET`
+Remote agent connections require verified HTTPS unless explicitly configured for an isolated local network or encrypted VPN. TLS verification cannot be disabled. An isolated local Docker network can use HTTP without publishing the agent port. A token over unencrypted public/LAN HTTP is not secure.
 
-## Quick Start
-
-Create a compose file like this:
-
-```yaml
-services:
-  docklight:
-    image: ghcr.io/adamcsk1/docklight:latest
-    container_name: docklight
-    ports:
-      - "7070:8080"
-    environment:
-      BASE_URL: /
-      ADMIN_USER: admin
-      ADMIN_PASSWORD: change-this-password
-      SESSION_SECRET: replace-with-a-long-random-secret
-      STACKS_ROOT: /stacks
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - ./stacks:/stacks
-      - ./data:/data
-    restart: unless-stopped
-```
-
-Open `http://localhost:7070/`.
-
-For deployment options, image tags, Windows paths, private registries, reverse proxies, and self-update setup, see [Docker Deployment](docs/docker.md).
-
-## Environment
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `ADDR` | `:8080` | Listen address inside the container. |
-| `BASE_URL` | `/` | URL prefix. Use `/docklight` behind a path-based reverse proxy. |
-| `ADMIN_USER` | required | Single admin username. |
-| `ADMIN_PASSWORD` | required | Single admin password. |
-| `SESSION_SECRET` | required | Long random secret for sessions. |
-| `STACKS_ROOT` | `/stacks` | Mounted compose root inside the Docklight container. |
-| `STACKS_HOST_ROOT` | `STACKS_ROOT` | Docker-daemon-visible host path for the same stack root. Set this when stack compose files use relative bind mounts and `/stacks` is not the same path on the Docker host. |
-| `STACKS_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to stack files Docklight creates, such as `.docklight.config.yml`, compose files, managed files, and managed folders. Use this to keep host bind-mounted stack files editable by your host user while Docklight still runs as root for Docker socket access. |
-| `DATA_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to Docklight-created data artifacts, including the data directory, `config.yml`, SQLite database files, and verbose logs. It does not recursively change all files under `/data` or manage Docker config ownership. |
-| `DB_PATH` | `/data/docklight.db` | SQLite database path. |
-| `COOKIE_SECURE` | `false` | Set to `true` when serving only through HTTPS. |
-
-See [Docker Deployment](docs/docker.md) for Linux and Windows volume examples, `STACKS_HOST_ROOT`, reverse proxy paths, private registry credentials, and self-update requirements.
-
-## Stored Data
-
-SQLite stores durable database data only:
-
-- discovered stack relative path
-- compose filename
-- sessions
-- activity log
-
-Docklight stores app settings, including activity retention and verbose logging state, in `/data/config.yml`.
-
-Activity retention defaults to 30 days and can be changed on the Config page. The Activity page can download all retained activity as CSV.
-
-Verbose logging is off by default. When enabled on the Config page, Docklight writes timestamped troubleshooting logs under `/data/logs`.
-
-When Docklight creates or edits extra stack-local folders, files, or stack safety checkboxes, it stores those stack-specific settings in `.docklight.config.yml` inside that stack folder. Only files listed there are editable in Docklight; manual files in old or hand-created stacks are left untouched unless added through the stack edit UI.
-
-On Linux bind mounts, set `STACKS_FILE_OWNER` to your host user's numeric `uid:gid` if Docklight-created stack files should remain editable from the host without root, for example `STACKS_FILE_OWNER: "1000:1000"`.
-
-Set `DATA_FILE_OWNER` the same way if Docklight-created files under `/data`, such as `config.yml`, `docklight.db`, and verbose logs, should be host-editable without root. Docklight does not recursively chown `/data` or manage Docker CLI credential mounts; set ownership for Docker CLI credentials on the host if you use that optional mount.
-
-It does not store container IDs or live Docker state. If the user changes containers with the Docker CLI, Docklight reads the live state again.
-
-## More Documentation
-
-- [Docker Deployment](docs/docker.md) covers image tags, path mapping, private registries, reverse proxies, stored data, and upgrade behavior.
-- [Development](docs/development.md) covers maintainer tasks, CI publishing, generated frontend dependencies, and Go dependency updates.
-
-## Current Limitations
-
-- Stack `Down` runs `docker compose down` only. Stack deletion removes compose-created volumes after explicit confirmation; standalone unused volume deletion is available from the Volumes page.
+Deletion is deliberate: stop containers first, then explicitly confirm deletion. Container removal does not delete volumes or Compose files. Deleting an unused volume permanently destroys its data; Docker considers a volume unused even if a stopped/deleted application may need it later.

@@ -2,217 +2,74 @@ package main
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
 func (app *App) initDB() error {
-	_, err := app.db.Exec(`PRAGMA foreign_keys = ON;`)
-	if err != nil {
+	var version int
+	if err := app.db.QueryRow(`PRAGMA user_version`).Scan(&version); err != nil {
 		return err
 	}
-	return app.migrateDB()
-}
-
-func (app *App) migrateDB() error {
-	_, err := app.db.Exec(`
-CREATE TABLE IF NOT EXISTS stacks (
-  name TEXT PRIMARY KEY,
-  relative_path TEXT NOT NULL,
-  compose_file TEXT NOT NULL,
-  ignored INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS activity_log (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  stack_name TEXT NOT NULL,
-  action TEXT NOT NULL,
-  status TEXT NOT NULL,
-  output TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-`)
-	if err != nil {
-		return err
-	}
-	if err := app.ensureSessionSchema(); err != nil {
-		return err
-	}
-	if err := app.ensureDefaultSettings(); err != nil {
-		return err
-	}
-	if err := app.failStaleRunningActivities(); err != nil {
-		return err
-	}
-	for _, stmt := range []string{
-		`ALTER TABLE stacks ADD COLUMN ignored INTEGER NOT NULL DEFAULT 0`,
-	} {
-		if _, err := app.db.Exec(stmt); err != nil && !strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
-			return err
-		}
-	}
-	if err := app.migrateDBStackSettingsToConfig(); err != nil {
-		return err
-	}
-	if err := app.cleanupStackSchema(); err != nil {
-		return err
-	}
-	_, err = app.db.Exec(`PRAGMA user_version = 1`)
-	return err
-}
-
-func (app *App) failStaleRunningActivities() error {
-	_, err := app.db.Exec(`UPDATE activity_log SET status = 'failed', output = output || char(10) || 'Docklight restarted before this operation completed.' WHERE status = 'running'`)
-	return err
-}
-
-func (app *App) cleanupStackSchema() error {
-	if _, err := app.db.Exec(`DROP TABLE IF EXISTS image_updates`); err != nil {
-		return err
-	}
-	needsRebuild := false
-	for _, column := range []string{"auto_update_enabled", "update_status", "update_checked_at", "update_fingerprint", "external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed", "privileged_allowed"} {
-		exists, err := app.tableHasColumn("stacks", column)
-		if err != nil {
-			return err
-		}
-		needsRebuild = needsRebuild || exists
-	}
-	if !needsRebuild {
-		return nil
-	}
-	tx, err := app.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec(`
-CREATE TABLE stacks_new (
-  name TEXT PRIMARY KEY,
-  relative_path TEXT NOT NULL,
-  compose_file TEXT NOT NULL,
-  ignored INTEGER NOT NULL DEFAULT 0,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-INSERT INTO stacks_new (name, relative_path, compose_file, ignored, created_at, updated_at)
-SELECT name, relative_path, compose_file, ignored, created_at, updated_at FROM stacks;
-DROP TABLE stacks;
-ALTER TABLE stacks_new RENAME TO stacks;
-`); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func (app *App) migrateDBStackSettingsToConfig() error {
-	settingColumns := []string{"external_bind_mounts_allowed", "docker_socket_mounts_allowed", "host_pid_allowed", "privileged_allowed"}
-	selectColumns := make([]string, 0, len(settingColumns))
-	whereColumns := make([]string, 0, len(settingColumns))
-	for _, column := range settingColumns {
-		exists, err := app.tableHasColumn("stacks", column)
-		if err != nil {
-			return err
-		}
-		if exists {
-			selectColumns = append(selectColumns, column)
-			whereColumns = append(whereColumns, column+" = 1")
-			continue
-		}
-		selectColumns = append(selectColumns, "0")
-	}
-	if len(whereColumns) == 0 {
-		return nil
-	}
-	rows, err := app.db.Query(`SELECT relative_path, ` + strings.Join(selectColumns, ", ") + ` FROM stacks WHERE ignored = 0 AND (` + strings.Join(whereColumns, " OR ") + `)`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var relativePath string
-		var externalBinds int
-		var dockerSocketMounts int
-		var hostPID int
-		var privileged int
-		if err := rows.Scan(&relativePath, &externalBinds, &dockerSocketMounts, &hostPID, &privileged); err != nil {
-			return err
-		}
-		stackDir := filepath.Join(app.cfg.StacksRoot, relativePath)
-		if err := app.ensureStackPathSafe(stackDir); err != nil {
-			return err
-		}
-		info, err := os.Stat(stackDir)
-		if err != nil || !info.IsDir() {
-			continue
-		}
-		managedConfig, err := app.loadManagedStackConfig(stackDir)
-		if err != nil {
-			return err
-		}
-		managedConfig.Settings.ExternalBindMountsAllowed = managedConfig.Settings.ExternalBindMountsAllowed || externalBinds == 1
-		managedConfig.Settings.DockerSocketMountsAllowed = managedConfig.Settings.DockerSocketMountsAllowed || dockerSocketMounts == 1
-		managedConfig.Settings.HostPIDAllowed = managedConfig.Settings.HostPIDAllowed || hostPID == 1
-		managedConfig.Settings.PrivilegedAllowed = managedConfig.Settings.PrivilegedAllowed || privileged == 1
-		if err := app.writeStackManagedConfigFile(stackDir, managedConfig); err != nil {
-			return err
-		}
-	}
-	return rows.Err()
-}
-
-func (app *App) ensureSessionSchema() error {
-	exists, err := app.tableExists("sessions")
-	if err != nil {
-		return err
-	}
-	if exists {
-		hasHash, err := app.tableHasColumn("sessions", "id_hash")
-		if err != nil {
-			return err
-		}
-		if !hasHash {
-			if _, err := app.db.Exec(`DROP TABLE sessions`); err != nil {
+	if version < 2 {
+		if info, err := os.Stat(app.cfg.DBPath); err == nil && info.Size() > 0 {
+			backup := app.cfg.DBPath + ".pre-agent.bak"
+			if _, err = os.Stat(backup); os.IsNotExist(err) {
+				if _, err = app.db.Exec(`VACUUM INTO '` + strings.ReplaceAll(backup, "'", "''") + `'`); err != nil {
+					return fmt.Errorf("database backup failed: %w", err)
+				}
+				if err = os.Chmod(backup, 0600); err != nil {
+					return err
+				}
+			} else if err != nil {
 				return err
 			}
 		}
 	}
-	_, err = app.db.Exec(`
-CREATE TABLE IF NOT EXISTS sessions (
-  id_hash TEXT PRIMARY KEY,
-  username TEXT NOT NULL,
-  expires_at TEXT NOT NULL,
-  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-`)
+	// Keep existing stack tables and activity history. No user configuration is deleted.
+	if _, err := app.db.Exec(`
+PRAGMA busy_timeout = 5000;
+CREATE TABLE IF NOT EXISTS activity_log (
+ id INTEGER PRIMARY KEY AUTOINCREMENT, stack_name TEXT NOT NULL, action TEXT NOT NULL,
+ status TEXT NOT NULL, output TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);`); err != nil {
+		return err
+	}
+	rows, err := app.db.Query(`PRAGMA table_info(sessions)`)
+	if err != nil {
+		return err
+	}
+	legacy, hashed := false, false
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, kind string
+		var defaultValue sql.NullString
+		if err = rows.Scan(&cid, &name, &kind, &notNull, &defaultValue, &pk); err != nil {
+			rows.Close()
+			return err
+		}
+		legacy = legacy || name == "id"
+		hashed = hashed || name == "id_hash"
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	if legacy && !hashed {
+		if _, err = app.db.Exec(`DROP TABLE sessions`); err != nil {
+			return err
+		}
+	}
+	_, err = app.db.Exec(`CREATE TABLE IF NOT EXISTS sessions (id_hash TEXT PRIMARY KEY, username TEXT NOT NULL, expires_at TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP); PRAGMA user_version = 2;`)
 	return err
 }
 
-func (app *App) tableExists(name string) (bool, error) {
-	var count int
-	err := app.db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&count)
-	return count > 0, err
-}
-
-func (app *App) tableHasColumn(tableName, columnName string) (bool, error) {
-	rows, err := app.db.Query(`PRAGMA table_info(` + tableName + `)`)
+func (app *App) logActivity(stack, action, status, output string) {
+	_, err := app.db.Exec(`INSERT INTO activity_log(stack_name,action,status,output) VALUES (?,?,?,?)`, stack, action, status, output)
 	if err != nil {
-		return false, err
+		return
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var cid int
-		var name, columnType string
-		var notNull, pk int
-		var defaultValue sql.NullString
-		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
-			return false, err
-		}
-		if name == columnName {
-			return true, nil
-		}
-	}
-	return false, rows.Err()
+	_, _ = app.db.Exec(`DELETE FROM activity_log WHERE created_at < datetime('now','-30 days')`)
 }

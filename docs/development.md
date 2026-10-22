@@ -1,105 +1,50 @@
 # Development
 
-This file keeps maintainer details out of the user-facing README.
-
-Deployment and Docker runtime details live in [Docker Deployment](docker.md).
-
-## Published Image
-
-CI publishes Docklight to GitHub Container Registry after tests pass on pushed branches and version tags:
-
-```text
-ghcr.io/adamcsk1/docklight
-```
-
-The publish job runs only for `push` events and depends on the test job. Pull requests run tests but do not publish images.
-
-Image tags:
-
-- `latest` tracks the default branch.
-- `sha-<commit>` is published for every pushed commit and is immutable for that commit.
-- `v1.2.3`, `1.2.3`, `1.2`, and `1` are published from Git tags such as `v1.2.3`.
-
-If the GHCR package should allow unauthenticated pulls, make it public in GitHub Packages after the first image is published.
-
-For private GHCR packages, host-side `docker login ghcr.io` is required before Docker can pull the Docklight image itself. Docklight image pulls run Docker CLI commands inside the Docklight container through the mounted Docker socket, so they need credentials in the container's Docker config path.
-
-Mount a dedicated config directory for this in the Docklight Compose service:
-
-```yaml
-volumes:
-  - ./docker-config:/root/.docker
-environment:
-  DOCKER_CONFIG: /root/.docker
-```
-
-Authenticate that config from inside the running container:
+Docklight uses Go, server-rendered HTML and plain CSS. No Node/npm build or frontend runtime dependency is required.
 
 ```sh
-docker exec -it docklight docker login ghcr.io -u <github-user>
-```
-
-Use a least-privileged GitHub token with `read:packages`. Do not copy a Docker Desktop `config.json` that relies on `credsStore` or `credHelpers`; those helper binaries usually are not available inside the Docklight container. Treat `./docker-config/config.json` as secret material and rotate the token if it is exposed.
-
-## Frontend Dependency
-
-HTMX is managed through npm and generated into `cmd/docklight/static/htmx.min.js` before Go builds. The generated file is ignored by git, but Go embeds it into the Docklight binary so runtime does not depend on npm or a CDN.
-
-Current version:
-
-```text
-htmx.org 2.0.10
-```
-
-Prepare local builds and tests with:
-
-```sh
-npm ci
-npm run sync:htmx
-```
-
-Then run Go commands normally:
-
-```sh
-npm test
-npm run build
-```
-
-The Docker build runs the same npm sync step before `go build`.
-
-Upgrade HTMX with an exact dependency version:
-
-```sh
-npm install --save-exact htmx.org@<version>
-npm run sync:htmx
 go test ./...
-```
-
-## Go Dependency Updates
-
-Go package update checks are manual. CI verifies that the current dependency set builds and tests, but it does not fail only because newer module versions exist.
-
-Check available module updates with:
-
-```sh
-go list -u -m all
-```
-
-Update direct and retained indirect dependencies deliberately:
-
-```sh
-go get -u ./...
-go mod tidy
-```
-
-After dependency changes, verify the project with:
-
-```sh
-npm ci
-npm run sync:htmx
-npm test
-go test ./... -cover
+go test -race -cover ./...
 go vet ./...
+go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+go build ./cmd/docklight
+go build ./cmd/docklight-agent
+docker build --target ui -t docklight:dev .
+docker build --target agent -t docklight-agent:dev .
 ```
 
-Review `go.mod` and `go.sum` before committing. Do not force updates for modules that `go mod tidy` removes or does not retain.
+Tests cover admin authentication/session expiry/throttling, CSRF/origin checks, per-host routing and token secrecy, TLS/redirect rejection, exact-image recreation, failed-pull behavior, mutation serialization, job restart recovery, protected containers and referenced-resource deletion. Removed feature tests are replaced with tests for the smaller API and UI; a passing suite is not proof that all operational failures are impossible.
+
+Use a fully patched supported Go toolchain for local builds. The Dockerfile and CI track the latest Go 1.26 patch release; a newer minor version with an old patch level can still contain known security flaws. CI also checks reachable Go vulnerabilities before publishing. This does not replace scanning runtime OS/Docker CLI dependencies or testing deployment security.
+
+## Isolated Docker integration tests
+
+Never run destructive integration tests against a real host. Create a disposable nested daemon:
+
+```sh
+docker run -d --privileged --hostname docklight-isolated-test --name docklight-test-daemon \
+  -e DOCKER_TLS_CERTDIR= -p 127.0.0.1:23750:2375 docker:29-dind
+# Wait until this succeeds:
+docker --host tcp://127.0.0.1:23750 info
+DOCKLIGHT_TEST_DOCKER_HOST=tcp://127.0.0.1:23750 go test -v ./internal/management -run TestDockerIntegration -count=1
+docker rm -fv docklight-test-daemon
+```
+
+The test refuses a daemon whose hostname is not `docklight-isolated-test`. It creates a Compose service and volume inside that daemon, moves a mutable image tag, checks that recreate keeps the old image, and verifies stopped-container volume protection plus volume preservation on container deletion. The nested daemon has no host Docker socket mounted.
+
+To also exercise actual UI/agent replacement and job recovery, build the native images as `docklight:refactor` and `docklight-agent:refactor` first. Set `DOCKLIGHT_TEST_OUTER_CONTAINER=docklight-test-daemon` along with the endpoint, then run `go test -v ./internal/management -run TestDocker -count=1 -timeout=10m`. This imports those images into the disposable daemon, creates a local throwaway registry, publishes changed images and checks that both management containers are replaced successfully. CI runs both integration tests before multi-platform publishing.
+
+## Multi-platform publishing
+
+CI runs unit/race tests, vet and isolated Docker integration tests first. It then builds both images for `linux/amd64`, `linux/arm64`, and `linux/arm/v7`, smoke-testing the binaries and the agent's Compose plugin under emulation. Publishing is blocked if any target fails.
+
+Pushes publish matching tags to `ghcr.io/<owner>/docklight` and `ghcr.io/<owner>/docklight-agent`: `latest` on the default branch, `sha-<commit>`, and semantic version tags from `v*` Git tags. Pull requests build/test but do not publish. Make both GHCR packages public if anonymous pulls are required.
+
+The Dockerfile cross-compiles Go binaries on the build platform and uses multi-architecture runtime bases. ARMv7 uses `GOARM=7`. Raspberry Pi Zero 2 W/4/5 can use ARM64; original ARMv6-only Pi Zero cannot. Emulated smoke tests do not establish physical-device reliability, memory suitability or SD-card durability.
+
+For manual builds:
+
+```sh
+docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 --target ui -t <registry>/docklight:<tag> --push .
+docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 --target agent -t <registry>/docklight-agent:<tag> --push .
+```

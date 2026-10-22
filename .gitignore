@@ -1,8 +1,11 @@
 /data/
+/agent-data/
 /docker-config/
 /stacks/
 /docklight
 /docklight.exe
+/docklight-agent
+/docklight-agent.exe
 /cmd/docklight/docklight
 /cmd/docklight/docklight.exe
 /cmd/docklight/static/htmx.min.js

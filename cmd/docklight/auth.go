@@ -29,16 +29,17 @@ func (app *App) login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(r.FormValue("username")), []byte(app.cfg.AdminUser)) != 1 || subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(app.cfg.AdminPassword)) != 1 {
+	if subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(app.cfg.AdminPassword)) != 1 {
 		app.recordLoginFailure(remote)
 		app.logActivity("auth", "login", "failed", "failed login from "+remote)
-		app.render(w, r, "login.html", PageData{Title: "Login", Error: "Invalid username or password"})
+		app.render(w, r, "login.html", PageData{Title: "Login", Error: "Invalid password"})
 		return
 	}
 	app.clearLoginFailures(remote)
 	sid := uuid.NewString()
 	expires := time.Now().Add(24 * time.Hour)
-	if _, err := app.db.Exec(`INSERT INTO sessions (id_hash, username, expires_at) VALUES (?, ?, ?)`, app.sessionIDHash(sid), app.cfg.AdminUser, expires.Format(time.RFC3339)); err != nil {
+	// Keep the legacy username column for database compatibility; there is only one admin.
+	if _, err := app.db.Exec(`INSERT INTO sessions (id_hash, username, expires_at) VALUES (?, 'admin', ?)`, app.sessionIDHash(sid), expires.Format(time.RFC3339)); err != nil {
 		app.render(w, r, "login.html", PageData{Title: "Login", Error: "Unable to create session"})
 		return
 	}
@@ -110,17 +111,21 @@ func requestHasSideEffects(r *http.Request) bool {
 }
 
 func validRequestOrigin(r *http.Request) bool {
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
 	origin := r.Header.Get("Origin")
 	if origin != "" {
 		parsed, err := url.Parse(origin)
-		return err == nil && sameHost(parsed.Host, r.Host)
+		return err == nil && parsed.Scheme == scheme && parsed.User == nil && sameHost(parsed.Host, r.Host)
 	}
 	referer := r.Header.Get("Referer")
 	if referer == "" {
 		return false
 	}
 	parsed, err := url.Parse(referer)
-	return err == nil && sameHost(parsed.Host, r.Host)
+	return err == nil && parsed.Scheme == scheme && parsed.User == nil && sameHost(parsed.Host, r.Host)
 }
 
 func sameHost(a, b string) bool {
@@ -141,9 +146,14 @@ func clientKey(r *http.Request) string {
 func (app *App) loginBlocked(key string) bool {
 	app.loginMu.Lock()
 	defer app.loginMu.Unlock()
+	for key, attempt := range app.logins {
+		if time.Since(time.Unix(attempt.FirstSeen, 0)) > 15*time.Minute {
+			delete(app.logins, key)
+		}
+	}
 	attempt, ok := app.logins[key]
 	if !ok {
-		return false
+		return len(app.logins) >= 4096
 	}
 	if time.Since(time.Unix(attempt.FirstSeen, 0)) > 15*time.Minute {
 		delete(app.logins, key)
@@ -157,6 +167,14 @@ func (app *App) recordLoginFailure(key string) {
 	defer app.loginMu.Unlock()
 	if app.logins == nil {
 		app.logins = make(map[string]loginAttempt)
+	}
+	for key, attempt := range app.logins {
+		if time.Since(time.Unix(attempt.FirstSeen, 0)) > 15*time.Minute {
+			delete(app.logins, key)
+		}
+	}
+	if _, exists := app.logins[key]; len(app.logins) >= 4096 && !exists {
+		return
 	}
 	attempt := app.logins[key]
 	if attempt.FirstSeen == 0 || time.Since(time.Unix(attempt.FirstSeen, 0)) > 15*time.Minute {
@@ -179,7 +197,7 @@ func (app *App) validSession(id string) bool {
 	}
 	var expiresRaw string
 	idHash := app.sessionIDHash(sid)
-	err := app.db.QueryRow(`SELECT expires_at FROM sessions WHERE id_hash = ?`, idHash).Scan(&expiresRaw)
+	err := app.db.QueryRow(`SELECT expires_at FROM sessions WHERE id_hash = ? AND username = 'admin'`, idHash).Scan(&expiresRaw)
 	if err != nil {
 		return false
 	}

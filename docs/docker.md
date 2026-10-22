@@ -1,198 +1,124 @@
-# Docker Deployment
+# Docker deployment
 
-This page covers Docker Compose deployment details for Docklight. For a quick overview, start with the [README](../README.md).
+## Local UI and agent
 
-## Compose Example
+Use a Compose root such as `/srv/compose`, containing existing project folders and the Docklight project itself. Mount that root **at the identical absolute path inside the agent**. The agent uses Docker Compose labels to locate the original project directory, Compose files and service names. Identical paths preserve relative binds, `.env`, includes and extra configuration files without rewriting them.
+
+Generate separate secrets with `openssl rand -hex 32` for the UI session secret and each agent token. In `/srv/compose/docklight/.env`, set:
+
+```dotenv
+ADMIN_PASSWORD=replace-with-a-strong-password
+SESSION_SECRET=replace-with-a-random-secret-at-least-32-characters
+AGENT_TOKEN=replace-with-a-different-random-secret-at-least-32-characters
+```
+
+Create `/srv/compose/docklight/ui-data/hosts.yml`, readable only by the user running Docklight:
+
+```yaml
+hosts:
+  - id: local
+    name: Local Docker
+    url: http://docklight-agent:8081
+    token: replace-with-the-same-AGENT_TOKEN
+    allow_http: true # Only the private local Docker network; no published agent port.
+```
+
+Secrets in this YAML are literal; environment substitution is not performed. Mount it read-only and restart the UI after changing hosts. Host configuration intentionally stays in an administrator-owned file rather than exposing credentials through the browser.
+
+Save `/srv/compose/docklight/compose.yml`:
 
 ```yaml
 services:
   docklight:
     image: ghcr.io/adamcsk1/docklight:latest
-    container_name: docklight
+    labels:
+      io.docklight.role: ui
     ports:
-      - "7070:8080"
+      - "127.0.0.1:7070:8080"
     environment:
-      BASE_URL: /
-      ADMIN_USER: admin
-      ADMIN_PASSWORD: change-this-password
-      SESSION_SECRET: replace-with-a-long-random-secret
-      STACKS_ROOT: /stacks
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
+      SESSION_SECRET: ${SESSION_SECRET:?required}
+      COOKIE_SECURE: "true" # Use HTTPS through a reverse proxy.
+    volumes:
+      - ./ui-data:/data
+      - ./ui-data/hosts.yml:/data/hosts.yml:ro
+    networks: [management]
+    restart: unless-stopped
+  docklight-agent:
+    image: ghcr.io/adamcsk1/docklight-agent:latest
+    labels:
+      io.docklight.role: agent
+    environment:
+      AGENT_TOKEN: ${AGENT_TOKEN:?required}
+      STACKS_ROOT: /srv/compose
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./stacks:/stacks
-      - ./data:/data
+      - /srv/compose:/srv/compose:ro
+      - ./agent-data:/data
+    networks: [management, outbound]
     restart: unless-stopped
+networks:
+  management:
+    internal: true
+  outbound: {}
 ```
 
-## Published Image
+The agent needs outbound access to pull images. The internal management network keeps its HTTP endpoint private. The UI has no Docker socket or Compose mount. For local HTTP testing only, set `COOKIE_SECURE: "false"`; otherwise use HTTPS at your reverse proxy.
 
-Docklight images are published to GitHub Container Registry:
+Run `docker compose up -d` from the project directory. No automatic pulling/building occurs during start, stop or recreate actions. Newly created stacks must be deployed using the CLI first: Docklight manages existing containers, not unstarted Compose folders. A deleted container disappears from Docklight; deploy it again from the CLI if needed.
 
-```text
-ghcr.io/adamcsk1/docklight
-```
+## Remote hosts and TLS
 
-Use the published image instead of a local build:
+Run only `docklight-agent` on each remote host, with its own socket, identical-path Compose root mount and independent token. Publish its port only on a private interface/firewall allowlist reachable by the UI.
+
+Set `TLS_CERT` and `TLS_KEY` to mounted PEM certificate/key paths. Both are required together. Use a certificate valid for the agent's DNS name or IP. Example host entry:
 
 ```yaml
-image: ghcr.io/adamcsk1/docklight:latest
+  - id: pi
+    name: Raspberry Pi
+    url: https://pi.example.internal:8081
+    token: independent-random-agent-token-at-least-32-characters
+    ca_file: /data/certs/homelab-ca.pem # Optional private CA; public CAs work by default.
 ```
 
-For stable deployments, pin a version tag instead of `latest`:
+Alternatively, use HTTPS termination in a trusted reverse proxy, with an isolated connection from proxy to agent. Plain HTTP requires explicit `allow_http: true` and must be confined to an isolated local Docker network or encrypted VPN. Never send bearer tokens across an unencrypted LAN or the internet.
 
-```yaml
-image: ghcr.io/adamcsk1/docklight:v1.2.3
-```
+The UI refuses agent redirects, preventing credentials from being forwarded elsewhere. Keep host files, TLS keys, tokens and backups private. UI sessions expire after 24 hours; restarting with a different session secret invalidates them.
 
-Available tag styles:
+## Updates and private registries
 
-- `latest` tracks the default branch.
-- `v1.2.3`, `1.2.3`, `1.2`, and `1` are published from Git tags such as `v1.2.3`.
-- `sha-<commit>` is published for exact commit pinning.
+UI and agent image labels protect management containers from ordinary actions. Compose deployments should also set the role labels explicitly as above. Dedicated **Update** actions pull and recreate only the selected UI/agent service through a detached helper. Helpers use the current agent image ID and inherited read-only mounts; they continue running if the agent/UI is replaced. Results are read from the helper after reconnection.
 
-If the GHCR package is private, authenticate on the Docker host before pulling:
+Keep the Docklight deployment and its `.env` within the agent's mounted root. Runtime-only shell variables are not inherited by update helpers; put required Compose substitutions in the project's `.env` or files referenced by Compose. Use matching release tags for UI and agent. Pinned image digests do not advance automatically; edit the Compose configuration outside Docklight to change them.
 
-```bash
-docker login ghcr.io -u <github-user>
-```
+For private registries, mount a dedicated Docker CLI configuration into the agent at `/root/.docker:ro`. Helpers inherit this mount. Authenticate that configuration beforehand with `docker --config <directory> login <registry>`. Desktop credential-helper configurations will not work unless the helper exists inside the agent image. Do not mount unrelated host credentials.
 
-Use a GitHub token with `read:packages`. Public packages do not require login.
+After an update finishes, the agent saves its helper logs in the job result, then removes the exited helper so old images can become unused. If cleanup fails or no client reconnects to collect the result, inspect the helper manually (`docker logs docklight-update-...`, then `docker rm docklight-update-...` after it exits). Helpers have `io.docklight.role=updater` and are protected from ordinary Docklight deletion. Cleanup verifies ownership labels and never force-removes a helper.
+
+## Storage and recovery
+
+- UI `/data`: SQLite sessions, UI audit history, host configuration and optional CA certificates.
+- Agent `/data`: persisted jobs/results (latest 100 completed operations), temporary image overrides.
+- Original Compose files and application volumes are never edited/deleted by Docklight.
+
+Operations continue after a browser/UI disconnect. Agent restart marks unfinished ordinary jobs failed with an **unknown outcome** warning; it does not retry destructive operations. Update jobs reconnect to their detached helper. While a management update is unresolved, further mutations are blocked. If a helper was manually removed or an agent died before launching it, inspect Docker manually; stop the agent, back up its data, remove the affected `job-<uuid>.json`, then restart. Do not clear uncertain jobs without checking the host.
+
+Only one agent instance may use a given data directory and Docker daemon for mutations. Docklight serializes its own actions, not commands issued by external Docker clients. Resource deletion rechecks references and uses Docker's non-force deletion as the final guard; external users can still race an operation.
+
+## Migrating the former single-container app
+
+1. Back up the existing data folder and Compose files. Stop the old Docklight container; do not remove volumes.
+2. Replace its deployment with the UI + agent layout. Mount the existing data folder into the UI and a **new separate data folder** into the agent.
+3. Add `hosts.yml`, generate an agent token, and ensure `SESSION_SECRET` has at least 32 characters.
+4. Mount the host Compose root at identical absolute paths in the agent. Previous `STACKS_HOST_ROOT` rewriting is no longer used.
+5. Start both services and verify inventory before performing mutations.
+
+Before migrating an existing database, Docklight creates `<DB_PATH>.pre-agent.bak` once. Existing stack metadata and activity history remain in SQLite; retired file-management settings are no longer acted on. Legacy plaintext sessions are invalidated. The old `config.yml` and stack-local managed configuration are left untouched but ignored. Existing filesystem data is not migrated, rewritten or removed.
 
 ## Environment
 
-| Variable | Default | Description |
-| --- | --- | --- |
-| `ADDR` | `:8080` | Listen address inside the container. |
-| `BASE_URL` | `/` | URL prefix. Use `/docklight` behind a path-based reverse proxy. |
-| `ADMIN_USER` | required | Single admin username. |
-| `ADMIN_PASSWORD` | required | Single admin password. |
-| `SESSION_SECRET` | required | Long random secret for sessions. |
-| `STACKS_ROOT` | `/stacks` | Mounted compose root inside the Docklight container. |
-| `STACKS_HOST_ROOT` | `STACKS_ROOT` | Docker-daemon-visible host path for the same stack root. Set this when stack compose files use relative bind mounts and `/stacks` is not the same path on the Docker host. |
-| `STACKS_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to stack files Docklight creates, such as `.docklight.config.yml`, compose files, managed files, and managed folders. Use this to keep host bind-mounted stack files editable by your host user while Docklight still runs as root for Docker socket access. |
-| `DATA_FILE_OWNER` | unset | Optional Linux-only numeric `uid:gid` applied to Docklight-created data artifacts, including the data directory, `config.yml`, SQLite database files, and verbose logs. It does not recursively change all files under `/data` or manage Docker config ownership. |
-| `DB_PATH` | `/data/docklight.db` | SQLite database path. |
-| `COOKIE_SECURE` | `false` | Set to `true` when serving only through HTTPS. |
+UI: `ADDR` (`:8080`), `BASE_URL` (`/`), required `ADMIN_PASSWORD`, `SESSION_SECRET`, `DB_PATH` (`/data/docklight.db`), `HOSTS_FILE` (`/data/hosts.yml`), `COOKIE_SECURE` (`false`). Login is password-only; `ADMIN_USER` is no longer used. Legacy sessions for a custom username require signing in again.
 
-## Linux Volume Paths
+Agent: `ADDR` (`:8081`), required `AGENT_TOKEN`, `STACKS_ROOT` (`/stacks`), `DATA_DIR` (`/data`), optional paired `TLS_CERT`/`TLS_KEY`. Docker commands have a ten-minute timeout. Compose paths must be absolute and resolve within `STACKS_ROOT`; symlink escapes are rejected.
 
-```yaml
-volumes:
-  - /var/run/docker.sock:/var/run/docker.sock
-  - /home/administrator/docker:/stacks
-  - ./data:/data
-environment:
-  STACKS_ROOT: /stacks
-  STACKS_HOST_ROOT: /home/administrator/docker
-  STACKS_FILE_OWNER: "1000:1000"
-  DATA_FILE_OWNER: "1000:1000"
-```
-
-`STACKS_HOST_ROOT` must point to the same host folder as the `/stacks` mount. Docklight keeps the Compose project directory inside the container, but rewrites stack-relative bind mounts such as `./data:/app/data` to the Docker-daemon-visible host path for start, upgrade, recreate, and delete actions. Compose project names are pinned to the Docklight stack name.
-
-Keep the `/stacks` mount writable. Docklight creates, edits, renames, and deletes stack folders, Compose files, managed files, and `.docklight.config.yml` under this path. Keep `/data` writable too; Docklight stores SQLite data, settings, sessions, and verbose logs there.
-
-Marking `/var/run/docker.sock` as a read-only bind mount does not materially reduce Docker API access. A container that can talk to the Docker socket can still control the Docker host, so only run Docklight where that level of trust is acceptable.
-
-Set `STACKS_FILE_OWNER` to the numeric `uid:gid` of the host user that should edit stack files. Docklight applies it to stack-local files and folders it creates, including `.docklight.config.yml`, without changing how the Docklight container itself runs. Running the whole container with Compose `user: "1000:1000"` can also avoid root-owned files, but it often requires extra Docker socket, `/data`, and Docker config permissions.
-
-Set `DATA_FILE_OWNER` when Docklight-created files under `/data`, such as `config.yml`, `docklight.db`, and verbose logs, should be editable from the host without root. Docklight applies it only to its own data directory and files; it does not recursively chown `/data` or change Docker CLI credential mount ownership. If you mount Docker CLI credentials, create and chown that credential directory on the host.
-
-## Windows Docker Desktop Paths
-
-```yaml
-volumes:
-  - /var/run/docker.sock:/var/run/docker.sock
-  - ${USERPROFILE}/docker:/stacks
-  - ./data:/data
-environment:
-  STACKS_ROOT: /stacks
-  STACKS_HOST_ROOT: /host_mnt/c/Users/YourUser/docker
-```
-
-For Windows Docker Desktop, use the Docker daemon path for `STACKS_HOST_ROOT`. A path under `C:\Users\YourUser\docker` is usually visible to the daemon as `/host_mnt/c/Users/YourUser/docker`.
-
-Docklight stores container-internal paths like `/stacks/immich` as the source of truth. `STACKS_HOST_ROOT` is only used at command execution time to preserve relative bind mount resolution.
-
-Create the Windows folder before starting the container. If Docker reports `mkdir C:\Users\Adam: Access is denied`, the host path is wrong for your machine, the folder does not exist, or Docker Desktop does not have access to that drive/folder. Prefer `${USERPROFILE}/docker` or an absolute path that exists under your current Windows user.
-
-## Private Registry Access
-
-Docklight's image pulls run the Docker CLI inside the Docklight container. The mounted Docker socket gives access to the host Docker daemon, but it does not automatically share the host user's Docker credentials with Docklight. For private GHCR images managed by Docklight, keep a dedicated Docker config mounted into the container:
-
-```yaml
-volumes:
-  - ./docker-config:/root/.docker
-environment:
-  DOCKER_CONFIG: /root/.docker
-```
-
-Then log in from the Docklight container:
-
-```bash
-docker exec -it docklight docker login ghcr.io -u <github-user>
-```
-
-Use a GitHub token with `read:packages`. This stores registry credentials under `./docker-config`, so protect that directory, do not commit it, and rotate the token if it is exposed. Deleting `./docker-config` removes Docklight's registry login. To remove the login without deleting the directory:
-
-```bash
-docker exec -it docklight docker logout ghcr.io
-```
-
-Do not copy a Docker Desktop `config.json` that relies on `credsStore` or `credHelpers`; those helper binaries usually are not available inside the Docklight container.
-
-## Reverse Proxy Path
-
-Default:
-
-```yaml
-BASE_URL: /
-```
-
-Path-based reverse proxy:
-
-```yaml
-BASE_URL: /docklight
-```
-
-Then use `http://host/docklight/`.
-
-Set `COOKIE_SECURE: true` when serving Docklight only through HTTPS.
-
-## Stored Data
-
-SQLite stores durable database data only:
-
-- discovered stack relative path
-- compose filename
-- sessions
-- activity log
-
-Docklight stores app settings, including activity retention and verbose logging state, in `/data/config.yml`.
-
-Activity retention defaults to 30 days and can be changed on the Config page to 30, 60, 120, 180, or 365 days. Rows older than the selected limit are purged automatically. The Activity page can download all retained activity as CSV.
-
-If you mount `./docker-config:/root/.docker` for private registry access, that folder is user-provided Docker CLI configuration and may contain registry credentials. Docklight does not manage those credentials.
-
-If Docker credentials are already provisioned and Docklight does not need to run `docker login`, the Docker config mount can be read-only, for example `./docker-config:/root/.docker:ro`. Leave it writable when logging in from inside the Docklight container.
-
-## Rename Actions
-
-Renaming a stack stops the old Compose project with `docker compose down --remove-orphans`, renames the stack folder, updates Docklight's stack record, and starts the new Compose project with `docker compose up -d`. Because the Compose project name changes with the Docklight stack name, Compose-generated container, network, and volume names can change. Explicitly named volumes are preserved.
-
-Verbose logging is off by default. When enabled on the Config page, Docklight writes timestamped troubleshooting logs under `/data/logs` with daily filenames such as `docklight-verbose-2026-06-18.log`. Verbose log retention defaults to 30 days and supports the same 30, 60, 120, 180, or 365 day options. Out-of-retention verbose log files are deleted automatically, and retained historical log files can be downloaded from the Config page.
-
-Docklight does not store container IDs or live Docker state. If the user changes containers with the Docker CLI, Docklight reads the live state again.
-
-## Upgrade Actions
-
-- `Pull + apply` runs `docker compose pull` and then `docker compose up -d`. Compose recreates services only when needed.
-- `Pull + force upgrade` runs `docker compose pull`, `docker compose down --remove-orphans`, and then `docker compose up -d --force-recreate`. This restarts all services and should be used when a guaranteed recreation is needed.
-- `Update Docklight` on the Config page starts a detached helper container that pulls and recreates only the running Docklight Compose service.
-
-`Update Docklight` requires Docklight itself to be started by Docker Compose with the Docker socket mounted and the Docklight compose project directory mounted into the container at the same absolute path used on the host. Add a read-only bind mount for that project directory when you want to use this action:
-
-```yaml
-volumes:
-  - /absolute/host/path/to/docklight:/absolute/host/path/to/docklight:ro
-```
+For Windows Docker Desktop development, use the development example and WSL/Linux-side Compose project paths for Compose management. Linux-style paths in Docker labels must be accessible inside the Linux agent. Arbitrary Windows-native host path translation is not supported by the identical-path model.
