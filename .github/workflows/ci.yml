@@ -7,6 +7,22 @@ on:
 permissions:
   contents: read
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      targets: ${{ steps.targets.outputs.targets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Test image target selection
+        run: python3 -m unittest discover -s scripts -p test_ci_targets.py
+      - name: Select affected production images
+        id: targets
+        run: |
+          targets=$(python3 scripts/ci_targets.py)
+          echo "targets=$targets" >> "$GITHUB_OUTPUT"
+          echo "Selected production images: $targets"
   test:
     runs-on: ubuntu-latest
     steps:
@@ -57,12 +73,13 @@ jobs:
         run: docker rm -fv docklight-test-daemon || true
   images:
     name: Build ${{ matrix.target }} (${{ matrix.platform }})
-    needs: test
+    needs: [test, changes]
+    if: needs.changes.outputs.targets != '[]'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        target: [ui, agent]
+        target: ${{ fromJSON(needs.changes.outputs.targets) }}
         platform: [linux/amd64, linux/arm64, linux/arm/v7]
     steps:
       - uses: actions/checkout@v4
@@ -89,19 +106,15 @@ jobs:
           test "$status" -eq 1
           echo "$output" | grep -E 'ADMIN_PASSWORD|AGENT_TOKEN'
   publish:
-    needs: images
-    if: github.event_name == 'push'
+    needs: [images, changes]
+    if: github.event_name == 'push' && needs.changes.outputs.targets != '[]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     strategy:
       matrix:
-        include:
-          - target: ui
-            suffix: ''
-          - target: agent
-            suffix: '-agent'
+        target: ${{ fromJSON(needs.changes.outputs.targets) }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-qemu-action@v3
@@ -114,7 +127,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}${{ matrix.suffix }}
+          images: ghcr.io/${{ github.repository }}${{ matrix.target == 'agent' && '-agent' || '' }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,prefix=sha-

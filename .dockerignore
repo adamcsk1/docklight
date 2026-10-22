@@ -10,6 +10,7 @@ hosts.yml
 **/*.key
 **/*.pem
 node_modules
+__pycache__
 cmd/docklight/static/htmx.min.js
 *.db
 *.db-shm

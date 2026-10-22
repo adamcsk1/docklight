@@ -10,6 +10,7 @@
 /cmd/docklight/docklight.exe
 /cmd/docklight/static/htmx.min.js
 /node_modules/
+__pycache__/
 *.db
 *.db-shm
 *.db-wal

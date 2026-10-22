@@ -63,9 +63,13 @@ To also exercise actual UI/agent replacement and job recovery, build the native 
 
 ## Multi-platform publishing
 
-CI runs unit/race tests, vet and isolated Docker integration tests first. It then builds both images for `linux/amd64`, `linux/arm64`, and `linux/arm/v7`, smoke-testing the binaries and the agent's Compose plugin under emulation. Publishing is blocked if any target fails.
+CI runs unit/race tests, vet, browser checks and isolated Docker integration tests on every run. The integration tests still build local, throwaway UI and agent images. Production multi-platform builds and publishing select only affected targets: `cmd/docklight/` selects UI, `cmd/docklight-agent/` selects agent, and shared code, dependencies, Docker/build configuration or unknown inputs select both. Docs and known development-only files select neither. Release tags and missing comparison history select both. Pushes compare the entire pushed range; pull requests compare their head against the merge base. Selection logic has standard-library Python tests (`python3 -m unittest discover -s scripts -p test_ci_targets.py`).
 
-Pushes publish matching tags to `ghcr.io/<owner>/docklight` and `ghcr.io/<owner>/docklight-agent`: `latest` on the default branch, `sha-<commit>`, and semantic version tags from `v*` Git tags. Pull requests build/test but do not publish. Make both GHCR packages public if anonymous pulls are required.
+Selected images build for `linux/amd64`, `linux/arm64`, and `linux/arm/v7`, smoke-testing the binaries and the agent's Compose/Buildx plugins under emulation. Publishing is blocked if tests or any selected target fail. Docs-only changes skip production image jobs without skipping tests.
+
+Path detection does not notice updated base images in external registries. Change the Dockerfile or push a release tag when both images need rebuilding for updated bases.
+
+Pushes publish selected images to `ghcr.io/<owner>/docklight` and/or `ghcr.io/<owner>/docklight-agent`: `latest` on the default branch, `sha-<commit>`, and semantic version tags from `v*` Git tags. An unchanged image retains its existing tags; it does not receive a new commit tag. Release tags publish both images with matching version tags. Pull requests build/test selected targets but do not publish. Make both GHCR packages public if anonymous pulls are required.
 
 The Dockerfile cross-compiles Go binaries on the build platform and uses multi-architecture runtime bases. ARMv7 uses `GOARM=7`. Raspberry Pi Zero 2 W/4/5 can use ARM64; original ARMv6-only Pi Zero cannot. Emulated smoke tests do not establish physical-device reliability, memory suitability or SD-card durability.
 
