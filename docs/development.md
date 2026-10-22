@@ -25,6 +25,8 @@ CI uses Playwright as an isolated test tool, not an application dependency. The 
 
 Additional JavaScript-enabled checks verify collapsed defaults, open/closed state restoration, host/stack isolation, standalone state and resize/reload persistence. Malformed stored values are ignored, and disabled local storage must not cause browser errors or disable native accordions. Only presentation preferences go into local storage; authentication remains in the HttpOnly session cookie and server-side session database.
 
+Operation polling uses an authenticated same-origin JSON endpoint that fetches only the selected host's job, not inventory or history. The CSP permits same-origin connections. Browser checks cover log auto-scroll, escaped output, in-place status changes, recovery from agent disconnects, and exactly one full-page reload when an operation succeeds or fails. JavaScript-disabled pages offer manual refresh instead of timed navigation.
+
 Session regression checks also resize and reload the same authenticated browser context, switch mobile device metrics and user agent, then restore desktop mode. The session cookie must remain unchanged. Opening `/login` with a valid session must redirect to the dashboard rather than show a login form; expired, tampered, revoked or unavailable sessions must still require authentication.
 
 To run locally on Linux:

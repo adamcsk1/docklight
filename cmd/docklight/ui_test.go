@@ -180,7 +180,7 @@ func TestCSPAllowsOnlySameOriginAssets(t *testing.T) {
 				t.Fatalf("%s: HTTP %d", path, w.Code)
 			}
 			policy := w.Header().Get("Content-Security-Policy")
-			want := "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+			want := "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
 			if policy != want {
 				t.Fatalf("unexpected CSP: %q", policy)
 			}
@@ -269,6 +269,26 @@ func TestHostIsolationTokenSecrecyAndEscapedOutput(t *testing.T) {
 	if !strings.Contains(body, "&lt;script&gt;project&lt;/script&gt;") {
 		t.Fatal("project heading missing or not escaped")
 	}
+	r = httptest.NewRequest("GET", "https://docklight.local/docklight/operation?host=b&job=job-1", nil)
+	r.AddCookie(c)
+	w = httptest.NewRecorder()
+	a.routes().ServeHTTP(w, r)
+	var job management.Job
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil || job.Output != "<script>evil</script>" || w.Code != 200 || !strings.HasPrefix(w.Header().Get("Content-Type"), "application/json") || strings.Contains(w.Body.String(), tb) {
+		t.Fatalf("invalid operation response: %d %s", w.Code, w.Body.String())
+	}
+	if callsA.Load() != 0 || callsB.Load() != 3 {
+		t.Fatal("poll fetched inventory/history or wrong host")
+	}
+	for _, query := range []string{"job=job-1", "host=unknown&job=job-1", "host=b", "host=b&job=../other", "host=b&job=%3Cbad%3E"} {
+		r = httptest.NewRequest("GET", "https://docklight.local/docklight/operation?"+query, nil)
+		r.AddCookie(c)
+		w = httptest.NewRecorder()
+		a.routes().ServeHTTP(w, r)
+		if w.Code != 400 || callsB.Load() != 3 || callsA.Load() != 0 {
+			t.Fatalf("invalid poll reached host: %s HTTP %d", query, w.Code)
+		}
+	}
 	values := url.Values{"host": {"b"}, "kind": {"container"}, "id": {"id"}, "operation": {"stop"}}
 	w = httptest.NewRecorder()
 	a.routes().ServeHTTP(w, formRequest(a, c, "/action", values))
@@ -317,8 +337,8 @@ func TestOperationProgressSurvivesHistoryRemoval(t *testing.T) {
 			if w.Code != 200 || calls.Load() != 2 || !strings.Contains(body, `aria-label="Operation output"`) || !strings.Contains(body, "&lt;script&gt;build output&lt;/script&gt;") {
 				t.Fatalf("operation result lost: %d %s", w.Code, body)
 			}
-			if strings.Contains(body, `http-equiv="refresh"`) != (status == "running" || status == "updating") {
-				t.Fatalf("wrong polling state: %s", status)
+			if strings.Contains(body, `http-equiv="refresh"`) || !strings.Contains(body, `data-status="`+status+`"`) || !strings.Contains(body, `data-operation-url="/docklight/operation?host=local&amp;job=test-job"`) {
+				t.Fatalf("wrong async polling state: %s", status)
 			}
 			if strings.Contains(body, "activity") || strings.Contains(body, "Activity") {
 				t.Fatal("activity feature still rendered")
@@ -372,7 +392,7 @@ func TestTLSAndRedirectsFailClosed(t *testing.T) {
 
 func TestRoutesRequireAuthenticationAndRemovedFeaturesUnavailable(t *testing.T) {
 	a := newTestApp(t)
-	for _, path := range []string{"/docklight/", "/docklight/action"} {
+	for _, path := range []string{"/docklight/", "/docklight/action", "/docklight/operation?host=local&job=test-job"} {
 		method := "GET"
 		if strings.HasSuffix(path, "action") {
 			method = "POST"

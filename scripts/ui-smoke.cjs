@@ -214,6 +214,82 @@ const path = require("node:path");
       console.log(`PASS ${base}: accordion persistence ${storageBlocked ? "storage-disabled fallback" : "open/closed, reload, host/stack isolation and resize"}`);
       await context.close();
     }
+    for (const terminal of ["success", "failed"]) {
+      const context = await browser.newContext({ viewport: { width: 900, height: 1000 } });
+      const page = await context.newPage();
+      const errors = [];
+      page.on("pageerror", error => errors.push(error.message));
+      await page.goto(`${base}/login`);
+      await page.getByLabel("Admin password").fill("pw");
+      await page.getByRole("button", { name: "Login", exact: true }).click();
+      await page.waitForURL(`${base}/`);
+      const url = `${base}/?host=pi&job=live-${terminal}`;
+      await page.goto(url);
+      let navigations = 0;
+      page.on("framenavigated", frame => { if (frame === page.mainFrame()) navigations++; });
+      const output = page.getByLabel("Operation output");
+      const atEnd = async () => {
+        await page.waitForFunction(() => {
+          const log = document.querySelector(".operation-output");
+          return log.scrollHeight - log.clientHeight - log.scrollTop <= 2;
+        }, null, { timeout: 1000 });
+        return true;
+      };
+      assert.equal(await atEnd(), true, "initial log not scrolled to end");
+      await output.evaluate(log => { log.scrollTop = 0; });
+      await page.evaluate(() => { window.operationPageMarker = "unchanged"; });
+      await page.waitForFunction(() => document.querySelector(".operation-output").textContent.endsWith("running output"));
+      assert((await page.locator("[data-operation-message]").textContent()).includes("two hours"), "poll discarded build timeout notice");
+      assert.equal(await atEnd(), true, "new output not scrolled to end");
+      assert.equal(await page.evaluate(() => window.operationPageMarker), "unchanged", "poll reloaded page");
+      const unchangedPoll = page.waitForResponse(response => response.url().includes("/operation?") && response.ok());
+      await output.evaluate(log => { log.scrollTop = 0; });
+      await unchangedPoll;
+      await page.waitForFunction(() => {
+        const log = document.querySelector(".operation-output");
+        return log.scrollHeight - log.clientHeight - log.scrollTop <= 2;
+      }, null, { timeout: 1000 });
+      await page.waitForFunction(() => document.querySelector("[data-operation-message]").textContent.includes("Retrying automatically"));
+      assert.equal(navigations, 0, "transient disconnect reloaded page");
+      await page.waitForFunction(() => document.querySelector("[data-operation-status]").textContent === "updating");
+      assert.equal(await atEnd(), true);
+      assert.equal(await output.locator("script").count(), 0, "polled output executed as markup");
+      assert((await output.textContent()).includes("<script>not executable</script>"));
+      assert.equal(navigations, 0, "running operation navigated page");
+      await page.waitForFunction(status => document.querySelector("[data-operation-status]").textContent === status, terminal);
+      assert.equal(navigations, 1, "completion must reload full page exactly once");
+      assert.equal(await atEnd(), true, "completed log not scrolled to end");
+      assert.equal(await page.evaluate(() => window.operationPageMarker), undefined, "completion did not reload inventory page");
+      await output.evaluate(log => { log.scrollTop = 0; });
+      await page.reload();
+      await page.waitForFunction(() => {
+        const log = document.querySelector(".operation-output");
+        return log.scrollHeight - log.clientHeight - log.scrollTop <= 2;
+      });
+      await page.setViewportSize({ width: 390, height: 700 });
+      await page.waitForFunction(() => {
+        const log = document.querySelector(".operation-output");
+        return log.scrollHeight - log.clientHeight - log.scrollTop <= 2;
+      }, null, { timeout: 1000 });
+      assert.deepEqual(errors, [], "operation polling caused JavaScript errors");
+      console.log(`PASS ${base}: async log/status, auto-scroll, reconnect and one completion reload (${terminal})`);
+      await context.close();
+    }
+    {
+      const context = await browser.newContext();
+      const page = await context.newPage();
+      await page.goto(`${base}/login`);
+      await page.getByLabel("Admin password").fill("pw");
+      await page.getByRole("button", { name: "Login", exact: true }).click();
+      await page.waitForURL(`${base}/`);
+      await page.goto(`${base}/?host=pi&job=live-expired`);
+      await context.clearCookies();
+      await page.waitForURL(`${base}/login`);
+      assert.equal(await page.getByLabel("Admin password").count(), 1, "expired session did not require login");
+      assert.equal(await page.getByLabel("Operation output").count(), 0, "expired session retained operation output");
+      console.log(`PASS ${base}: operation polling returns expired sessions to login`);
+      await context.close();
+    }
   } finally {
     await browser.close();
   }

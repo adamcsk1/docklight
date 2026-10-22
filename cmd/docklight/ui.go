@@ -34,7 +34,6 @@ type PageData struct {
 	ContainerGroups                  []containerGroup
 	ResourceSections                 []resourceSection
 	Job                              *management.Job
-	Refresh                          bool
 }
 
 func groupContainers(containers []management.Container) []containerGroup {
@@ -115,6 +114,7 @@ func (app *App) routes() http.Handler {
 	})
 	mux.Handle("POST "+app.withBase("/logout"), app.requireAuth(http.HandlerFunc(app.logout)))
 	mux.Handle("GET "+app.withBase("/{$}"), app.requireAuth(http.HandlerFunc(app.dashboard)))
+	mux.Handle("GET "+app.withBase("/operation"), app.requireAuth(http.HandlerFunc(app.operation)))
 	mux.Handle("POST "+app.withBase("/action"), app.requireAuth(http.HandlerFunc(app.action)))
 	if app.cfg.BaseURL != "/" {
 		mux.HandleFunc("GET "+app.cfg.BaseURL, func(w http.ResponseWriter, r *http.Request) {
@@ -129,7 +129,7 @@ func (app *App) routes() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		r.Body = http.MaxBytesReader(w, r.Body, 8192)
 		mux.ServeHTTP(w, r)
 	})
@@ -212,10 +212,31 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			d.Error = err.Error()
 		} else {
 			d.Job = &job
-			d.Refresh = job.Status == "running" || job.Status == "updating"
 		}
 	}
 	app.render(w, r, "manage.html", d)
+}
+
+func (app *App) operation(w http.ResponseWriter, r *http.Request) {
+	id, hostID := r.URL.Query().Get("job"), r.URL.Query().Get("host")
+	if !validID(id) || hostID == "" {
+		http.Error(w, "explicit host and valid job ID required", http.StatusBadRequest)
+		return
+	}
+	h, err := app.host(hostID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	var job management.Job
+	if err = h.request(r.WithContext(ctx), "GET", "/v1/jobs/"+url.PathEscape(id), nil, &job); err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(job)
 }
 
 func (app *App) action(w http.ResponseWriter, r *http.Request) {

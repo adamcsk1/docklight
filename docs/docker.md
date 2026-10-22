@@ -113,6 +113,8 @@ After an update finishes, the agent saves its helper logs in the job result, the
 
 There is no Activity menu or operation-history list. After submitting an action, its result page shows progress, output and errors. Keep that URL to revisit the result. Agents retain bounded job records for result retrieval, restart recovery and management-update safety; removing the history UI does not remove these safeguards or delete existing records. Login failures and submitted-operation receipts are written to UI container logs.
 
+With JavaScript enabled, running operations refresh only their status and output every three seconds. The output box starts at the end and scrolls to new output automatically. Temporary agent disconnects are retried without reloading or resubmitting the operation. The full page reloads once on success or failure to refresh the container/resource inventory. Without JavaScript, reload manually to see progress.
+
 The history-list API (`GET /v1/jobs`) has also been removed. Update the UI and agents together: older UIs still request that endpoint. Submitting operations (`POST /v1/jobs`) and retrieving a specific result (`GET /v1/jobs/{id}`) remain supported.
 
 The UI database contains only session hashes and expiry times, with no usernames, stack settings or activity history. There are no database migrations or automatic backups. Only the current session schema is accepted. If an explicit `DB_PATH` points to an incompatible database, startup refuses it without modifying its contents; select a fresh database path instead. The default `/data/sessions.db` does not read or replace other database files. Changing session databases requires signing in again and does not affect agent job history, host configuration or Docker resources.

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"docklight/internal/management"
@@ -32,6 +33,7 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 			{Kind: "network", ID: "unused-network-id", Name: "unused-network"},
 		},
 	}
+	var successPolls, failedPolls, expiredPolls atomic.Int32
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -52,6 +54,33 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 		case r.URL.Path == "/v1/jobs":
 			t.Error("dashboard requested removed operation history")
 			http.Error(w, "history removed", http.StatusMethodNotAllowed)
+		case strings.HasPrefix(r.URL.Path, "/v1/jobs/live-"):
+			counter := &successPolls
+			terminal := "success"
+			if strings.HasSuffix(r.URL.Path, "failed") {
+				counter = &failedPolls
+				terminal = "failed"
+			}
+			if strings.HasSuffix(r.URL.Path, "expired") {
+				counter = &expiredPolls
+			}
+			n := counter.Add(1)
+			if n == 4 {
+				http.Error(w, "agent temporarily restarting", 502)
+				return
+			}
+			status := "running"
+			if n == 5 {
+				status = "updating"
+			}
+			if n >= 6 {
+				status = terminal
+			}
+			tail := status + " output"
+			if n == 1 {
+				tail = "initial output"
+			}
+			_ = json.NewEncoder(w).Encode(management.Job{ID: strings.TrimPrefix(r.URL.Path, "/v1/jobs/"), Status: status, Action: management.Action{Kind: "container", Operation: "build"}, Output: strings.Repeat("build log line\n", 100) + "<script>not executable</script>\n" + tail})
 		default:
 			_ = json.NewEncoder(w).Encode(management.Job{ID: "presentation-job", Status: "success", Output: strings.Repeat("long-output-without-spaces", 30) + "\n<script>not executable</script>"})
 		}
