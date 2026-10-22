@@ -109,6 +109,28 @@ func TestPasswordOnlyFormAndRejectedPasswords(t *testing.T) {
 	}
 }
 
+func TestCSPAllowsOnlyReportedInlineStyle(t *testing.T) {
+	a := newTestApp(t)
+	for _, base := range []string{"/", "/docklight"} {
+		a.cfg.BaseURL = base
+		for _, path := range []string{"/login", "/static/manage.css"} {
+			w := httptest.NewRecorder()
+			a.routes().ServeHTTP(w, httptest.NewRequest("GET", "https://docklight.local"+a.withBase(path), nil))
+			if w.Code != http.StatusOK {
+				t.Fatalf("%s: HTTP %d", path, w.Code)
+			}
+			policy := w.Header().Get("Content-Security-Policy")
+			want := "default-src 'none'; style-src 'self' 'unsafe-hashes' 'sha256-vKC/3e+58wt3AEEnUImhhkZlNJYe2iGGM4zT9jQL6x0='; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"
+			if policy != want {
+				t.Fatalf("unexpected CSP: %q", policy)
+			}
+			if strings.Contains(policy, "'unsafe-inline'") || strings.Contains(policy, "'unsafe-eval'") {
+				t.Fatal("CSP broadly permits inline content")
+			}
+		}
+	}
+}
+
 func TestLoginThrottleAndExpiry(t *testing.T) {
 	a := newTestApp(t)
 	for i := 0; i < 8; i++ {
