@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"encoding/hex"
+	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -31,15 +32,14 @@ func (app *App) login(w http.ResponseWriter, r *http.Request) {
 	}
 	if subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(app.cfg.AdminPassword)) != 1 {
 		app.recordLoginFailure(remote)
-		app.logActivity("auth", "login", "failed", "failed login from "+remote)
+		log.Printf("failed admin login from %q", remote)
 		app.render(w, r, "login.html", PageData{Title: "Login", Error: "Invalid password"})
 		return
 	}
 	app.clearLoginFailures(remote)
 	sid := uuid.NewString()
 	expires := time.Now().Add(24 * time.Hour)
-	// Keep the legacy username column for database compatibility; there is only one admin.
-	if _, err := app.db.Exec(`INSERT INTO sessions (id_hash, username, expires_at) VALUES (?, 'admin', ?)`, app.sessionIDHash(sid), expires.Format(time.RFC3339)); err != nil {
+	if _, err := app.db.Exec(`INSERT INTO sessions (id_hash, expires_at) VALUES (?, ?)`, app.sessionIDHash(sid), expires.Format(time.RFC3339)); err != nil {
 		app.render(w, r, "login.html", PageData{Title: "Login", Error: "Unable to create session"})
 		return
 	}
@@ -197,7 +197,7 @@ func (app *App) validSession(id string) bool {
 	}
 	var expiresRaw string
 	idHash := app.sessionIDHash(sid)
-	err := app.db.QueryRow(`SELECT expires_at FROM sessions WHERE id_hash = ? AND username = 'admin'`, idHash).Scan(&expiresRaw)
+	err := app.db.QueryRow(`SELECT expires_at FROM sessions WHERE id_hash = ?`, idHash).Scan(&expiresRaw)
 	if err != nil {
 		return false
 	}

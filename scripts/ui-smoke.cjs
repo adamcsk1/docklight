@@ -44,7 +44,17 @@ const path = require("node:path");
       await page.waitForURL(`${base}/`);
       assert.equal(await page.title(), "Containers · Docklight");
       await assertLayout();
-      for (const name of ["Containers", "Images", "Volumes", "Networks"]) assert.equal(await page.getByRole("table", { name, exact: true }).count(), 1);
+      for (const name of ["Containers in docklight", "Containers in web", "Standalone containers", "Images", "Volumes", "Networks"]) assert.equal(await page.getByRole("table", { name, exact: true }).count(), 1);
+      assert.equal(await page.locator("details.stack-group[open]").count(), 3);
+      const webGroup = page.locator('details.stack-group[aria-label="Compose stack web"]');
+      assert((await webGroup.locator("summary").textContent()).includes("1 / 2 running"));
+      assert.equal(await webGroup.getByRole("row").count(), 3);
+      assert.equal(await page.getByText("UI activity and retained legacy history", { exact: true }).count(), 0);
+      await webGroup.locator("summary").click();
+      assert.equal(await webGroup.evaluate(group => group.open), false);
+      assert.equal(await webGroup.getByRole("row").count(), 0);
+      await webGroup.locator("summary").press("Space");
+      assert.equal(await webGroup.evaluate(group => group.open), true);
       const row = name => page.getByRole("row").filter({ has: page.getByText(name, { exact: true }) });
       assert.equal(await row("web-running").getByRole("button", { name: "Delete stopped", exact: true }).isDisabled(), true);
       assert.equal(await row("docklight-agent").getByRole("button").count(), 1);
@@ -87,7 +97,7 @@ const path = require("node:path");
       assert.deepEqual(errors, [], `browser errors at ${width}px`);
       await page.getByRole("button", { name: "Logout", exact: true }).click();
       await page.waitForURL(`${base}/login`);
-      console.log(`PASS ${label}: ${width}x${height}, JavaScript disabled, no overflow/CSP errors, forms and host routing checked`);
+      console.log(`PASS ${label}: ${width}x${height}, JavaScript disabled, stack groups/keyboard collapse/counts, no overflow/CSP errors, forms and host routing checked`);
       await context.close();
     }
   } finally {

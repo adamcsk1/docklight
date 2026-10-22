@@ -37,7 +37,7 @@ func env(key, fallback string) string {
 	return fallback
 }
 func loadConfig() (Config, error) {
-	c := Config{Addr: env("ADDR", ":8080"), BaseURL: "/" + strings.Trim(env("BASE_URL", "/"), "/"), AdminPassword: os.Getenv("ADMIN_PASSWORD"), SessionSecret: os.Getenv("SESSION_SECRET"), DBPath: env("DB_PATH", "/data/docklight.db"), CookieSecure: env("COOKIE_SECURE", "false") == "true"}
+	c := Config{Addr: env("ADDR", ":8080"), BaseURL: "/" + strings.Trim(env("BASE_URL", "/"), "/"), AdminPassword: os.Getenv("ADMIN_PASSWORD"), SessionSecret: os.Getenv("SESSION_SECRET"), DBPath: env("DB_PATH", "/data/sessions.db"), CookieSecure: env("COOKIE_SECURE", "false") == "true"}
 	if c.AdminPassword == "" || len(c.SessionSecret) < 32 {
 		return c, errors.New("ADMIN_PASSWORD and SESSION_SECRET (at least 32 characters) are required")
 	}

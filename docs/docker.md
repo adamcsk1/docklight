@@ -97,27 +97,21 @@ After an update finishes, the agent saves its helper logs in the job result, the
 
 ## Storage and recovery
 
-- UI `/data`: SQLite sessions, UI audit history, host configuration and optional CA certificates.
+- UI `/data`: `sessions.db` for signed login sessions, host configuration and optional CA certificates.
 - Agent `/data`: persisted jobs/results (latest 100 completed operations), temporary image overrides.
 - Original Compose files and application volumes are never edited/deleted by Docklight.
+
+The Activity section shows operations from the selected host's agent. Login failures and submitted-operation receipts are written to UI container logs, not to a separate SQLite history table.
+
+The UI database contains only session hashes and expiry times, with no usernames, stack settings or activity history. There are no database migrations or automatic backups. Only the current session schema is accepted. If an explicit `DB_PATH` points to an incompatible database, startup refuses it without modifying its contents; select a fresh database path instead. The default `/data/sessions.db` does not read or replace other database files. Changing session databases requires signing in again and does not affect agent job history, host configuration or Docker resources.
 
 Operations continue after a browser/UI disconnect. Agent restart marks unfinished ordinary jobs failed with an **unknown outcome** warning; it does not retry destructive operations. Update jobs reconnect to their detached helper. While a management update is unresolved, further mutations are blocked. If a helper was manually removed or an agent died before launching it, inspect Docker manually; stop the agent, back up its data, remove the affected `job-<uuid>.json`, then restart. Do not clear uncertain jobs without checking the host.
 
 Only one agent instance may use a given data directory and Docker daemon for mutations. Docklight serializes its own actions, not commands issued by external Docker clients. Resource deletion rechecks references and uses Docker's non-force deletion as the final guard; external users can still race an operation.
 
-## Migrating the former single-container app
-
-1. Back up the existing data folder and Compose files. Stop the old Docklight container; do not remove volumes.
-2. Replace its deployment with the UI + agent layout. Mount the existing data folder into the UI and a **new separate data folder** into the agent.
-3. Add `hosts.yml`, generate an agent token, and ensure `SESSION_SECRET` has at least 32 characters.
-4. Mount the host Compose root at identical absolute paths in the agent. Previous `STACKS_HOST_ROOT` rewriting is no longer used.
-5. Start both services and verify inventory before performing mutations.
-
-Before migrating an existing database, Docklight creates `<DB_PATH>.pre-agent.bak` once. Existing stack metadata and activity history remain in SQLite; retired file-management settings are no longer acted on. Legacy plaintext sessions are invalidated. The old `config.yml` and stack-local managed configuration are left untouched but ignored. Existing filesystem data is not migrated, rewritten or removed.
-
 ## Environment
 
-UI: `ADDR` (`:8080`), `BASE_URL` (`/`), required `ADMIN_PASSWORD`, `SESSION_SECRET`, `DB_PATH` (`/data/docklight.db`), `HOSTS_FILE` (`/data/hosts.yml`), `COOKIE_SECURE` (`false`). Login is password-only; `ADMIN_USER` is no longer used. Legacy sessions for a custom username require signing in again.
+UI: `ADDR` (`:8080`), `BASE_URL` (`/`), required `ADMIN_PASSWORD`, `SESSION_SECRET`, `DB_PATH` (`/data/sessions.db`), `HOSTS_FILE` (`/data/hosts.yml`), `COOKIE_SECURE` (`false`). Login is password-only.
 
 Agent: `ADDR` (`:8081`), required `AGENT_TOKEN`, `STACKS_ROOT` (`/stacks`), `DATA_DIR` (`/data`), optional paired `TLS_CERT`/`TLS_KEY`. Docker commands have a ten-minute timeout. Compose paths must be absolute and resolve within `STACKS_ROOT`; symlink escapes are rejected.
 

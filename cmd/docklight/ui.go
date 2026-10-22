@@ -8,15 +8,21 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"time"
 
 	"docklight/internal/management"
 )
 
 type hostView struct{ ID, Name string }
-type historyEntry struct{ Host, Action, Status, Output, Created string }
+type containerGroup struct {
+	Project    string
+	Containers []management.Container
+	Running    int
+}
 type resourceSection struct {
 	Kind, Title string
 	Items       []management.Resource
@@ -25,11 +31,47 @@ type PageData struct {
 	Title, Error, CSRF, Base, HostID string
 	Hosts                            []hostView
 	Inventory                        management.Inventory
+	ContainerGroups                  []containerGroup
 	ResourceSections                 []resourceSection
 	Jobs                             []management.Job
 	Job                              *management.Job
-	History                          []historyEntry
 	Refresh                          bool
+}
+
+func groupContainers(containers []management.Container) []containerGroup {
+	var groups []containerGroup
+	byProject := make(map[string]int)
+	for _, container := range containers {
+		i, ok := byProject[container.Project]
+		if !ok {
+			i = len(groups)
+			byProject[container.Project] = i
+			groups = append(groups, containerGroup{Project: container.Project})
+		}
+		groups[i].Containers = append(groups[i].Containers, container)
+		if container.State == "running" {
+			groups[i].Running++
+		}
+	}
+	for i := range groups {
+		sort.Slice(groups[i].Containers, func(a, b int) bool {
+			x, y := groups[i].Containers[a], groups[i].Containers[b]
+			if x.Name == y.Name {
+				return x.ID < y.ID
+			}
+			return x.Name < y.Name
+		})
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].Project == "" {
+			return false
+		}
+		if groups[j].Project == "" {
+			return true
+		}
+		return groups[i].Project < groups[j].Project
+	})
+	return groups
 }
 
 func (app *App) withBase(path string) string {
@@ -152,6 +194,7 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	if err = h.request(r, "GET", "/v1/inventory", nil, &d.Inventory); err != nil {
 		d.Error = err.Error()
 	}
+	d.ContainerGroups = groupContainers(d.Inventory.Containers)
 	d.ResourceSections = []resourceSection{{Kind: "image", Title: "Images"}, {Kind: "volume", Title: "Volumes"}, {Kind: "network", Title: "Networks"}}
 	for _, resource := range d.Inventory.Resources {
 		for i := range d.ResourceSections {
@@ -174,16 +217,6 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		} else {
 			d.Job = &job
 			d.Refresh = job.Status == "running" || job.Status == "updating"
-		}
-	}
-	rows, err := app.db.Query(`SELECT stack_name,action,status,output,created_at FROM activity_log ORDER BY id DESC LIMIT 100`)
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			var entry historyEntry
-			if rows.Scan(&entry.Host, &entry.Action, &entry.Status, &entry.Output, &entry.Created) == nil {
-				d.History = append(d.History, entry)
-			}
 		}
 	}
 	app.render(w, r, "manage.html", d)
@@ -210,6 +243,6 @@ func (app *App) action(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error()+". Submission outcome may be unknown; inspect operation history before retrying.", 502)
 		return
 	}
-	app.logActivity(h.ID, a.Kind+" "+a.Operation, "submitted", a.ID+" job="+j.ID)
+	log.Printf("submitted agent operation: host=%q kind=%q action=%q target=%q job=%q", h.ID, a.Kind, a.Operation, a.ID, j.ID)
 	http.Redirect(w, r, app.withBase("/")+"?host="+url.QueryEscape(h.ID)+"&job="+url.QueryEscape(j.ID), http.StatusSeeOther)
 }

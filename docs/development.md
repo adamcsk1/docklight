@@ -19,9 +19,9 @@ Use a fully patched supported Go toolchain for local builds. The Dockerfile and 
 
 ## Browser presentation checks
 
-The UI retains Docklight's original dark monospace palette, resource grids, buttons and badges. It uses no JavaScript or inline styles. Navigation remains visible on mobile and scrolls horizontally when needed. The Content Security Policy permits only same-origin CSS and images; it does not allow inline styles or scripts.
+The UI retains Docklight's original dark monospace palette, resource grids, buttons and badges. Containers are grouped by Compose project in native collapsible sections, expanded by default, with running/total counts and a separate standalone group. Groups and containers are sorted by name. It uses no JavaScript or inline styles. Navigation remains visible on mobile and scrolls horizontally when needed. The Content Security Policy permits only same-origin CSS and images; it does not allow inline styles or scripts.
 
-CI uses Playwright as an isolated test tool, not an application dependency. The browser test starts a temporary UI with a fake agent; it never calls Docker. It checks login, host selection, protected/read-only actions, confirmation, operation output escaping and logout at 1440, 900, 390 and 320 pixel widths, both at `/` and `/docklight`, with JavaScript disabled. It also checks overflow, original design colors, section navigation and browser/CSP errors.
+CI uses Playwright as an isolated test tool, not an application dependency. The browser test starts a temporary UI with a fake agent; it never calls Docker. It checks login, stack grouping/counts and keyboard collapse, host selection, protected/read-only actions, confirmation, operation output escaping and logout at 1440, 900, 390 and 320 pixel widths, both at `/` and `/docklight`, with JavaScript disabled. It also checks overflow, original design colors, section navigation and browser/CSP errors. Go tests cover the session-only database schema, persisted sessions and refusal to modify incompatible databases.
 
 To run locally on Linux:
 

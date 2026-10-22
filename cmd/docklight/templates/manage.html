@@ -17,16 +17,19 @@
   <div class="section-head"><h2 id="containers-title">Containers</h2><span class="badge">{{len .Inventory.Containers}} total</span></div>
   <p class="form-hint">Recreate preserves exact current images without pulling or building. Upgrade pulls first. Stop containers before deletion; volumes and Compose files are preserved.</p>
   {{if .Inventory.Containers}}
-  <div class="resource-table" role="table" aria-label="Containers">
+  {{range .ContainerGroups}}
+  <details class="stack-group" open aria-label="{{if .Project}}Compose stack {{.Project}}{{else}}Standalone containers{{end}}">
+    <summary class="stack-summary"><span class="stack-heading"><span class="stack-name">{{if .Project}}{{.Project}}{{else}}Standalone containers{{end}}</span><span class="badge {{if eq .Running (len .Containers)}}badge-running{{else if .Running}}badge-partial{{else}}badge-stopped{{end}}">{{.Running}} / {{len .Containers}} running</span></span></summary>
+  <div class="resource-table" role="table" aria-label="{{if .Project}}Containers in {{.Project}}{{else}}Standalone containers{{end}}">
     <div class="resource-row resource-head resource-row-containers" role="row">
-      <span role="columnheader">container</span><span role="columnheader">image</span><span role="columnheader">state</span><span role="columnheader">owner</span><span role="columnheader">actions</span>
+      <span role="columnheader">container</span><span role="columnheader">image</span><span role="columnheader">state</span><span role="columnheader">service</span><span role="columnheader">actions</span>
     </div>
-    {{range .Inventory.Containers}}
+    {{range .Containers}}
     <article class="resource-row resource-row-containers" role="row">
       <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">container</span><strong>{{.Name}}</strong><p class="muted resource-id">{{.ID}}</p></div>
       <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">image</span>{{.Image}}</div>
       <div role="cell"><span class="cell-label" aria-hidden="true">state</span><span class="badge badge-{{.State}}">{{.State}}</span></div>
-      <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">owner</span>{{if .Project}}{{.Project}}{{else}}standalone{{end}}{{if .Service}}<p class="muted">svc={{.Service}}</p>{{end}}{{if .Protected}}<p class="muted">protected: management</p>{{end}}</div>
+      <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">service</span>{{if .Service}}{{.Service}}{{else}}-{{end}}{{if .Protected}}<p class="muted">protected: management</p>{{end}}</div>
       <div role="cell">
         <span class="cell-label" aria-hidden="true">actions</span>
         <form class="container-actions" method="post" action="{{$.Base}}/action" aria-label="Actions for {{.Name}}">
@@ -55,6 +58,8 @@
     </article>
     {{end}}
   </div>
+  </details>
+  {{end}}
   {{else}}<div class="empty"><h3>No containers</h3><p class="muted">No container inventory available for this host.</p></div>{{end}}
 </section>
 
@@ -90,9 +95,6 @@
   {{if .Jobs}}<div class="activity-list">{{range .Jobs}}
     <article class="activity-item"><div class="activity-head"><a class="stack-name" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}">{{.Action.Kind}} {{.Action.Operation}}</a><span class="badge badge-{{.Status}}">{{.Status}}</span></div><p class="muted resource-break">{{.Started}} · target={{.Action.ID}}</p></article>
   {{end}}</div>{{else}}<div class="empty"><h3>No operations</h3><p class="muted">Operations for the selected host will appear here.</p></div>{{end}}
-  <details class="panel history-panel"><summary>UI activity and retained legacy history</summary>
-    {{range .History}}<article class="activity-item"><div class="activity-head"><strong>{{.Host}} · {{.Action}}</strong><span class="badge badge-{{.Status}}">{{.Status}}</span></div><p class="muted">{{.Created}}</p><pre>{{.Output}}</pre></article>{{else}}<p class="muted">No retained UI activity.</p>{{end}}
-  </details>
 </section>
 
 {{template "layout_end" .}}

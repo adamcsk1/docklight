@@ -38,7 +38,7 @@ func newTestApp(t *testing.T) *App {
 func session(t *testing.T, a *App) *http.Cookie {
 	t.Helper()
 	id := "test-session"
-	if _, err := a.db.Exec(`INSERT INTO sessions(id_hash,username,expires_at) VALUES(?,'admin',?)`, a.sessionIDHash(id), time.Now().Add(time.Hour).Format(time.RFC3339)); err != nil {
+	if _, err := a.db.Exec(`INSERT INTO sessions(id_hash,expires_at) VALUES(?,?)`, a.sessionIDHash(id), time.Now().Add(time.Hour).Format(time.RFC3339)); err != nil {
 		t.Fatal(err)
 	}
 	return &http.Cookie{Name: "docklight_session", Value: a.signSessionID(id)}
@@ -169,7 +169,7 @@ func TestHostIsolationTokenSecrecyAndEscapedOutput(t *testing.T) {
 			counter.Add(1)
 			switch r.URL.Path {
 			case "/v1/inventory":
-				_ = json.NewEncoder(w).Encode(management.Inventory{Containers: []management.Container{{Name: "<script>alert(1)</script>"}}})
+				_ = json.NewEncoder(w).Encode(management.Inventory{Containers: []management.Container{{Name: "<script>alert(1)</script>", Project: "<script>project</script>"}}})
 			case "/v1/jobs":
 				if r.Method == "GET" {
 					_, _ = io.WriteString(w, "[]")
@@ -204,6 +204,9 @@ func TestHostIsolationTokenSecrecyAndEscapedOutput(t *testing.T) {
 	}
 	if strings.Contains(body, "<script>") || strings.Contains(body, ta) || strings.Contains(body, tb) || !strings.Contains(body, "&lt;script&gt;") {
 		t.Fatal("unescaped output or leaked secret")
+	}
+	if !strings.Contains(body, "&lt;script&gt;project&lt;/script&gt;") {
+		t.Fatal("project heading missing or not escaped")
 	}
 	values := url.Values{"host": {"b"}, "kind": {"container"}, "id": {"id"}, "operation": {"stop"}}
 	w = httptest.NewRecorder()
@@ -265,39 +268,6 @@ func TestTLSAndRedirectsFailClosed(t *testing.T) {
 	}
 }
 
-func TestLegacyMigrationPreservesDataAndBacksUp(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "legacy.db")
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	if _, err = db.Exec(`CREATE TABLE stacks(name TEXT); INSERT INTO stacks VALUES('important'); CREATE TABLE activity_log(id INTEGER PRIMARY KEY,stack_name TEXT,action TEXT,status TEXT,output TEXT,created_at TEXT); INSERT INTO activity_log VALUES(1,'old','upgrade','success','history',CURRENT_TIMESTAMP); CREATE TABLE sessions(id TEXT PRIMARY KEY,username TEXT,expires_at TEXT);`); err != nil {
-		t.Fatal(err)
-	}
-	a := &App{db: db, cfg: Config{DBPath: path}}
-	if err = a.initDB(); err != nil {
-		t.Fatal(err)
-	}
-	var name, output string
-	if err = db.QueryRow(`SELECT name FROM stacks`).Scan(&name); err != nil || name != "important" {
-		t.Fatal("stack metadata lost", err)
-	}
-	if err = db.QueryRow(`SELECT output FROM activity_log`).Scan(&output); err != nil || output != "history" {
-		t.Fatal("history lost", err)
-	}
-	if _, err = os.Stat(path + ".pre-agent.bak"); err != nil {
-		t.Fatal("no migration backup", err)
-	}
-	if _, err = db.Exec(`INSERT INTO sessions(id_hash,username,expires_at) VALUES('hash','admin','future')`); err != nil {
-		t.Fatal("session migration", err)
-	}
-	if err = a.initDB(); err != nil {
-		t.Fatal("migration not idempotent", err)
-	}
-}
-
 func TestRoutesRequireAuthenticationAndRemovedFeaturesUnavailable(t *testing.T) {
 	a := newTestApp(t)
 	for _, path := range []string{"/docklight/", "/docklight/action"} {
@@ -326,7 +296,7 @@ func TestRoutesRequireAuthenticationAndRemovedFeaturesUnavailable(t *testing.T) 
 }
 
 func TestConfigurationValidation(t *testing.T) {
-	t.Setenv("ADMIN_USER", "")
+	t.Setenv("DB_PATH", "")
 	t.Setenv("ADMIN_PASSWORD", "password")
 	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))
 	t.Setenv("BASE_URL", "/docklight")
@@ -343,6 +313,9 @@ func TestConfigurationValidation(t *testing.T) {
 	cfg, err := loadConfig()
 	if err != nil || len(cfg.Hosts) != 1 || cfg.Hosts[0].client == nil {
 		t.Fatal("valid config", err)
+	}
+	if cfg.DBPath != "/data/sessions.db" {
+		t.Fatalf("unexpected session database default: %s", cfg.DBPath)
 	}
 	for _, content := range []string{valid + "unknown: true\n", valid + "---\n{}", "hosts: []", strings.ReplaceAll(valid, "https://", "http://"), strings.ReplaceAll(valid, strings.Repeat("t", 32), "short")} {
 		write(content)
@@ -364,15 +337,9 @@ func TestConfigurationValidation(t *testing.T) {
 	}
 }
 
-func TestSessionDatabaseFailureAndLegacyIdentityFailClosed(t *testing.T) {
+func TestSessionDatabaseFailureFailsClosed(t *testing.T) {
 	a := newTestApp(t)
 	c := session(t, a)
-	if _, err := a.db.Exec(`UPDATE sessions SET username='legacy-user'`); err != nil {
-		t.Fatal(err)
-	}
-	if a.validSession(c.Value) {
-		t.Fatal("legacy named-user session accepted")
-	}
 	if _, err := a.db.Exec(`DROP TABLE sessions`); err != nil {
 		t.Fatal(err)
 	}

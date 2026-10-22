@@ -68,7 +68,7 @@ func TestRestoredPresentationAndEmbeddedAssets(t *testing.T) {
 	for _, base := range []string{"/", "/docklight"} {
 		a.cfg.BaseURL = base
 		cookie := &http.Cookie{Name: "docklight_session", Value: a.signSessionID("presentation")}
-		if _, err := a.db.Exec(`INSERT OR REPLACE INTO sessions(id_hash,username,expires_at) VALUES(?,'admin','2099-01-01T00:00:00Z')`, a.sessionIDHash("presentation")); err != nil {
+		if _, err := a.db.Exec(`INSERT OR REPLACE INTO sessions(id_hash,expires_at) VALUES(?,'2099-01-01T00:00:00Z')`, a.sessionIDHash("presentation")); err != nil {
 			t.Fatal(err)
 		}
 		r := httptest.NewRequest("GET", "https://docklight.local"+a.withBase("/")+"?host=pi", nil)
@@ -89,10 +89,18 @@ func TestRestoredPresentationAndEmbeddedAssets(t *testing.T) {
 				t.Fatalf("missing/duplicate section %s", id)
 			}
 		}
-		for _, forbidden := range []string{`style=`, `<style`, `<script`, `htmx`, `name="username"`, `/exec`, `/stacks/new`} {
+		for _, forbidden := range []string{`style=`, `<style`, `<script`, `htmx`, `name="username"`, `/exec`, `/stacks/new`, `UI activity`, `legacy history`, `history-panel`} {
 			if strings.Contains(body, forbidden) {
 				t.Fatalf("obsolete/inline content: %s", forbidden)
 			}
+		}
+		for _, label := range []string{`aria-label="Compose stack docklight"`, `aria-label="Compose stack web"`, `aria-label="Standalone containers"`, `1 / 2 running`} {
+			if !strings.Contains(body, label) {
+				t.Fatalf("missing stack grouping: %s", label)
+			}
+		}
+		if strings.Count(body, `class="stack-group" open`) != 3 {
+			t.Fatal("stack groups must all start expanded")
 		}
 		for path, contentType := range map[string]string{"/static/app.css": "text/css", "/static/logo.ico": "image/"} {
 			asset := httptest.NewRecorder()
