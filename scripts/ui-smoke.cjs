@@ -110,6 +110,16 @@ const path = require("node:path");
       await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
       await assertLayout();
       assert((await page.getByLabel("Operation output").textContent()).includes("<script>not executable</script>"));
+      const title = await page.locator("#operation-title").boundingBox();
+      const status = await page.locator("[data-operation-status]").boundingBox();
+      const close = await page.getByRole("link", { name: "Close output", exact: true }).boundingBox();
+      if (width >= 900) {
+        assert(Math.abs(title.y + title.height / 2 - status.y - status.height / 2) <= 2, "operation title/status not vertically aligned");
+        assert(status.x - title.x - title.width <= 25, "status pill separated from operation title");
+        assert(close.x > status.x + status.width, "Close output not right of title/status");
+      } else {
+        assert(close.y >= Math.max(title.y + title.height, status.y + status.height), "mobile close control overlaps operation heading");
+      }
       await page.getByRole("link", { name: "Close output", exact: true }).click();
       await page.waitForURL(`${base}/?host=pi&job=presentation-job&output=hidden`);
       assert.equal(await page.getByLabel("Operation output").isVisible(), false);

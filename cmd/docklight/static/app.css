@@ -157,6 +157,7 @@ a { color: inherit; }
   gap: var(--space-3);
 }
 .resource-section { display: grid; gap: var(--space-3); margin-bottom: var(--space-8); }
+.operation-heading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); min-width: 0; }
 .resource-table {
   display: grid;
   gap: var(--line-width);

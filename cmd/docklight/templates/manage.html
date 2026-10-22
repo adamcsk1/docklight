@@ -4,8 +4,10 @@
 <p data-operation-reopen {{if not $.HideOutput}}hidden{{end}}><a class="button button-ghost" data-operation-toggle="show" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}">Show output</a></p>
 <section id="operation-panel" class="panel" aria-labelledby="operation-title" data-operation-url="{{$.Base}}/operation?host={{$.HostID}}&amp;job={{.ID}}" data-status="{{.Status}}" {{if $.HideOutput}}hidden{{end}}>
   <div class="operation-head">
-    <h2 id="operation-title">{{.Action.Kind}} {{.Action.Operation}}</h2>
-    <span class="badge badge-{{.Status}}" data-operation-status>{{.Status}}</span>
+    <div class="operation-heading">
+      <h2 id="operation-title">{{.Action.Kind}} {{.Action.Operation}}</h2>
+      <span class="badge badge-{{.Status}}" data-operation-status>{{.Status}}</span>
+    </div>
     <a class="button button-ghost" data-operation-toggle="hide" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}&amp;output=hidden">Close output</a>
   </div>
   <p class="muted">{{.Started}} · target={{.Action.ID}}</p>
