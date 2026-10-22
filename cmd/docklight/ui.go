@@ -17,10 +17,15 @@ import (
 
 type hostView struct{ ID, Name string }
 type historyEntry struct{ Host, Action, Status, Output, Created string }
+type resourceSection struct {
+	Kind, Title string
+	Items       []management.Resource
+}
 type PageData struct {
 	Title, Error, CSRF, Base, HostID string
 	Hosts                            []hostView
 	Inventory                        management.Inventory
+	ResourceSections                 []resourceSection
 	Jobs                             []management.Job
 	Job                              *management.Job
 	History                          []historyEntry
@@ -35,7 +40,7 @@ func (app *App) withBase(path string) string {
 }
 func (app *App) loadTemplates() error {
 	var err error
-	app.templates, err = template.New("").ParseFS(webFS, "templates/login.html", "templates/manage.html")
+	app.templates, err = template.New("").ParseFS(webFS, "templates/*.html")
 	return err
 }
 func (app *App) render(w http.ResponseWriter, r *http.Request, name string, data PageData) {
@@ -54,11 +59,11 @@ func (app *App) render(w http.ResponseWriter, r *http.Request, name string, data
 
 func (app *App) routes() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET "+app.withBase("/static/manage.css"), func(w http.ResponseWriter, r *http.Request) {
-		b, _ := webFS.ReadFile("static/manage.css")
-		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-		_, _ = w.Write(b)
-	})
+	for _, asset := range []string{"app.css", "logo.ico"} {
+		mux.HandleFunc("GET "+app.withBase("/static/"+asset), func(w http.ResponseWriter, r *http.Request) {
+			http.ServeFileFS(w, r, webFS, "static/"+asset)
+		})
+	}
 	mux.HandleFunc("GET "+app.withBase("/login"), app.loginPage)
 	mux.HandleFunc("POST "+app.withBase("/login"), func(w http.ResponseWriter, r *http.Request) {
 		if !validRequestOrigin(r) {
@@ -83,8 +88,7 @@ func (app *App) routes() http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		// Allow the reported inline style, including attributes, without permitting arbitrary inline CSS.
-		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self' 'unsafe-hashes' 'sha256-vKC/3e+58wt3AEEnUImhhkZlNJYe2iGGM4zT9jQL6x0='; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		r.Body = http.MaxBytesReader(w, r.Body, 8192)
 		mux.ServeHTTP(w, r)
 	})
@@ -141,12 +145,20 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	d := PageData{Title: "Docklight", HostID: h.ID}
+	d := PageData{Title: "Containers", HostID: h.ID}
 	for _, host := range app.cfg.Hosts {
 		d.Hosts = append(d.Hosts, hostView{host.ID, host.Name})
 	}
 	if err = h.request(r, "GET", "/v1/inventory", nil, &d.Inventory); err != nil {
 		d.Error = err.Error()
+	}
+	d.ResourceSections = []resourceSection{{Kind: "image", Title: "Images"}, {Kind: "volume", Title: "Volumes"}, {Kind: "network", Title: "Networks"}}
+	for _, resource := range d.Inventory.Resources {
+		for i := range d.ResourceSections {
+			if d.ResourceSections[i].Kind == resource.Kind {
+				d.ResourceSections[i].Items = append(d.ResourceSections[i].Items, resource)
+			}
+		}
 	}
 	if err = h.request(r, "GET", "/v1/jobs", nil, &d.Jobs); err != nil {
 		d.Error = err.Error()

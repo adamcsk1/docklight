@@ -1,4 +1,16 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Login · Docklight</title><link rel="stylesheet" href="{{.Base}}/static/manage.css"></head>
-<body><main class="login"><h1>Docklight</h1><h2>Login</h2>{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
-<form method="post" action="{{.Base}}/login"><label>Admin password <input name="password" type="password" autocomplete="current-password" required></label><button>Sign in</button></form></main></body></html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body class="login-body">
+  <main class="login-panel">
+    <p class="eyebrow">docker host management</p>
+    <h1>Docklight</h1>
+    <p class="metric-line">Sign in to manage your Docker hosts.</p>
+    {{if .Error}}<p class="alert alert-danger" role="alert">{{.Error}}</p>{{end}}
+    <form class="form" method="post" action="{{.Base}}/login">
+      <label><span>Admin password</span><input name="password" type="password" autocomplete="current-password" required></label>
+      <button class="button button-primary" type="submit">Login</button>
+    </form>
+  </main>
+</body>
+</html>

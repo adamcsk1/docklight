@@ -1,0 +1,50 @@
+{{define "head"}}
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{if .Title}}{{.Title}} · {{end}}Docklight</title>
+  <link rel="icon" href="{{.Base}}/static/logo.ico" type="image/x-icon">
+  <link rel="stylesheet" href="{{.Base}}/static/app.css">
+  {{if .Refresh}}<meta http-equiv="refresh" content="3">{{end}}
+{{end}}
+
+{{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}
+
+{{define "layout_start"}}
+<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <a class="brand" href="{{.Base}}/?host={{.HostID}}">Docklight</a>
+    <nav class="nav" aria-label="Main navigation">
+      <a href="#containers">containers</a>
+      <a href="#images">images</a>
+      <a href="#volumes">volumes</a>
+      <a href="#networks">networks</a>
+      <a href="#activity">activity</a>
+    </nav>
+    <form method="post" action="{{.Base}}/logout">
+      {{template "csrf" .}}
+      <button class="button button-ghost" type="submit">Logout</button>
+    </form>
+  </header>
+  <main class="page" id="main">
+    <section class="page-head">
+      <div><p class="eyebrow">docker host management</p><h1>Containers</h1><p class="metric-line">{{len .Inventory.Containers}} containers · {{len .Inventory.Resources}} resources</p></div>
+      <form class="host-form" method="get" action="{{.Base}}/">
+        <label for="host">Docker host</label>
+        <div class="host-controls">
+          <select id="host" name="host">{{range .Hosts}}<option value="{{.ID}}" {{if eq $.HostID .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
+          <button class="button button-primary" type="submit">Connect</button>
+        </div>
+      </form>
+    </section>
+    {{if .Error}}<section class="alert alert-danger" role="alert">{{.Error}}</section>{{end}}
+{{end}}
+
+{{define "layout_end"}}
+  </main>
+</body>
+</html>
+{{end}}

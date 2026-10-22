@@ -1,24 +1,98 @@
-<!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">{{if .Refresh}}<meta http-equiv="refresh" content="3">{{end}}<title>Docklight</title><link rel="stylesheet" href="{{.Base}}/static/manage.css"></head>
-<body><main><header><h1>Docklight</h1><form method="post" action="{{.Base}}/logout"><input type="hidden" name="csrf_token" value="{{.CSRF}}"><button>Sign out</button></form></header>
-<nav aria-label="Docker hosts">{{range .Hosts}}<a href="{{$.Base}}/?host={{.ID}}" {{if eq $.HostID .ID}}aria-current="page"{{end}}>{{.Name}}</a>{{end}}</nav>
-{{if .Error}}<p role="alert">{{.Error}}</p>{{end}}
-{{with .Job}}<section><h2>Operation: {{.Action.Operation}} — {{.Status}}</h2><p>{{.Started}}</p><pre>{{.Output}}</pre>{{if eq .Status "updating"}}<p>Management update running. Agent may briefly disconnect. Refresh to reconnect.</p>{{end}}</section>{{end}}
-<h2>Containers</h2><p>Start/stop/delete work for all containers. Recreate and upgrade require accessible Compose files. Recreate preserves exact current images; upgrade pulls first. Stop before deleting. Data volumes are never removed with containers.</p>
-<div class="table"><table><thead><tr><th>Stack / container</th><th>Image</th><th>State</th><th>Actions</th></tr></thead><tbody>
-{{range .Inventory.Containers}}<tr><td>{{if .Project}}<strong>{{.Project}}</strong><br>{{end}}{{.Name}}{{if .Service}}<small>{{.Service}}</small>{{end}}</td><td>{{.Image}}</td><td>{{.State}}{{if .Protected}}<small>Protected management container</small>{{end}}</td><td>
-<form method="post" action="{{$.Base}}/action"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="kind" value="container">
-{{if .Protected}}{{if .ComposeAvailable}}<label><input type="checkbox" name="confirmed" value="yes" required> Confirm management update</label><button name="operation" value="update">Update</button>{{else}}Update unavailable: Compose files not mounted{{end}}
-{{else}}
-{{if .ComposeAvailable}}<label>Target <select name="scope"><option value="service">Compose service (all replicas)</option><option value="stack">Whole stack</option><option value="">This container (start/stop/delete only)</option></select></label>{{end}}
-<div class="buttons"><button name="operation" value="start">Start</button><button name="operation" value="stop">Stop</button>{{if .ComposeAvailable}}<button name="operation" value="recreate">Recreate</button><button name="operation" value="upgrade">Upgrade</button>{{end}}</div>
-<label><input type="checkbox" name="confirmed" value="yes"> Confirm deletion</label><button class="danger" name="operation" value="delete">Delete stopped</button>
-{{end}}</form></td></tr>{{else}}<tr><td colspan="4">No containers found.</td></tr>{{end}}
-</tbody></table></div>
-<h2>Images, volumes and networks</h2><p>Referenced resources are read-only, including references from stopped containers. Deleting unused volumes permanently destroys their data.</p>
-<div class="table"><table><thead><tr><th>Kind</th><th>Name</th><th>Usage</th><th>Action</th></tr></thead><tbody>
-{{range .Inventory.Resources}}<tr><td>{{.Kind}}</td><td>{{.Name}}</td><td>{{range .UsedBy}}{{.}}<br>{{else}}Unused{{end}}</td><td>{{if or .UsedBy .Protected}}Read-only{{else}}<form method="post" action="{{$.Base}}/action"><input type="hidden" name="csrf_token" value="{{$.CSRF}}"><input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="kind" value="{{.Kind}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="operation" value="delete"><label><input type="checkbox" name="confirmed" value="yes" required> Permanently delete</label><button class="danger">Delete</button></form>{{end}}</td></tr>{{end}}
-</tbody></table></div>
-<h2>Host operations</h2><ul>{{range .Jobs}}<li><a href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}">{{.Started}} · {{.Action.Kind}} {{.Action.Operation}} · {{.Status}}</a></li>{{else}}<li>No operations yet.</li>{{end}}</ul>
-<details><summary>UI activity and retained legacy history</summary>{{range .History}}<p>{{.Created}} · {{.Host}} · {{.Action}} · {{.Status}}</p><pre>{{.Output}}</pre>{{end}}</details>
-</main></body></html>
+{{template "layout_start" .}}
+
+{{with .Job}}
+<section class="panel" aria-labelledby="operation-title">
+  <div class="activity-head">
+    <h2 id="operation-title">{{.Action.Kind}} {{.Action.Operation}}</h2>
+    <span class="badge badge-{{.Status}}">{{.Status}}</span>
+  </div>
+  <p class="muted">{{.Started}} · target={{.Action.ID}}</p>
+  {{if eq .Status "running"}}<p class="form-hint" role="status">Operation running. This page refreshes every three seconds.</p>{{end}}
+  {{if eq .Status "updating"}}<p class="form-hint" role="status">Management update running. The agent may briefly disconnect. Refresh to reconnect.</p>{{end}}
+  <pre class="activity-output" aria-label="Operation output">{{.Output}}</pre>
+</section>
+{{end}}
+
+<section class="resource-section" id="containers" aria-labelledby="containers-title">
+  <div class="section-head"><h2 id="containers-title">Containers</h2><span class="badge">{{len .Inventory.Containers}} total</span></div>
+  <p class="form-hint">Recreate preserves exact current images without pulling or building. Upgrade pulls first. Stop containers before deletion; volumes and Compose files are preserved.</p>
+  {{if .Inventory.Containers}}
+  <div class="resource-table" role="table" aria-label="Containers">
+    <div class="resource-row resource-head resource-row-containers" role="row">
+      <span role="columnheader">container</span><span role="columnheader">image</span><span role="columnheader">state</span><span role="columnheader">owner</span><span role="columnheader">actions</span>
+    </div>
+    {{range .Inventory.Containers}}
+    <article class="resource-row resource-row-containers" role="row">
+      <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">container</span><strong>{{.Name}}</strong><p class="muted resource-id">{{.ID}}</p></div>
+      <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">image</span>{{.Image}}</div>
+      <div role="cell"><span class="cell-label" aria-hidden="true">state</span><span class="badge badge-{{.State}}">{{.State}}</span></div>
+      <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">owner</span>{{if .Project}}{{.Project}}{{else}}standalone{{end}}{{if .Service}}<p class="muted">svc={{.Service}}</p>{{end}}{{if .Protected}}<p class="muted">protected: management</p>{{end}}</div>
+      <div role="cell">
+        <span class="cell-label" aria-hidden="true">actions</span>
+        <form class="container-actions" method="post" action="{{$.Base}}/action" aria-label="Actions for {{.Name}}">
+          {{template "csrf" $}}
+          <input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="kind" value="container">
+          {{if .Protected}}
+            {{if .ComposeAvailable}}
+              <label class="switch-label"><input type="checkbox" name="confirmed" value="yes" required><span>confirm management update</span></label>
+              <button class="button button-secondary" name="operation" value="update" type="submit">Update</button>
+            {{else}}<p class="muted">Update unavailable: Compose files not mounted.</p>{{end}}
+          {{else}}
+            {{if .ComposeAvailable}}<label class="scope-label"><span>Target</span><select name="scope"><option value="service">Compose service (all replicas)</option><option value="stack">Whole stack</option><option value="">This container (start/stop/delete only)</option></select></label>{{end}}
+            <div class="actions">
+              <button class="button button-primary" name="operation" value="start" type="submit">Start</button>
+              <button class="button" name="operation" value="stop" type="submit">Stop</button>
+              {{if .ComposeAvailable}}<button class="button" name="operation" value="recreate" type="submit">Recreate</button><button class="button button-secondary" name="operation" value="upgrade" type="submit">Upgrade</button>{{end}}
+            </div>
+            <div class="delete-action">
+              <label class="switch-label"><input type="checkbox" name="confirmed" value="yes"><span>confirm deletion</span></label>
+              <button class="button button-danger" name="operation" value="delete" type="submit" {{if not (or (eq .State "exited") (eq .State "created") (eq .State "dead"))}}disabled title="Stop this container before deleting"{{end}}>Delete stopped</button>
+            </div>
+            {{if not .ComposeAvailable}}<p class="muted">Recreate/upgrade require accessible Compose files.</p>{{end}}
+          {{end}}
+        </form>
+      </div>
+    </article>
+    {{end}}
+  </div>
+  {{else}}<div class="empty"><h3>No containers</h3><p class="muted">No container inventory available for this host.</p></div>{{end}}
+</section>
+
+{{range .ResourceSections}}
+<section class="resource-section" id="{{.Kind}}s" aria-labelledby="{{.Kind}}s-title">
+  <div class="section-head"><h2 id="{{.Kind}}s-title">{{.Title}}</h2><span class="badge">{{len .Items}} total</span></div>
+  <p class="form-hint">Referenced resources are read-only, including references from stopped containers.{{if eq .Kind "volume"}} Deleting an unused volume permanently destroys its data.{{end}}</p>
+  {{if .Items}}
+  <div class="resource-table" role="table" aria-label="{{.Title}}">
+    <div class="resource-row resource-head resource-row-cleanup" role="row"><span role="columnheader">name</span><span role="columnheader">used by</span><span role="columnheader">actions</span></div>
+    {{range .Items}}
+    <article class="resource-row resource-row-cleanup" role="row">
+      <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">name</span><strong>{{.Name}}</strong>{{if ne .ID .Name}}<p class="muted resource-id">{{.ID}}</p>{{end}}</div>
+      <div role="cell" class="resource-users"><span class="cell-label" aria-hidden="true">used by</span>{{range .UsedBy}}<span class="resource-break">{{.}}</span>{{else}}<span class="badge badge-unused">unused</span>{{end}}{{if .Protected}}<span class="muted">protected resource</span>{{end}}</div>
+      <div role="cell"><span class="cell-label" aria-hidden="true">actions</span>
+        {{if or .UsedBy .Protected}}<span class="badge badge-muted">read-only</span>{{else}}
+        <form class="cleanup-actions" method="post" action="{{$.Base}}/action" aria-label="Delete {{.Kind}} {{.Name}}">
+          {{template "csrf" $}}
+          <input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="kind" value="{{.Kind}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="operation" value="delete">
+          <label class="switch-label"><input type="checkbox" name="confirmed" value="yes" required><span>permanently delete</span></label>
+          <button class="button button-danger" type="submit">Delete</button>
+        </form>{{end}}
+      </div>
+    </article>
+    {{end}}
+  </div>
+  {{else}}<div class="empty"><h3>No {{.Title}}</h3><p class="muted">No inventory available for this resource type.</p></div>{{end}}
+</section>
+{{end}}
+
+<section class="resource-section" id="activity" aria-labelledby="activity-title">
+  <div class="section-head"><h2 id="activity-title">Activity</h2><span class="badge">{{len .Jobs}} operations</span></div>
+  {{if .Jobs}}<div class="activity-list">{{range .Jobs}}
+    <article class="activity-item"><div class="activity-head"><a class="stack-name" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}">{{.Action.Kind}} {{.Action.Operation}}</a><span class="badge badge-{{.Status}}">{{.Status}}</span></div><p class="muted resource-break">{{.Started}} · target={{.Action.ID}}</p></article>
+  {{end}}</div>{{else}}<div class="empty"><h3>No operations</h3><p class="muted">Operations for the selected host will appear here.</p></div>{{end}}
+  <details class="panel history-panel"><summary>UI activity and retained legacy history</summary>
+    {{range .History}}<article class="activity-item"><div class="activity-head"><strong>{{.Host}} · {{.Action}}</strong><span class="badge badge-{{.Status}}">{{.Status}}</span></div><p class="muted">{{.Created}}</p><pre>{{.Output}}</pre></article>{{else}}<p class="muted">No retained UI activity.</p>{{end}}
+  </details>
+</section>
+
+{{template "layout_end" .}}

@@ -22,6 +22,18 @@ jobs:
       - run: go vet ./...
       - name: Check reachable Go vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install browser test tools outside the application
+        run: |
+          npm install --prefix "$RUNNER_TEMP/docklight-browser" --no-save --no-package-lock playwright@1.64.1
+          "$RUNNER_TEMP/docklight-browser/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Check original UI styling and responsive interactions
+        env:
+          NODE_PATH: ${{ runner.temp }}/docklight-browser/node_modules
+          DOCKLIGHT_UI_BROWSER_TEST: '1'
+        run: go test -v ./cmd/docklight -run TestBrowserPresentation -count=1 -timeout=5m
       - name: Build native images for management-update integration tests
         run: |
           docker build --target ui -t docklight:refactor .

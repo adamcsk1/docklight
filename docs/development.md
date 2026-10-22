@@ -17,6 +17,23 @@ Tests cover admin authentication/session expiry/throttling, CSRF/origin checks, 
 
 Use a fully patched supported Go toolchain for local builds. The Dockerfile and CI track the latest Go 1.26 patch release; a newer minor version with an old patch level can still contain known security flaws. CI also checks reachable Go vulnerabilities before publishing. This does not replace scanning runtime OS/Docker CLI dependencies or testing deployment security.
 
+## Browser presentation checks
+
+The UI retains Docklight's original dark monospace palette, resource grids, buttons and badges. It uses no JavaScript or inline styles. Navigation remains visible on mobile and scrolls horizontally when needed. The Content Security Policy permits only same-origin CSS and images; it does not allow inline styles or scripts.
+
+CI uses Playwright as an isolated test tool, not an application dependency. The browser test starts a temporary UI with a fake agent; it never calls Docker. It checks login, host selection, protected/read-only actions, confirmation, operation output escaping and logout at 1440, 900, 390 and 320 pixel widths, both at `/` and `/docklight`, with JavaScript disabled. It also checks overflow, original design colors, section navigation and browser/CSP errors.
+
+To run locally on Linux:
+
+```sh
+npm install --prefix /tmp/docklight-browser --no-save --no-package-lock playwright@1.64.1
+/tmp/docklight-browser/node_modules/.bin/playwright install --with-deps chromium
+NODE_PATH=/tmp/docklight-browser/node_modules DOCKLIGHT_UI_BROWSER_TEST=1 \
+  go test -v ./cmd/docklight -run TestBrowserPresentation -count=1 -timeout=5m
+```
+
+Optionally set `PLAYWRIGHT_BROWSER_CHANNEL=chrome` to use an installed Chrome browser, and `DOCKLIGHT_UI_SCREENSHOT_DIR` to retain screenshots outside the repository. Normal Go tests and Docker builds do not require Node or Playwright.
+
 ## Isolated Docker integration tests
 
 Never run destructive integration tests against a real host. Create a disposable nested daemon:
