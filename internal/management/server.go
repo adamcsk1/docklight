@@ -85,7 +85,6 @@ func NewServer(engine *Engine, token string) (*Server, error) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/inventory", s.inventory)
-	mux.HandleFunc("GET /v1/jobs", s.listJobs)
 	mux.HandleFunc("POST /v1/jobs", s.submit)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.job)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -287,20 +286,6 @@ func (s *Server) prune() {
 			delete(s.jobs, j.ID)
 		}
 	}
-}
-
-func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var jobs []Job
-	for _, j := range s.jobs {
-		s.refresh(j)
-		summary := j.Job
-		summary.Output = ""
-		jobs = append(jobs, summary)
-	}
-	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Started > jobs[j].Started })
-	writeJSON(w, jobs)
 }
 
 func (s *Server) job(w http.ResponseWriter, r *http.Request) {

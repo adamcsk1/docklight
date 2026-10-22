@@ -269,6 +269,21 @@ func TestBuildJobUsesSeparateTimeout(t *testing.T) {
 	t.Fatal("build job did not finish")
 }
 
+func TestOperationHistoryEndpointRemoved(t *testing.T) {
+	f := newFixture(t)
+	s, err := NewServer(f.e, testToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := agentRequest(s, "GET", "/v1/jobs", "", testToken)
+	if w.Code != 405 {
+		t.Fatalf("history endpoint remains: HTTP %d %s", w.Code, w.Body.String())
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("history request touched Docker: %v", f.calls)
+	}
+}
+
 func TestRecreatePinsExactImageAndNeverPullsBuildsOrDowns(t *testing.T) {
 	f := newFixture(t)
 	if err := f.e.Execute(context.Background(), Action{Kind: "container", ID: testID, Operation: "recreate", Scope: "service"}, io.Discard); err != nil {

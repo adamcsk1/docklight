@@ -10,7 +10,7 @@ Small, single-admin Docker manager for a home lab. One password-protected web UI
 - Upgrade Compose services with `docker compose pull` followed by `docker compose up -d`. A failed pull prevents the up step.
 - Delete selected unused images, volumes and networks. Referenced resources remain read-only, including references from stopped containers.
 - Update Docklight and its agents through detached helpers.
-- Inspect operation progress and retained results.
+- Show progress and errors for the submitted operation, without an Activity menu or history list.
 
 Standalone containers support start, stop and delete only. Docklight does not edit Compose files, create stacks, provide a terminal, or monitor CPU/memory.
 

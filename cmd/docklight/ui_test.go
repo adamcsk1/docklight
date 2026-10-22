@@ -232,7 +232,8 @@ func TestHostIsolationTokenSecrecyAndEscapedOutput(t *testing.T) {
 				_ = json.NewEncoder(w).Encode(management.Inventory{Containers: []management.Container{{Name: "<script>alert(1)</script>", Project: "<script>project</script>"}}})
 			case "/v1/jobs":
 				if r.Method == "GET" {
-					_, _ = io.WriteString(w, "[]")
+					t.Error("dashboard requested removed operation history")
+					http.Error(w, "history removed", http.StatusMethodNotAllowed)
 				} else {
 					w.WriteHeader(202)
 					_ = json.NewEncoder(w).Encode(management.Job{ID: "job-1"})
@@ -259,7 +260,7 @@ func TestHostIsolationTokenSecrecyAndEscapedOutput(t *testing.T) {
 		t.Fatalf("dashboard %d %s", w.Code, w.Body.String())
 	}
 	body := w.Body.String()
-	if callsA.Load() != 0 || callsB.Load() != 3 {
+	if callsA.Load() != 0 || callsB.Load() != 2 {
 		t.Fatalf("host leakage %d/%d", callsA.Load(), callsB.Load())
 	}
 	if strings.Contains(body, "<script>") || strings.Contains(body, ta) || strings.Contains(body, tb) || !strings.Contains(body, "&lt;script&gt;") {
@@ -282,6 +283,47 @@ func TestHostIsolationTokenSecrecyAndEscapedOutput(t *testing.T) {
 		if w.Code != 400 || callsB.Load() != before {
 			t.Fatal("unknown host fell back")
 		}
+	}
+}
+
+func TestOperationProgressSurvivesHistoryRemoval(t *testing.T) {
+	for _, status := range []string{"running", "updating", "success", "failed"} {
+		t.Run(status, func(t *testing.T) {
+			a := newTestApp(t)
+			var calls atomic.Int32
+			agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls.Add(1)
+				switch r.URL.Path {
+				case "/v1/inventory":
+					_ = json.NewEncoder(w).Encode(management.Inventory{})
+				case "/v1/jobs/test-job":
+					_ = json.NewEncoder(w).Encode(management.Job{ID: "test-job", Status: status, Action: management.Action{Kind: "container", Operation: "build"}, Output: "<script>build output</script>"})
+				default:
+					t.Errorf("unexpected agent request: %s", r.URL.Path)
+					http.NotFound(w, r)
+				}
+			}))
+			defer agent.Close()
+			a.cfg.Hosts = []Host{{ID: "local", Name: "Local", URL: agent.URL, Token: strings.Repeat("t", 32), AllowHTTP: true}}
+			if err := configureHosts(a.cfg.Hosts); err != nil {
+				t.Fatal(err)
+			}
+			cookie := session(t, a)
+			r := httptest.NewRequest("GET", "https://docklight.local/docklight/?host=local&job=test-job", nil)
+			r.AddCookie(cookie)
+			w := httptest.NewRecorder()
+			a.routes().ServeHTTP(w, r)
+			body := w.Body.String()
+			if w.Code != 200 || calls.Load() != 2 || !strings.Contains(body, `aria-label="Operation output"`) || !strings.Contains(body, "&lt;script&gt;build output&lt;/script&gt;") {
+				t.Fatalf("operation result lost: %d %s", w.Code, body)
+			}
+			if strings.Contains(body, `http-equiv="refresh"`) != (status == "running" || status == "updating") {
+				t.Fatalf("wrong polling state: %s", status)
+			}
+			if strings.Contains(body, "activity") || strings.Contains(body, "Activity") {
+				t.Fatal("activity feature still rendered")
+			}
+		})
 	}
 }
 

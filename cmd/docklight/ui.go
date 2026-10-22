@@ -33,7 +33,6 @@ type PageData struct {
 	Inventory                        management.Inventory
 	ContainerGroups                  []containerGroup
 	ResourceSections                 []resourceSection
-	Jobs                             []management.Job
 	Job                              *management.Job
 	Refresh                          bool
 }
@@ -203,9 +202,6 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if err = h.request(r, "GET", "/v1/jobs", nil, &d.Jobs); err != nil {
-		d.Error = err.Error()
-	}
 	if id := r.URL.Query().Get("job"); id != "" {
 		if !validID(id) {
 			http.Error(w, "invalid job ID", 400)
@@ -240,7 +236,7 @@ func (app *App) action(w http.ResponseWriter, r *http.Request) {
 	a := management.Action{Kind: r.PostForm.Get("kind"), ID: r.PostForm.Get("id"), Operation: r.PostForm.Get("operation"), Scope: r.PostForm.Get("scope"), Confirmed: r.PostForm.Get("confirmed") == "yes"}
 	var j management.Job
 	if err = h.request(r, "POST", "/v1/jobs", a, &j); err != nil {
-		http.Error(w, err.Error()+". Submission outcome may be unknown; inspect operation history before retrying.", 502)
+		http.Error(w, err.Error()+". Submission outcome may be unknown; inspect the host and agent logs before retrying.", 502)
 		return
 	}
 	log.Printf("submitted agent operation: host=%q kind=%q action=%q target=%q job=%q", h.ID, a.Kind, a.Operation, a.ID, j.ID)

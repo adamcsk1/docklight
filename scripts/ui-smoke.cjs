@@ -82,7 +82,7 @@ const path = require("node:path");
       const webGroup = page.locator('details.stack-group[aria-label="Compose stack web"]');
       assert((await webGroup.locator("summary").textContent()).includes("1 / 2 running"));
       assert.equal(await webGroup.getByRole("row").count(), 3);
-      assert.equal(await page.getByText("UI activity and retained legacy history", { exact: true }).count(), 0);
+      assert.equal(await page.locator('#activity, [href="#activity"], .activity-list, .activity-item').count(), 0);
       await webGroup.locator("summary").click();
       assert.equal(await webGroup.evaluate(group => group.open), false);
       assert.equal(await webGroup.getByRole("row").count(), 0);
@@ -121,7 +121,7 @@ const path = require("node:path");
       await unused.getByRole("button", { name: "Delete", exact: true }).click();
       await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
       await assertLayout();
-      for (const section of ["containers", "images", "networks", "activity"]) {
+      for (const section of ["containers", "images", "networks"]) {
         await page.getByRole("navigation").getByRole("link", { name: section, exact: true }).click();
         await page.waitForURL(`${base}/?host=pi&job=presentation-job#${section}`);
         const target = await page.locator(`#${section}`).boundingBox();

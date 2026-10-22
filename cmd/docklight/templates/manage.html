@@ -2,14 +2,14 @@
 
 {{with .Job}}
 <section class="panel" aria-labelledby="operation-title">
-  <div class="activity-head">
+  <div class="operation-head">
     <h2 id="operation-title">{{.Action.Kind}} {{.Action.Operation}}</h2>
     <span class="badge badge-{{.Status}}">{{.Status}}</span>
   </div>
   <p class="muted">{{.Started}} · target={{.Action.ID}}</p>
   {{if eq .Status "running"}}<p class="form-hint" role="status">{{if eq .Action.Operation "build"}}Build running; other mutations on this host are blocked. Builds may take up to two hours.{{else}}Operation running.{{end}} This page refreshes every three seconds.</p>{{end}}
   {{if eq .Status "updating"}}<p class="form-hint" role="status">Management update running. The agent may briefly disconnect. Refresh to reconnect.</p>{{end}}
-  <pre class="activity-output" aria-label="Operation output">{{.Output}}</pre>
+  <pre class="operation-output" aria-label="Operation output">{{.Output}}</pre>
 </section>
 {{end}}
 
@@ -91,12 +91,5 @@
   {{else}}<div class="empty"><h3>No {{.Title}}</h3><p class="muted">No inventory available for this resource type.</p></div>{{end}}
 </section>
 {{end}}
-
-<section class="resource-section" id="activity" aria-labelledby="activity-title">
-  <div class="section-head"><h2 id="activity-title">Activity</h2><span class="badge">{{len .Jobs}} operations</span></div>
-  {{if .Jobs}}<div class="activity-list">{{range .Jobs}}
-    <article class="activity-item"><div class="activity-head"><a class="stack-name" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}">{{.Action.Kind}} {{.Action.Operation}}</a><span class="badge badge-{{.Status}}">{{.Status}}</span></div><p class="muted resource-break">{{.Started}} · target={{.Action.ID}}</p></article>
-  {{end}}</div>{{else}}<div class="empty"><h3>No operations</h3><p class="muted">Operations for the selected host will appear here.</p></div>{{end}}
-</section>
 
 {{template "layout_end" .}}

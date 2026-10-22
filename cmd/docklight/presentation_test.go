@@ -50,7 +50,8 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(management.Job{ID: "presentation-job"})
 		case r.URL.Path == "/v1/jobs":
-			_ = json.NewEncoder(w).Encode([]management.Job{{ID: "presentation-job", Status: "success", Started: "2026-10-22T12:00:00Z", Action: management.Action{Kind: "container", Operation: "start", ID: "stopped-id"}}})
+			t.Error("dashboard requested removed operation history")
+			http.Error(w, "history removed", http.StatusMethodNotAllowed)
 		default:
 			_ = json.NewEncoder(w).Encode(management.Job{ID: "presentation-job", Status: "success", Output: strings.Repeat("long-output-without-spaces", 30) + "\n<script>not executable</script>"})
 		}
@@ -84,12 +85,12 @@ func TestRestoredPresentationAndEmbeddedAssets(t *testing.T) {
 				t.Fatalf("missing restored presentation: %s", part)
 			}
 		}
-		for _, id := range []string{"containers", "images", "volumes", "networks", "activity"} {
+		for _, id := range []string{"containers", "images", "volumes", "networks"} {
 			if strings.Count(body, `id="`+id+`"`) != 1 {
 				t.Fatalf("missing/duplicate section %s", id)
 			}
 		}
-		for _, forbidden := range []string{`style=`, `<style`, `<script>`, `htmx`, `name="username"`, `/exec`, `/stacks/new`, `UI activity`, `legacy history`, `history-panel`} {
+		for _, forbidden := range []string{`style=`, `<style`, `<script>`, `htmx`, `name="username"`, `/exec`, `/stacks/new`, `activity`, `Activity`, `legacy history`, `history-panel`} {
 			if strings.Contains(body, forbidden) {
 				t.Fatalf("obsolete/inline content: %s", forbidden)
 			}

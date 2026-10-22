@@ -138,7 +138,7 @@ a { color: inherit; }
   font-size: var(--font-size-sm);
   letter-spacing: var(--letter-command);
 }
-.panel, .activity-item, .empty, .login-panel {
+.panel, .empty, .login-panel {
   border: var(--line-width) solid var(--color-line);
   background: color-mix(in srgb, var(--color-surface) 94%, transparent);
 }
@@ -149,7 +149,7 @@ a { color: inherit; }
   letter-spacing: var(--letter-section);
   text-transform: uppercase;
 }
-.section-head, .activity-head {
+.section-head, .operation-head {
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
@@ -157,14 +157,12 @@ a { color: inherit; }
   gap: var(--space-3);
 }
 .resource-section { display: grid; gap: var(--space-3); margin-bottom: var(--space-8); }
-.activity-list, .resource-table {
+.resource-table {
   display: grid;
   gap: var(--line-width);
   border: var(--line-width) solid var(--color-line);
   background: var(--color-line);
 }
-.activity-item { display: grid; gap: var(--space-2); padding: var(--space-3); min-width: 0; }
-.activity-item .muted, .activity-item pre { margin: 0; }
 .stack-name {
   color: var(--color-text);
   font-size: var(--font-size-stack-name);
@@ -268,7 +266,7 @@ pre {
   color: #c6ccd4;
   font-size: var(--font-size-md);
 }
-.activity-output { min-height: 14rem; max-height: 65vh; overflow: auto; resize: vertical; }
+.operation-output { min-height: 14rem; max-height: 65vh; overflow: auto; resize: vertical; }
 .stack-group { border: var(--line-width) solid var(--color-line); background: var(--color-surface); min-width: 0; }
 .stack-summary { padding: var(--space-3); color: var(--color-text); cursor: pointer; }
 .stack-summary:hover { background: var(--color-surface-2); }
@@ -328,5 +326,5 @@ input[type="checkbox"] { width: var(--checkbox-size); height: var(--checkbox-siz
 @media (max-width: 42rem) {
   .resource-row-containers, .resource-row-cleanup { grid-template-columns: minmax(0, 1fr); }
   .delete-action { grid-template-columns: minmax(0, 1fr); }
-  .activity-head { align-items: flex-start; flex-direction: column; }
+  .operation-head { align-items: flex-start; flex-direction: column; }
 }
