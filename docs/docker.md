@@ -25,6 +25,8 @@ hosts:
 
 Secrets in this YAML are literal; environment substitution is not performed. Mount it read-only and restart the UI after changing hosts. Host configuration intentionally stays in an administrator-owned file rather than exposing credentials through the browser.
 
+Selecting a Docker host connects automatically when JavaScript is enabled. **Reconnect** reloads the selected host on demand; without JavaScript, use it to apply your selection. Submission, waiting-for-output, reconnecting and inventory-refresh status appear above the lists even when the operation output is hidden. Submission controls are locked while navigating so repeated clicks do not submit duplicate actions.
+
 Save `/srv/compose/docklight/compose.yml`:
 
 ```yaml

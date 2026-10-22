@@ -22,6 +22,47 @@ function initGroups(root, states = new Map()) {
 }
 initGroups(document);
 
+const uiStatus = document.querySelector("[data-ui-status]");
+const showStatus = text => {
+  uiStatus.textContent = text;
+  uiStatus.hidden = !text;
+};
+const hostForm = document.querySelector(".host-form");
+hostForm.querySelector("select").addEventListener("change", () => hostForm.requestSubmit());
+let submitting = false;
+document.addEventListener("submit", event => {
+  const form = event.target;
+  if (!form.matches(".host-form, .container-actions, .cleanup-actions")) return;
+  if (submitting) { event.preventDefault(); return; }
+  event.preventDefault();
+  submitting = true;
+  const button = event.submitter || form.querySelector('button[type="submit"]');
+  const hostChange = form === hostForm;
+  const select = hostForm.querySelector("select");
+  showStatus(hostChange
+    ? "Connecting to " + select.selectedOptions[0].textContent + "…"
+    : "Submitting " + button.textContent.trim() + "… Waiting for agent acceptance; do not resubmit.");
+  // Disabled controls are omitted from native form submissions; retain the selected host/action.
+  const name = hostChange ? select.name : button.name;
+  if (name) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = hostChange ? select.value : button.value;
+    form.append(input);
+  }
+  button.textContent = hostChange ? "Connecting…" : "Submitting…";
+  form.setAttribute("aria-busy", "true");
+  for (const control of document.querySelectorAll(".host-form select, .host-form button, .container-actions button, .cleanup-actions button")) {
+    control.disabled = true;
+  }
+  // Paint feedback before native navigation can suspend the current document.
+  window.requestAnimationFrame(() => window.setTimeout(() => form.submit(), 0));
+});
+window.addEventListener("pageshow", event => {
+  if (event.persisted && submitting) window.location.reload();
+});
+
 const operation = document.querySelector("[data-operation-url]");
 if (operation) {
   const output = operation.querySelector(".operation-output");
@@ -30,6 +71,10 @@ if (operation) {
   const runningMessage = operation.dataset.status === "running"
     ? message.textContent
     : "Operation running. Output updates every three seconds; inventory refreshes when finished.";
+  const setMessage = text => {
+    message.textContent = text;
+    if (!submitting) showStatus(text);
+  };
   const scrollToEnd = () => window.requestAnimationFrame(() => {
     output.scrollTop = output.scrollHeight;
   });
@@ -50,6 +95,9 @@ if (operation) {
   }
   const active = status => status === "running" || status === "updating";
   const refreshInventory = async (remaining = 3) => {
+    if (submitting) return;
+    setMessage("Operation " + operation.dataset.status + ". Refreshing containers…");
+    document.querySelector("[data-inventory]").setAttribute("aria-busy", "true");
     try {
       const current = document.querySelector("[data-inventory]");
       const response = await fetch(current.dataset.inventoryUrl, { cache: "no-store" });
@@ -57,14 +105,17 @@ if (operation) {
       if (!response.ok) throw new Error("Inventory unavailable");
       const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-inventory]");
       if (!next) throw new Error("Invalid inventory response");
+      if (submitting) return;
       const states = new Map([...current.querySelectorAll("details.stack-group")].map(group => [group.dataset.project, group.open]));
       initGroups(next, states);
       current.replaceWith(next);
-      message.textContent = "Operation " + operation.dataset.status + ". Inventory refreshed.";
+      setMessage("Operation " + operation.dataset.status + ". Inventory refreshed.");
     } catch {
-      message.textContent = remaining > 1
+      setMessage(remaining > 1
         ? "Operation finished; inventory temporarily unavailable. Retrying automatically."
-        : "Operation finished; inventory could not be refreshed. Reload to check current host state.";
+        : "Operation finished; inventory could not be refreshed. Reload to check current host state.");
+    } finally {
+      document.querySelector("[data-inventory]").removeAttribute("aria-busy");
     }
     if (remaining > 1) window.setTimeout(() => refreshInventory(remaining - 1), 3000);
   };
@@ -91,15 +142,20 @@ if (operation) {
         await refreshInventory();
         return;
       }
-      message.textContent = job.Status === "updating"
+      setMessage(job.Status === "updating"
         ? "Management update running. Reconnecting automatically if the agent briefly disconnects."
-        : runningMessage;
+        : runningMessage + (job.Output.trim() ? "" : " Waiting for output."));
     } catch {
-      message.textContent = "Operation temporarily unavailable. Retrying automatically; do not resubmit.";
+      setMessage("Reconnecting to agent. Retrying automatically; do not resubmit.");
     }
     scrollToEnd();
     window.setTimeout(poll, 3000);
   };
-  if (active(operation.dataset.status)) window.setTimeout(poll, 3000);
-  else window.setTimeout(() => refreshInventory(), 3000);
+  if (active(operation.dataset.status)) {
+    setMessage((message.textContent.trim() || runningMessage) + (output.textContent.trim() ? "" : " Waiting for output."));
+    window.setTimeout(poll, 3000);
+  } else {
+    setMessage("Operation " + operation.dataset.status + ". Checking container state…");
+    window.setTimeout(() => refreshInventory(), 3000);
+  }
 }

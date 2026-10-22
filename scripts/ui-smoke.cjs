@@ -103,7 +103,7 @@ const path = require("node:path");
       }
       // The host selector must work without JavaScript and carry through every action.
       await page.getByLabel("Docker host").selectOption("pi");
-      await page.getByRole("button", { name: "Connect", exact: true }).click();
+      await page.getByRole("button", { name: "Reconnect", exact: true }).click();
       await page.waitForURL(`${base}/?host=pi`);
       await webGroup.locator("summary").click();
       await row("web-stopped").getByRole("button", { name: "Start", exact: true }).click();
@@ -201,13 +201,11 @@ const path = require("node:path");
         await web.locator("summary").click();
         await waitStored("local", "web", "open");
         await page.getByLabel("Docker host").selectOption("pi");
-        await page.getByRole("button", { name: "Connect", exact: true }).click();
         await page.waitForURL(`${base}/?host=pi`);
         assert.equal(await page.locator("details.stack-group[open]").count(), 0, "another host inherited saved stack state");
         await agent.locator("summary").click();
         await waitStored("pi", "docklight", "open");
         await page.getByLabel("Docker host").selectOption("local");
-        await page.getByRole("button", { name: "Connect", exact: true }).click();
         await page.waitForURL(`${base}/?host=local`);
         assert.equal(await web.evaluate(group => group.open), true);
         assert.equal(await agent.evaluate(group => group.open), false);
@@ -229,6 +227,86 @@ const path = require("node:path");
       console.log(`PASS ${base}: accordion persistence ${storageBlocked ? "storage-disabled fallback" : "open/closed, reload, host/stack isolation and resize"}`);
       await context.close();
     }
+    {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const page = await context.newPage();
+      const errors = [];
+      page.on("pageerror", error => errors.push(error.message));
+      await page.goto(`${base}/login`);
+      await page.getByLabel("Admin password").fill("pw");
+      await page.getByRole("button", { name: "Login", exact: true }).click();
+      await page.waitForURL(`${base}/`);
+      await page.waitForLoadState("load");
+      // Hold the native navigation after feedback paints, then release the real form submission.
+      const holdSubmission = () => page.evaluate(() => {
+        window.nativeSubmit = HTMLFormElement.prototype.submit;
+        window.pendingSubmissions = 0;
+        window.pendingForm = null;
+        HTMLFormElement.prototype.submit = function () { window.pendingForm = this; window.pendingSubmissions++; };
+      });
+      for (const autoSelect of [true, false]) {
+        const target = `${base}/?host=pi`;
+        await holdSubmission();
+        await page.evaluate(auto => {
+          const select = document.querySelector(".host-form select");
+          if (auto) { select.value = "pi"; select.dispatchEvent(new Event("change", { bubbles: true })); }
+          else document.querySelector(".host-form").requestSubmit();
+        }, autoSelect);
+        await page.waitForFunction(() => !!window.pendingForm);
+        const feedback = await page.evaluate(() => ({
+          status: document.querySelector("[data-ui-status]").textContent,
+          hostDisabled: document.querySelector(".host-form select").disabled,
+          enabledActions: document.querySelectorAll('.container-actions button:not([disabled])').length,
+        }));
+        assert(feedback.status.includes("Connecting to Raspberry Pi"), "slow host connection has no immediate feedback");
+        assert.equal(feedback.hostDisabled, true, "host selection not locked while connecting");
+        assert.equal(feedback.enabledActions, 0, "old-host actions remained enabled while connecting");
+        await Promise.all([page.waitForEvent("load"), page.evaluate(() => window.nativeSubmit.call(window.pendingForm))]);
+        await page.waitForURL(target);
+        await page.waitForLoadState("load");
+        assert.equal(await page.getByLabel("Docker host").inputValue(), "pi", "host selection missing from GET submission");
+        assert.equal(await page.getByRole("button", { name: "Reconnect", exact: true }).isEnabled(), true);
+      }
+      const group = page.locator('details.stack-group[data-project="web"]');
+      await group.locator("summary").click();
+      const deleteForm = page.getByRole("form", { name: "Delete volume unused-volume", exact: true });
+      await deleteForm.getByRole("button", { name: "Delete", exact: true }).click();
+      assert.equal(await deleteForm.getByRole("checkbox").evaluate(input => input.validity.valueMissing), true);
+      assert.equal(await page.getByLabel("Docker host").isEnabled(), true, "invalid confirmation locked page controls");
+      const form = page.getByRole("form", { name: "Actions for web-running", exact: true });
+      await form.getByLabel("Target").selectOption("stack");
+      await holdSubmission();
+      const requests = [];
+      await page.route(`${base}/action`, async route => {
+        requests.push(new URLSearchParams(route.request().postData()));
+        await route.fulfill({ status: 303, headers: { location: `${base}/?host=pi&job=presentation-job` }, body: "" });
+      });
+      await page.evaluate(() => document.querySelector('.container-actions [value="upgrade"]').click());
+      await page.waitForFunction(() => !!window.pendingForm);
+      const feedback = await page.evaluate(() => {
+        const form = document.querySelector('form[aria-label="Actions for web-running"]');
+        const state = { status: document.querySelector("[data-ui-status]").textContent, busy: form.getAttribute("aria-busy"), disabled: form.querySelector('[value="upgrade"]').disabled };
+        form.requestSubmit();
+        return state;
+      });
+      assert(feedback.status.includes("Submitting Upgrade"), "slow submission has no immediate feedback");
+      assert.equal(feedback.busy, "true");
+      assert.equal(feedback.disabled, true);
+      assert.equal(await page.evaluate(() => window.pendingSubmissions), 1, "duplicate submission reached native form handler");
+      await Promise.all([page.waitForEvent("load"), page.evaluate(() => window.nativeSubmit.call(window.pendingForm))]);
+      assert.equal(requests.length, 1, "duplicate submission reached server");
+      const payload = requests[0];
+      assert.equal(payload.get("host"), "pi");
+      assert.equal(payload.get("id"), "running-id");
+      assert.equal(payload.get("scope"), "stack");
+      assert.deepEqual(payload.getAll("operation"), ["upgrade"], "disabled submitter lost or duplicated action");
+      assert(payload.get("csrf_token"), "submission lost CSRF token");
+      await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
+      assert.equal(await page.getByLabel("Operation output").isVisible(), true, "accepted operation did not open output");
+      assert.deepEqual(errors, [], "submission/host feedback caused JavaScript errors");
+      console.log(`PASS ${base}: immediate submission feedback, duplicate guard, automatic host selection and explicit reconnect`);
+      await context.close();
+    }
     for (const terminal of ["success", "failed"]) {
       const context = await browser.newContext({ viewport: { width: 900, height: 1000 } });
       const page = await context.newPage();
@@ -239,6 +317,13 @@ const path = require("node:path");
       await page.getByRole("button", { name: "Login", exact: true }).click();
       await page.waitForURL(`${base}/`);
       const url = `${base}/?host=pi&job=live-${terminal}`;
+      let releaseInventory;
+      let firstInventory = true;
+      const inventoryGate = new Promise(resolve => { releaseInventory = resolve; });
+      await page.route(`${base}/inventory?host=pi`, async route => {
+        if (firstInventory) { firstInventory = false; await inventoryGate; }
+        await route.continue();
+      });
       if (terminal === "failed") await context.addInitScript(() => {
         Object.defineProperty(window, "localStorage", { get() { throw new DOMException("Storage disabled for test", "SecurityError"); } });
       });
@@ -276,7 +361,11 @@ const path = require("node:path");
         const log = document.querySelector(".operation-output");
         return log.scrollHeight - log.clientHeight - log.scrollTop <= 2;
       }, null, { timeout: 1000 });
+      await page.getByRole("link", { name: "Close output", exact: true }).click();
       await page.waitForFunction(() => document.querySelector("[data-operation-message]").textContent.includes("Retrying automatically"));
+      assert.equal(await page.locator("[data-ui-status]").isVisible(), true, "hidden output concealed connection feedback");
+      assert((await page.locator("[data-ui-status]").textContent()).includes("Reconnecting to agent"));
+      await page.getByRole("link", { name: "Show output", exact: true }).click();
       assert.equal(navigations, 0, "transient disconnect reloaded page");
       await page.waitForFunction(() => document.querySelector("[data-operation-status]").textContent === "updating");
       assert.equal(await atEnd(), true);
@@ -294,6 +383,9 @@ const path = require("node:path");
       await page.waitForFunction(status => document.querySelector("[data-operation-status]").textContent === status, terminal);
       assert.equal(navigations, 0, "completion must update inventory without page navigation");
       assert.equal(await output.isVisible(), false, "completion reopened dismissed panel");
+      assert((await page.locator("[data-ui-status]").textContent()).includes("Refreshing containers"), "slow inventory refresh has no visible feedback");
+      assert.equal(await page.locator("[data-inventory]").getAttribute("aria-busy"), "true");
+      releaseInventory();
       await page.waitForFunction(() => document.querySelector("[data-operation-message]").textContent.includes("inventory temporarily unavailable"));
       assert.equal(await page.getByRole("row").filter({ has: page.getByText("standalone", { exact: true }) }).count(), 0, "standalone group should remain collapsed");
       assert.equal(await page.locator('details.stack-group[data-project=""]').count(), 1, "inventory failure wiped existing rows");
@@ -330,6 +422,7 @@ const path = require("node:path");
       await page.getByRole("button", { name: "Login", exact: true }).click();
       await page.waitForURL(`${base}/`);
       await page.goto(`${base}/?host=pi&job=live-expired`);
+      assert((await page.locator("[data-ui-status]").textContent()).includes("Waiting for output"), "empty logs have no waiting feedback");
       await context.clearCookies();
       await page.waitForURL(`${base}/login`);
       assert.equal(await page.getByLabel("Admin password").count(), 1, "expired session did not require login");

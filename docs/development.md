@@ -29,6 +29,8 @@ Operation polling uses an authenticated same-origin JSON endpoint that fetches o
 
 Close output hides the operation panel without cancelling its job or polling. Show output restores it, including the latest log. The URL records the hidden state so manual reloads keep it hidden; completion updates leave the panel untouched, while a newly submitted operation opens its own output. Both controls work as ordinary links without JavaScript and update in place when JavaScript is enabled.
 
+With JavaScript enabled, selecting a Docker host submits the host form automatically; Reconnect reloads the selected host explicitly. Host navigation and mutation forms paint an immediate status message before native submission and lock duplicate submissions and stale-host action buttons. Disabled submitter/host values are preserved as hidden fields. Native validation still runs before locking controls, and the server continues to enforce authentication, CSRF and confirmation. A status line outside the output panel shows waiting, reconnecting and inventory-refresh progress even when output is hidden. Browser checks hold native submissions before navigation to verify feedback, then release real form submissions to verify payloads and host selection.
+
 Session regression checks also resize and reload the same authenticated browser context, switch mobile device metrics and user agent, then restore desktop mode. The session cookie must remain unchanged. Opening `/login` with a valid session must redirect to the dashboard rather than show a login form; expired, tampered, revoked or unavailable sessions must still require authentication.
 
 To run locally on Linux:

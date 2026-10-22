@@ -102,7 +102,11 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 			if n == 1 {
 				tail = "initial output"
 			}
-			_ = json.NewEncoder(w).Encode(management.Job{ID: strings.TrimPrefix(r.URL.Path, "/v1/jobs/"), Status: status, Action: management.Action{Kind: "container", Operation: "build"}, Output: strings.Repeat("build log line\n", 100) + "<script>not executable</script>\n" + tail})
+			output := strings.Repeat("build log line\n", 100) + "<script>not executable</script>\n" + tail
+			if strings.HasSuffix(r.URL.Path, "expired") {
+				output = ""
+			}
+			_ = json.NewEncoder(w).Encode(management.Job{ID: strings.TrimPrefix(r.URL.Path, "/v1/jobs/"), Status: status, Action: management.Action{Kind: "container", Operation: "build"}, Output: output})
 		default:
 			_ = json.NewEncoder(w).Encode(management.Job{ID: "presentation-job", Status: "success", Output: strings.Repeat("long-output-without-spaces", 30) + "\n<script>not executable</script>"})
 		}

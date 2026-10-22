@@ -35,10 +35,11 @@
         <label for="host">Docker host</label>
         <div class="host-controls">
           <select id="host" name="host">{{range .Hosts}}<option value="{{.ID}}" {{if eq $.HostID .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
-          <button class="button button-primary" type="submit">Connect</button>
+          <button class="button button-primary" type="submit">Reconnect</button>
         </div>
       </form>
     </section>
+    <p class="form-hint" role="status" data-ui-status hidden></p>
     {{if .Error}}<section class="alert alert-danger" role="alert">{{.Error}}</section>{{end}}
 {{end}}
 
