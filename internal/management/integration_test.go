@@ -21,6 +21,8 @@ func TestDockerIntegration(t *testing.T) {
 	ctx := context.Background()
 	run := func(ctx context.Context, dir string, out io.Writer, args ...string) error {
 		cmd := exec.CommandContext(ctx, "docker", append([]string{"--host", host}, args...)...)
+		// Compose's Buildx subprocess must use the same isolated daemon as the CLI.
+		cmd.Env = append(os.Environ(), "DOCKER_HOST="+host, "DOCKER_CONTEXT=", "BUILDX_BUILDER=default")
 		cmd.Dir = dir
 		cmd.Stdout, cmd.Stderr = out, out
 		return cmd.Run()
