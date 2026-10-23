@@ -141,6 +141,16 @@ const path = require("node:path");
       await unused.getByRole("button", { name: "Delete", exact: true }).click();
       await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
       await assertLayout();
+      for (const [kind, title] of [["image", "Images"], ["volume", "Volumes"], ["network", "Networks"]]) {
+        const cleanup = page.getByRole("form", { name: `Remove all unused ${title}`, exact: true });
+        assert((await cleanup.textContent()).includes("1 unused, unprotected"));
+        if (kind === "volume") assert((await cleanup.textContent()).includes("Permanently delete all unused volumes and their data"));
+        await cleanup.getByRole("button").click();
+        assert.equal(await cleanup.getByRole("checkbox").evaluate(input => input.validity.valueMissing), true);
+        await cleanup.getByRole("checkbox").check();
+        await cleanup.getByRole("button").click();
+        await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
+      }
       for (const section of ["containers", "images", "networks"]) {
         await page.getByRole("navigation").getByRole("link", { name: section, exact: true }).click();
         await page.waitForURL(`${base}/?host=pi&job=presentation-job#${section}`);
@@ -159,6 +169,34 @@ const path = require("node:path");
       await page.waitForURL(`${base}/login`);
       console.log(`PASS ${label}: ${width}x${height}, JavaScript disabled, stack groups/keyboard collapse/counts, no overflow/CSP errors, forms and host routing checked`);
       await context.close();
+    }
+    {
+      const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+      const page = await context.newPage();
+      await page.goto(`${base}/login`);
+      await page.getByLabel("Admin password").fill("pw");
+      await page.getByRole("button", { name: "Login", exact: true }).click();
+      await page.waitForURL(`${base}/`);
+      await page.getByLabel("Docker host").selectOption("pi");
+      await page.waitForURL(`${base}/?host=pi`);
+      for (const title of ["Images", "Volumes", "Networks"]) {
+        const cleanup = page.getByRole("form", { name: `Remove all unused ${title}`, exact: true });
+        let submissions = 0;
+        const count = request => { if (request.method() === "POST" && new URL(request.url()).pathname.endsWith("/action")) submissions++; };
+        page.on("request", count);
+        await cleanup.getByRole("button").click();
+        assert.equal(await cleanup.getByRole("checkbox").evaluate(input => input.validity.valueMissing), true);
+        assert.equal(submissions, 0);
+        await cleanup.getByRole("checkbox").check();
+        const response = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/action"));
+        await cleanup.getByRole("button").click();
+        await response;
+        await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
+        assert.equal(submissions, 1, "cleanup submitted more than once");
+        page.off("request", count);
+      }
+      await context.close();
+      console.log(`PASS ${base}: confirmed bulk cleanup for all resource types with JavaScript`);
     }
     for (const storageBlocked of [false, true]) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
@@ -396,6 +434,11 @@ const path = require("node:path");
       assert.equal(await page.getByRole("row").filter({ has: page.getByText("standalone", { exact: true }) }).count(), 0, "standalone group should remain collapsed");
       assert.equal(await page.locator('details.stack-group[data-project=""]').count(), 1, "inventory failure wiped existing rows");
       await page.waitForFunction(() => document.querySelector("[data-inventory]").textContent.includes("web-updated"));
+      for (const title of ["Volumes", "Networks"]) {
+        const cleanup = page.getByRole("form", { name: `Remove all unused ${title}`, exact: true });
+        assert.equal(await cleanup.getByRole("button").isDisabled(), true, "empty cleanup remained enabled after refresh");
+        assert.equal(await cleanup.getByRole("checkbox").isDisabled(), true);
+      }
       assert.equal(await page.locator('[data-build-component="agent"]').textContent(), "ccccccc", "inventory refresh did not update agent commit");
       assert.equal(inventoryRequests, 3, "completion must perform three bounded inventory checks");
       assert.equal(await web.evaluate(group => group.open), true, "inventory replacement lost accordion state");

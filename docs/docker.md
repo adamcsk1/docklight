@@ -72,6 +72,14 @@ The agent needs outbound access to pull images. The internal management network 
 
 Run `docker compose up -d` from the project directory. No automatic pulling/building occurs during start, stop or recreate actions. Newly created stacks must be deployed using the CLI first: Docklight manages existing containers, not unstarted Compose folders. A deleted container disappears from Docklight; deploy it again from the CLI if needed.
 
+## Removing unused resources
+
+Images, Volumes and Networks each provide **Remove all unused**, with a required confirmation checkbox. The count excludes protected resources and anything referenced by a container, including stopped containers. Empty cleanup controls are disabled. Cleanup applies only to the selected host and resource type; individual deletion remains available.
+
+The agent takes a fresh candidate snapshot when the job starts, then rechecks each resource immediately before non-force removal. Resources created after that snapshot are excluded. External Docker clients can still race cleanup; Docker may refuse a removal. A stored Compose file without an existing container does not count as a reference. **Unused volumes may contain valuable data: deleting them permanently destroys that data. Back up anything you need first.** Images may need to be pulled or rebuilt, and removed networks may need to be recreated before a future deployment.
+
+Cleanup uses the existing serialized job and output panel. Output lists deletions, skips and failures, followed by totals including unprocessed candidates. Individual removal failures do not prevent attempts on the remaining candidates, but the job finishes as failed. Cancellation, timeout or inability to verify current references stops cleanup. Successful deletions are not rolled back. Inventory refreshes after completion; an older agent rejects this new operation without performing cleanup, so update the agent as well as the UI.
+
 ## Remote hosts and TLS
 
 Run only `docklight-agent` on each remote host, with its own socket, identical-path Compose root mount and independent token. Publish its port only on a private interface/firewall allowlist reachable by the UI.

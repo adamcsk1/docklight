@@ -32,6 +32,7 @@ type containerGroup struct {
 type resourceSection struct {
 	Kind, Title string
 	Items       []management.Resource
+	Unused      int
 }
 type PageData struct {
 	Title, Error, CSRF, Base, HostID string
@@ -254,6 +255,9 @@ func (app *App) loadInventory(r *http.Request, h *Host, d *PageData) error {
 		for i := range d.ResourceSections {
 			if d.ResourceSections[i].Kind == resource.Kind {
 				d.ResourceSections[i].Items = append(d.ResourceSections[i].Items, resource)
+				if !resource.Protected && len(resource.UsedBy) == 0 {
+					d.ResourceSections[i].Unused++
+				}
 			}
 		}
 	}

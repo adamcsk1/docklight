@@ -177,4 +177,42 @@ func TestDockerIntegration(t *testing.T) {
 	if got := docker("compose", "-p", project, "-f", file, "ps", "-q", "web"); got != newID {
 		t.Fatal("failed build replaced running container")
 	}
+	t.Run("bulk-cleanup", func(t *testing.T) {
+		writeBuild("cleanup")
+		docker("build", "-t", "docklight-cleanup-unused:latest", root)
+		unusedImage := docker("image", "inspect", "--format", "{{.Id}}", "docklight-cleanup-unused:latest")
+		usedVolume := docker("volume", "create", "cleanup-used-volume")
+		unusedVolume := docker("volume", "create", "cleanup-unused-volume")
+		usedNetwork := docker("network", "create", "cleanup-used-network")
+		unusedNetwork := docker("network", "create", "cleanup-unused-network")
+		keeper := docker("create", "--network", usedNetwork, "--mount", "type=volume,source="+usedVolume+",target=/data", "alpine:3.23", "true")
+		other := docker("create", "busybox:1.37", "true")
+		t.Cleanup(func() {
+			_ = run(ctx, "", io.Discard, "image", "rm", unusedImage)
+			_ = run(ctx, "", io.Discard, "container", "rm", keeper, other)
+			_ = run(ctx, "", io.Discard, "volume", "rm", usedVolume, unusedVolume)
+			_ = run(ctx, "", io.Discard, "network", "rm", usedNetwork, unusedNetwork)
+		})
+		for _, kind := range []string{"image", "volume", "network"} {
+			var out bytes.Buffer
+			if err := e.Execute(ctx, Action{Kind: kind, ID: "unused", Operation: "delete-unused", Confirmed: true}, &out); err != nil {
+				t.Fatalf("%s cleanup: %v\n%s", kind, err, &out)
+			}
+			if !strings.Contains(out.String(), "Deleted "+kind+" ") || !strings.Contains(out.String(), "Cleanup totals:") {
+				t.Fatalf("missing real %s deletion: %s", kind, &out)
+			}
+		}
+		for kind, id := range map[string]string{"image": unusedImage, "volume": unusedVolume, "network": unusedNetwork} {
+			if err := run(ctx, "", io.Discard, kind, "inspect", id); err == nil {
+				t.Fatalf("unused %s %s survived cleanup", kind, id)
+			}
+		}
+		docker("volume", "inspect", usedVolume)
+		docker("network", "inspect", usedNetwork)
+		for _, name := range []string{"bridge", "host", "none"} {
+			docker("network", "inspect", name)
+		}
+		docker("image", "inspect", "alpine:3.23", "busybox:1.37")
+		docker("container", "inspect", keeper, other, newID)
+	})
 }

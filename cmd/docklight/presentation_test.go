@@ -203,16 +203,24 @@ func TestBrowserPresentation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(actions) != 12 {
+			if len(actions) != 27 {
 				t.Fatalf("unexpected browser mutation count: %d", len(actions))
 			}
-			for i := 0; i < 12; i++ {
+			for i := 0; i < 27; i++ {
 				action := <-actions
-				if i%3 == 0 {
+				if i >= 24 || i%6 >= 3 {
+					index := i%6 - 3
+					if i >= 24 {
+						index = i - 24
+					}
+					if action.Kind != []string{"image", "volume", "network"}[index] || action.Operation != "delete-unused" || action.ID != "unused" || action.Scope != "" || !action.Confirmed {
+						t.Fatalf("wrong bulk cleanup payload: %#v", action)
+					}
+				} else if i%6 == 0 {
 					if action.Kind != "container" || action.Operation != "start" || action.ID != "stopped-id" || action.Scope != "service" {
 						t.Fatalf("wrong start payload: %#v", action)
 					}
-				} else if i%3 == 1 {
+				} else if i%6 == 1 {
 					if action.Kind != "container" || action.Operation != "build" || action.ID != "stopped-id" || action.Scope != "service" {
 						t.Fatalf("wrong build payload: %#v", action)
 					}

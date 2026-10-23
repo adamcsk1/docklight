@@ -78,6 +78,13 @@
 <section class="resource-section" id="{{.Kind}}s" aria-labelledby="{{.Kind}}s-title">
   <div class="section-head"><h2 id="{{.Kind}}s-title">{{.Title}}</h2><span class="badge">{{len .Items}} total</span></div>
   <p class="form-hint">Referenced resources are read-only, including references from stopped containers.{{if eq .Kind "volume"}} Deleting an unused volume permanently destroys its data.{{end}}</p>
+  <form class="cleanup-actions" method="post" action="{{$.Base}}/action" aria-label="Remove all unused {{.Title}}">
+    {{template "csrf" $}}
+    <input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="kind" value="{{.Kind}}"><input type="hidden" name="id" value="unused"><input type="hidden" name="operation" value="delete-unused">
+    <p class="form-hint">{{.Unused}} unused, unprotected · checked again when cleanup runs on this host.</p>
+    <label class="switch-label"><input type="checkbox" name="confirmed" value="yes" required {{if not .Unused}}disabled{{end}}><span>{{if eq .Kind "volume"}}Permanently delete all unused volumes and their data{{else}}Permanently delete all unused {{.Kind}}s{{end}}</span></label>
+    <button class="button button-danger" type="submit" {{if not .Unused}}disabled{{end}}>Remove all unused</button>
+  </form>
   {{if .Items}}
   <div class="resource-table" role="table" aria-label="{{.Title}}">
     <div class="resource-row resource-head resource-row-cleanup" role="row"><span role="columnheader">name</span><span role="columnheader">used by</span><span role="columnheader">actions</span></div>

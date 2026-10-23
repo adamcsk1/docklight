@@ -28,13 +28,13 @@ func ValidateAction(a Action) error {
 			return errors.New("unknown operation")
 		}
 	case "image", "volume", "network":
-		if a.Operation != "delete" || a.Scope != "" {
+		if (a.Operation != "delete" && a.Operation != "delete-unused") || a.Scope != "" || (a.Operation == "delete-unused" && a.ID != "unused") {
 			return errors.New("invalid resource operation")
 		}
 	default:
 		return errors.New("unknown resource kind")
 	}
-	if (a.Operation == "delete" || a.Operation == "update") && !a.Confirmed {
+	if (a.Operation == "delete" || a.Operation == "delete-unused" || a.Operation == "update") && !a.Confirmed {
 		return errors.New("explicit confirmation required")
 	}
 	return nil
@@ -45,6 +45,9 @@ func (e *Engine) Execute(ctx context.Context, a Action, out io.Writer) error {
 		return err
 	}
 	if a.Kind != "container" {
+		if a.Operation == "delete-unused" {
+			return e.deleteUnused(ctx, a, out)
+		}
 		return e.deleteResource(ctx, a, out)
 	}
 	containers, err := e.containers(ctx)
@@ -191,7 +194,38 @@ func (e *Engine) Execute(ctx context.Context, a Action, out io.Writer) error {
 }
 
 func (e *Engine) deleteResource(ctx context.Context, a Action, out io.Writer) error {
+	r, err := e.resourceForDeletion(ctx, a)
+	if err != nil {
+		return err
+	}
+	if r == nil {
+		return errors.New("resource is in use, protected or no longer exists")
+	}
+	return e.Run(ctx, "", out, r.Kind, "rm", r.ID)
+}
+
+func (e *Engine) resourceForDeletion(ctx context.Context, a Action) (*Resource, error) {
 	// Include stopped-container references and recheck immediately before removal.
+	containers, err := e.containers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	inv, err := e.inventory(ctx, containers)
+	if err != nil {
+		return nil, err
+	}
+	for _, r := range inv.Resources {
+		if r.Kind == a.Kind && r.ID == a.ID {
+			if r.Protected || len(r.UsedBy) > 0 {
+				return nil, nil
+			}
+			return &r, nil
+		}
+	}
+	return nil, nil
+}
+
+func (e *Engine) deleteUnused(ctx context.Context, a Action, out io.Writer) error {
 	containers, err := e.containers(ctx)
 	if err != nil {
 		return err
@@ -200,13 +234,51 @@ func (e *Engine) deleteResource(ctx context.Context, a Action, out io.Writer) er
 	if err != nil {
 		return err
 	}
+	var candidates []Resource
 	for _, r := range inv.Resources {
-		if r.Kind == a.Kind && r.ID == a.ID {
-			if r.Protected || len(r.UsedBy) > 0 {
-				return errors.New("resource is in use or protected")
-			}
-			return e.Run(ctx, "", out, r.Kind, "rm", r.ID)
+		if r.Kind == a.Kind && !r.Protected && len(r.UsedBy) == 0 {
+			candidates = append(candidates, r)
 		}
 	}
-	return errors.New("resource no longer exists")
+	deleted, skipped, failed := 0, 0, 0
+	defer func() {
+		fmt.Fprintf(out, "Cleanup totals: %d deleted, %d skipped, %d failed, %d unprocessed.\n", deleted, skipped, failed, len(candidates)-deleted-skipped-failed)
+	}()
+	if len(candidates) == 0 {
+		fmt.Fprintln(out, "Nothing to remove.")
+		return nil
+	}
+	fmt.Fprintf(out, "Removing %d unused %s resources; newly appearing resources are excluded.\n", len(candidates), a.Kind)
+	for _, candidate := range candidates {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		r, err := e.resourceForDeletion(ctx, Action{Kind: a.Kind, ID: candidate.ID})
+		if err != nil {
+			return fmt.Errorf("cannot verify %s %s; cleanup stopped: %w", a.Kind, candidate.ID, err)
+		}
+		if r == nil {
+			skipped++
+			fmt.Fprintf(out, "Skipped %s %s: in use, protected or no longer exists.\n", a.Kind, candidate.ID)
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Removing %s %s (%s).\n", r.Kind, r.ID, r.Name)
+		if err := e.Run(ctx, "", out, r.Kind, "rm", r.ID); err != nil {
+			failed++
+			fmt.Fprintf(out, "Failed %s %s: %v\n", r.Kind, r.ID, err)
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			continue
+		}
+		deleted++
+		fmt.Fprintf(out, "Deleted %s %s.\n", r.Kind, r.ID)
+	}
+	if failed > 0 {
+		return fmt.Errorf("cleanup incomplete: %d resource deletions failed", failed)
+	}
+	return nil
 }
