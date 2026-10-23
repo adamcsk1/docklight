@@ -15,7 +15,7 @@ docker build --target agent -t docklight-agent:dev .
 
 Tests cover admin authentication/session expiry/throttling, CSRF/origin checks, per-host routing and token secrecy, TLS/redirect rejection, exact-image recreation, failed-pull behavior, mutation serialization, job restart recovery, protected containers and referenced-resource deletion. Removed feature tests are replaced with tests for the smaller API and UI; a passing suite is not proof that all operational failures are impossible.
 
-Use a fully patched supported Go toolchain for local builds. The Dockerfile and CI track the latest Go 1.26 patch release; a newer minor version with an old patch level can still contain known security flaws. CI also checks reachable Go vulnerabilities before publishing. This does not replace scanning runtime OS/Docker CLI dependencies or testing deployment security.
+Use a fully patched supported Go toolchain for local builds. The module requires Go 1.27.3 or newer, and the Dockerfile and CI track the latest Go 1.27 patch release. With the default `GOTOOLCHAIN=auto`, Go downloads the required toolchain when necessary. A newer minor version with an old patch level can still contain known security flaws. CI also checks reachable Go vulnerabilities before publishing. This does not replace scanning runtime OS/Docker CLI dependencies or testing deployment security.
 
 ## Browser presentation checks
 
