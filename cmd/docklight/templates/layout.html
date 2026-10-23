@@ -22,6 +22,7 @@
       <a href="#images">images</a>
       <a href="#volumes">volumes</a>
       <a href="#networks">networks</a>
+      {{if and .Master (not .Blocked)}}<a href="#maintenance">maintenance</a>{{end}}
     </nav>
     <form method="post" action="{{.Base}}/logout">
       {{template "csrf" .}}

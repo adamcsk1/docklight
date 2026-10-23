@@ -1,5 +1,5 @@
 {{define "maintenance"}}{{if .Master}}
-<section class="panel" aria-labelledby="maintenance-title" data-maintenance data-maintenance-url="{{.Base}}/maintenance?host={{.HostID}}" data-running="{{with .Maintenance}}{{eq .Status "running"}}{{else}}false{{end}}">
+<section class="panel" id="maintenance" aria-labelledby="maintenance-title" data-maintenance data-maintenance-url="{{.Base}}/maintenance?host={{.HostID}}" data-running="{{with .Maintenance}}{{eq .Status "running"}}{{else}}false{{end}}">
   <h2 id="maintenance-title">Maintenance</h2>
   {{if .MaintenanceError}}<p class="alert alert-danger" role="alert">{{.MaintenanceError}}</p>{{end}}
   <p class="form-hint">Update remote agents, then the main agent, then other UIs, and this UI last. Services briefly disconnect. Failed or uncertain agents block UI updates.</p>

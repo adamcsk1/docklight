@@ -466,6 +466,61 @@ func TestMaintenancePendingJobTimeoutAndIdentityMismatch(t *testing.T) {
 	}
 }
 
+func TestMaintenanceSectionPlacementAndNavigation(t *testing.T) {
+	a := newTestApp(t)
+	for _, tc := range []struct {
+		name            string
+		master, blocked bool
+		run             *maintenanceRun
+	}{
+		{name: "master", master: true},
+		{name: "running", master: true, run: &maintenanceRun{Status: "running"}},
+		{name: "error", master: true, run: &maintenanceRun{Status: "attention"}},
+		{name: "non-master"},
+		{name: "blocked-master", master: true, blocked: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := PageData{HostID: "main", Master: tc.master, Blocked: tc.blocked, Maintenance: tc.run,
+				ResourceSections: []resourceSection{{Kind: "image", Title: "Images"}, {Kind: "volume", Title: "Volumes"}, {Kind: "network", Title: "Networks"}}}
+			r := httptest.NewRequest("GET", "/docklight/?host=main", nil)
+			w := httptest.NewRecorder()
+			a.render(w, r, "manage.html", d)
+			if w.Code != 200 {
+				t.Fatal(w.Body.String())
+			}
+			html := w.Body.String()
+			visible := tc.master && !tc.blocked
+			for _, marker := range []string{`href="#maintenance"`, `id="maintenance"`} {
+				want := 0
+				if visible {
+					want = 1
+				}
+				if strings.Count(html, marker) != want {
+					t.Fatalf("unexpected %s visibility", marker)
+				}
+			}
+			if visible {
+				last := -1
+				for _, id := range []string{"containers", "images", "volumes", "networks", "maintenance"} {
+					pos := strings.Index(html, `id="`+id+`"`)
+					if pos <= last {
+						t.Fatalf("section %s missing or out of order", id)
+					}
+					last = pos
+				}
+				if strings.LastIndex(html, "<section ") != strings.Index(html, `<section class="panel" id="maintenance"`) {
+					t.Fatal("maintenance is not final section")
+				}
+			}
+			w = httptest.NewRecorder()
+			a.render(w, r, "inventory", d)
+			if w.Code != 200 || strings.Contains(w.Body.String(), `id="maintenance"`) {
+				t.Fatal("inventory refresh contains maintenance")
+			}
+		})
+	}
+}
+
 func TestMaintenanceStatusScopeAndEscaping(t *testing.T) {
 	a, _, _ := maintenanceApp(t)
 	cookie := session(t, a)
@@ -480,6 +535,9 @@ func TestMaintenanceStatusScopeAndEscaping(t *testing.T) {
 		}
 		if w.Code != want {
 			t.Fatalf("status scope: %d %s", w.Code, w.Body.String())
+		}
+		if host == "main" && strings.Count(w.Body.String(), `id="maintenance"`) != 1 {
+			t.Fatal("polling fragment lost navigation target")
 		}
 	}
 	run := prepareMaintenance(t, a)

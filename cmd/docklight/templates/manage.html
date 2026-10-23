@@ -3,7 +3,6 @@
 {{if .Blocked}}
 <section class="alert alert-danger" role="alert"><h2>Master conflict — management blocked</h2><p>{{.MaintenanceError}}</p><p>Resolve the registration conflict, then reconnect. Existing job status remains available.</p></section>
 {{else}}
-{{template "maintenance" .}}
 
 {{with .Job}}
 <p data-operation-reopen {{if not $.HideOutput}}hidden{{end}}><a class="button button-ghost" data-operation-toggle="show" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}">Show output</a></p>
@@ -23,6 +22,7 @@
 {{end}}
 
 {{template "inventory" .}}
+{{template "maintenance" .}}
 {{end}}
 {{template "layout_end" .}}
 
