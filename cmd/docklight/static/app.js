@@ -139,6 +139,11 @@ if (operation) {
       const current = document.querySelector("[data-inventory]");
       const response = await fetch(current.dataset.inventoryUrl, { cache: "no-store" });
       if (response.redirected) { window.location.replace(response.url); return; }
+      if (response.status === 503 && response.headers.get("Retry-After")) {
+        setMessage("Maintenance verification in progress. Keeping current inventory; retrying automatically.");
+        window.setTimeout(() => refreshInventory(remaining), 3000);
+        return;
+      }
       if (!response.ok) throw new Error("Inventory unavailable");
       const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-inventory]");
       if (!next) throw new Error("Invalid inventory response");

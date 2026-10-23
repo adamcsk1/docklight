@@ -11,6 +11,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -78,7 +79,12 @@ func (app *App) allowManagement(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	if !app.maintenanceMu.TryLock() {
-		http.Error(w, "maintenance verification in progress; retry shortly", 409)
+		if r.Method == http.MethodPost {
+			http.Redirect(w, r, app.withBase("/")+"?host="+url.QueryEscape(r.PostForm.Get("host"))+"&notice=maintenance-busy", http.StatusSeeOther)
+		} else {
+			w.Header().Set("Retry-After", "3")
+			http.Error(w, "maintenance verification in progress; retry shortly", http.StatusServiceUnavailable)
+		}
 		return false
 	}
 	defer app.maintenanceMu.Unlock()
