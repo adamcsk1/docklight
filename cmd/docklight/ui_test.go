@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -236,6 +237,33 @@ func TestLoginThrottleAndExpiry(t *testing.T) {
 	a.logins["old"] = loginAttempt{9, time.Now().Add(-time.Hour).Unix()}
 	if a.loginBlocked("old") {
 		t.Fatal("expired lockout")
+	}
+}
+
+func TestConcurrentLoginThrottle(t *testing.T) {
+	a := newTestApp(t)
+	var admitted atomic.Int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for range 64 {
+		wg.Go(func() {
+			<-start
+			_, blocked := a.checkPassword("shared-client", "wrong")
+			if !blocked {
+				admitted.Add(1)
+			}
+		})
+	}
+	close(start)
+	wg.Wait()
+	if admitted.Load() != 8 {
+		t.Fatalf("admitted %d guesses, want 8", admitted.Load())
+	}
+	if valid, blocked := a.checkPassword("shared-client", "pw"); valid || !blocked {
+		t.Fatal("blocked client authenticated")
+	}
+	if valid, blocked := a.checkPassword("other-client", "pw"); !valid || blocked {
+		t.Fatal("independent client blocked")
 	}
 }
 

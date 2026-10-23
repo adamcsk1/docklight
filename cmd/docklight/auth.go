@@ -26,21 +26,20 @@ func (app *App) loginPage(w http.ResponseWriter, r *http.Request) {
 
 func (app *App) login(w http.ResponseWriter, r *http.Request) {
 	remote := clientKey(r)
-	if app.loginBlocked(remote) {
-		app.render(w, r, "login.html", PageData{Title: "Login", Error: "Too many failed login attempts. Try again later."})
-		return
-	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", http.StatusBadRequest)
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(r.FormValue("password")), []byte(app.cfg.AdminPassword)) != 1 {
-		app.recordLoginFailure(remote)
+	valid, blocked := app.checkPassword(remote, r.PostForm.Get("password"))
+	if blocked {
+		app.render(w, r, "login.html", PageData{Title: "Login", Error: "Too many failed login attempts. Try again later."})
+		return
+	}
+	if !valid {
 		log.Printf("failed admin login from %q", remote)
 		app.render(w, r, "login.html", PageData{Title: "Login", Error: "Invalid password"})
 		return
 	}
-	app.clearLoginFailures(remote)
 	sid := uuid.NewString()
 	expires := time.Now().Add(24 * time.Hour)
 	if _, err := app.db.Exec(`INSERT INTO sessions (id_hash, expires_at) VALUES (?, ?)`, app.sessionIDHash(sid), expires.Format(time.RFC3339)); err != nil {
@@ -154,6 +153,10 @@ func clientKey(r *http.Request) string {
 func (app *App) loginBlocked(key string) bool {
 	app.loginMu.Lock()
 	defer app.loginMu.Unlock()
+	return app.loginBlockedLocked(key)
+}
+
+func (app *App) loginBlockedLocked(key string) bool {
 	for key, attempt := range app.logins {
 		if time.Since(time.Unix(attempt.FirstSeen, 0)) > 15*time.Minute {
 			delete(app.logins, key)
@@ -170,19 +173,18 @@ func (app *App) loginBlocked(key string) bool {
 	return attempt.Count >= 8
 }
 
-func (app *App) recordLoginFailure(key string) {
+func (app *App) checkPassword(key, password string) (valid, blocked bool) {
 	app.loginMu.Lock()
 	defer app.loginMu.Unlock()
+	if app.loginBlockedLocked(key) {
+		return false, true
+	}
+	if subtle.ConstantTimeCompare([]byte(password), []byte(app.cfg.AdminPassword)) == 1 {
+		delete(app.logins, key)
+		return true, false
+	}
 	if app.logins == nil {
 		app.logins = make(map[string]loginAttempt)
-	}
-	for key, attempt := range app.logins {
-		if time.Since(time.Unix(attempt.FirstSeen, 0)) > 15*time.Minute {
-			delete(app.logins, key)
-		}
-	}
-	if _, exists := app.logins[key]; len(app.logins) >= 4096 && !exists {
-		return
 	}
 	attempt := app.logins[key]
 	if attempt.FirstSeen == 0 || time.Since(time.Unix(attempt.FirstSeen, 0)) > 15*time.Minute {
@@ -190,12 +192,7 @@ func (app *App) recordLoginFailure(key string) {
 	}
 	attempt.Count++
 	app.logins[key] = attempt
-}
-
-func (app *App) clearLoginFailures(key string) {
-	app.loginMu.Lock()
-	defer app.loginMu.Unlock()
-	delete(app.logins, key)
+	return false, false
 }
 
 func (app *App) validSession(id string) bool {
