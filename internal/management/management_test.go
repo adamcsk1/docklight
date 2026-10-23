@@ -552,22 +552,6 @@ func TestJobOutputBoundedAndShellQuoting(t *testing.T) {
 	}
 }
 
-func TestComposeSymlinkEscapeRejected(t *testing.T) {
-	f := newFixture(t)
-	outside := filepath.Join(t.TempDir(), "compose.yml")
-	if err := os.WriteFile(outside, []byte("services: {}"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	link := filepath.Join(f.e.Root, "escape.yml")
-	if err := os.Symlink(outside, link); err != nil {
-		t.Skip("symlinks unavailable: ", err)
-	}
-	f.containers[0].Config.Labels[FilesLabel] = link
-	if _, err := f.e.composeTarget(f.containers[0]); err == nil {
-		t.Fatal("symlink escaped root")
-	}
-}
-
 func TestManagementUpdateUsesDetachedCurrentAgentImageAndTargetOnly(t *testing.T) {
 	f := newFixture(t)
 	hostname, err := os.Hostname()

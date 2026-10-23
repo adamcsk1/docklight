@@ -35,6 +35,10 @@ jobs:
       - name: Check formatting
         run: test -z "$(gofmt -l cmd internal)"
       - run: go test -race -coverprofile=coverage.out ./...
+      - name: Require Compose symlink regressions
+        env:
+          DOCKLIGHT_REQUIRE_SYMLINKS: '1'
+        run: go test -v ./internal/management -run 'TestComposeSymlink' -count=1
       - run: go vet ./...
       - name: Check reachable Go vulnerabilities
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
