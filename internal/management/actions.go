@@ -192,7 +192,11 @@ func (e *Engine) Execute(ctx context.Context, a Action, out io.Writer) error {
 
 func (e *Engine) deleteResource(ctx context.Context, a Action, out io.Writer) error {
 	// Include stopped-container references and recheck immediately before removal.
-	inv, err := e.Inventory(ctx)
+	containers, err := e.containers(ctx)
+	if err != nil {
+		return err
+	}
+	inv, err := e.inventory(ctx, containers)
 	if err != nil {
 		return err
 	}

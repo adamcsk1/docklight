@@ -95,41 +95,64 @@ func protected(c inspectContainer) bool {
 }
 
 func (e *Engine) Inventory(ctx context.Context) (Inventory, error) {
-	var inv Inventory
 	containers, err := e.containers(ctx)
+	if err != nil {
+		return Inventory{}, err
+	}
+	inv, err := e.inventory(ctx, containers)
 	if err != nil {
 		return inv, err
 	}
-	images, volumes, networks := map[string][]string{}, map[string][]string{}, map[string][]string{}
+	// Capability discovery must not consume the Docker snapshot's deadline.
+	discoveryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	e.enrichCompose(discoveryCtx, containers, &inv)
+	sort.Slice(inv.Containers, func(i, j int) bool {
+		a, b := inv.Containers[i], inv.Containers[j]
+		return a.Project+"/"+a.Name < b.Project+"/"+b.Name
+	})
+	return inv, nil
+}
+
+func (e *Engine) enrichCompose(ctx context.Context, containers []inspectContainer, inv *Inventory) {
 	type discovery struct {
 		services map[string]composeService
 		err      error
 	}
 	projects := map[string]discovery{}
-	for _, c := range containers {
-		t, composeErr := e.composeTarget(c)
-		var buildable bool
-		var buildError string
-		if composeErr == nil {
-			key, _ := json.Marshal(t)
-			d, ok := projects[string(key)]
-			if !ok {
-				d.services, d.err = e.composeServices(ctx, t)
-				projects[string(key)] = d
-			}
-			if d.err != nil {
-				buildError = d.err.Error()
-			} else {
-				service, exists := d.services[c.Config.Labels[ServiceLabel]]
-				if !exists {
-					buildError = "Service missing from current Compose configuration"
-				} else {
-					buildable = service.Build != nil
-				}
-			}
+	for i, c := range containers {
+		view := &inv.Containers[i]
+		t, err := e.composeTarget(c)
+		view.ComposeAvailable = err == nil
+		if err != nil {
+			continue
 		}
+		key, _ := json.Marshal(t)
+		d, ok := projects[string(key)]
+		if !ok {
+			if ctx.Err() != nil {
+				d.err = errors.New("Compose discovery timed out; reconnect to retry")
+			} else {
+				d.services, d.err = e.composeServices(ctx, t)
+			}
+			projects[string(key)] = d
+		}
+		if d.err != nil {
+			view.BuildError = d.err.Error()
+		} else if service, exists := d.services[c.Config.Labels[ServiceLabel]]; !exists {
+			view.BuildError = "Service missing from current Compose configuration"
+		} else {
+			view.Buildable = service.Build != nil
+		}
+	}
+}
+
+func (e *Engine) inventory(ctx context.Context, containers []inspectContainer) (Inventory, error) {
+	var inv Inventory
+	images, volumes, networks := map[string][]string{}, map[string][]string{}, map[string][]string{}
+	for _, c := range containers {
 		name := strings.TrimPrefix(c.Name, "/")
-		inv.Containers = append(inv.Containers, Container{ID: c.ID, Name: name, Image: c.Config.Image, ImageID: c.Image, State: c.State.Status, Project: c.Config.Labels[ProjectLabel], Service: c.Config.Labels[ServiceLabel], Protected: protected(c), ComposeAvailable: composeErr == nil, Buildable: buildable, BuildError: buildError})
+		inv.Containers = append(inv.Containers, Container{ID: c.ID, Name: name, Image: c.Config.Image, ImageID: c.Image, State: c.State.Status, Project: c.Config.Labels[ProjectLabel], Service: c.Config.Labels[ServiceLabel], Protected: protected(c)})
 		images[c.Image] = append(images[c.Image], name)
 		for _, m := range c.Mounts {
 			if m.Type == "volume" {
@@ -191,10 +214,6 @@ func (e *Engine) Inventory(ctx context.Context) (Inventory, error) {
 			inv.Resources = append(inv.Resources, r)
 		}
 	}
-	sort.Slice(inv.Containers, func(i, j int) bool {
-		a, b := inv.Containers[i], inv.Containers[j]
-		return a.Project+"/"+a.Name < b.Project+"/"+b.Name
-	})
 	sort.Slice(inv.Resources, func(i, j int) bool {
 		a, b := inv.Resources[i], inv.Resources[j]
 		return a.Kind+"/"+a.Name < b.Kind+"/"+b.Name
