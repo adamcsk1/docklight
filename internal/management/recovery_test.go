@@ -46,7 +46,7 @@ func TestUpdateResultRetriesAfterPersistenceFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.e.DataDir = blocked
-	s.refresh(j)
+	s.refresh(j.ID)
 	if j.Status != "updating" || removed {
 		t.Fatal("unpersisted result finalized or helper removed")
 	}
@@ -58,7 +58,7 @@ func TestUpdateResultRetriesAfterPersistenceFailure(t *testing.T) {
 	if restarted.jobs[j.ID].Status != "updating" {
 		t.Fatal("restart lost unresolved update")
 	}
-	s.refresh(j)
+	s.refresh(j.ID)
 	if j.Status != "success" || !removed {
 		t.Fatal("result persistence was not retried")
 	}

@@ -26,11 +26,12 @@ type storedJob struct {
 }
 
 type Server struct {
-	Engine *Engine
-	token  [32]byte
-	mu     sync.Mutex
-	jobs   map[string]*storedJob
-	busy   bool
+	Engine    *Engine
+	token     [32]byte
+	mu        sync.Mutex
+	refreshMu sync.Mutex
+	jobs      map[string]*storedJob
+	busy      bool
 }
 
 func NewServer(engine *Engine, token string) (*Server, error) {
@@ -153,26 +154,47 @@ func (s *Server) save(j *storedJob) error {
 	return nil
 }
 
-func (s *Server) refresh(j *storedJob) {
-	if j.Status != "updating" {
+func (s *Server) refresh(id string) {
+	s.mu.Lock()
+	needsRefresh := s.jobs[id] != nil && s.jobs[id].Status == "updating"
+	s.mu.Unlock()
+	if !needsRefresh {
 		return
 	}
+	s.refreshMu.Lock()
+	defer s.refreshMu.Unlock()
+	s.mu.Lock()
+	j := s.jobs[id]
+	if j == nil || j.Status != "updating" {
+		s.mu.Unlock()
+		return
+	}
+	candidate := *j
+	s.mu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	status, output, err := s.Engine.helperResult(ctx, j.Helper)
+	status, output, err := s.Engine.helperResult(ctx, candidate.Helper)
 	if err != nil {
 		return
 	} // A transient Docker failure must not permit concurrent mutations.
-	candidate := *j
 	candidate.Status, candidate.Output = status, output
-	if err := s.save(&candidate); err != nil {
+	s.mu.Lock()
+	if s.jobs[id] != j || j.Status != "updating" {
+		s.mu.Unlock()
 		return
 	}
-	*j = candidate
+	if err := s.save(&candidate); err != nil {
+		s.mu.Unlock()
+		return
+	}
+	s.mu.Unlock()
 	if status == "success" || status == "failed" {
 		// Persist the result before releasing its Docker logs and old image references.
-		_ = s.Engine.removeFinishedHelper(ctx, j.Helper, j.Action.ID)
+		_ = s.Engine.removeFinishedHelper(ctx, candidate.Helper, candidate.Action.ID)
 	}
+	s.mu.Lock()
+	*j = candidate
+	s.mu.Unlock()
 }
 
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
@@ -192,14 +214,25 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var updating []string
+	for id, j := range s.jobs {
+		if j.Status == "updating" {
+			updating = append(updating, id)
+		}
+	}
+	s.mu.Unlock()
+	for _, id := range updating {
+		s.refresh(id)
+	}
+	s.mu.Lock()
 	if s.busy {
+		s.mu.Unlock()
 		http.Error(w, "another host operation is running (builds can take up to two hours)", 409)
 		return
 	}
 	for _, j := range s.jobs {
-		s.refresh(j)
 		if j.Status == "updating" {
+			s.mu.Unlock()
 			http.Error(w, "management update is still running", 409)
 			return
 		}
@@ -209,15 +242,18 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		j.Helper = HelperName(a)
 	}
 	if err := s.save(j); err != nil {
+		s.mu.Unlock()
 		http.Error(w, "cannot persist job", 500)
 		return
 	}
 	s.jobs[j.ID] = j
 	s.busy = true
+	result := j.Job
+	s.mu.Unlock()
 	go s.execute(j.ID)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
-	writeJSON(w, j.Job)
+	writeJSON(w, result)
 }
 
 type jobWriter struct {
@@ -294,13 +330,16 @@ func (s *Server) prune() {
 }
 
 func (s *Server) job(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	s.refresh(id)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	j := s.jobs[r.PathValue("id")]
+	j := s.jobs[id]
 	if j == nil {
+		s.mu.Unlock()
 		http.NotFound(w, r)
 		return
 	}
-	s.refresh(j)
-	writeJSON(w, j.Job)
+	result := j.Job
+	s.mu.Unlock()
+	writeJSON(w, result)
 }
