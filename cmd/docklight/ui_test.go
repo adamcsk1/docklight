@@ -109,6 +109,27 @@ func TestPasswordOnlyFormAndRejectedPasswords(t *testing.T) {
 	}
 }
 
+func TestLogoutFailureRetainsSessionForRetry(t *testing.T) {
+	a := newTestApp(t)
+	c := session(t, a)
+	if _, err := a.db.Exec(`CREATE TRIGGER reject_logout BEFORE DELETE ON sessions BEGIN SELECT RAISE(FAIL, 'storage unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	a.routes().ServeHTTP(w, formRequest(a, c, "/logout", nil))
+	if w.Code != http.StatusServiceUnavailable || len(w.Result().Cookies()) != 0 || !a.validSession(c.Value) {
+		t.Fatalf("logout concealed revocation failure: %d %s", w.Code, w.Body.String())
+	}
+	if _, err := a.db.Exec(`DROP TRIGGER reject_logout`); err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	a.routes().ServeHTTP(w, formRequest(a, c, "/logout", nil))
+	if w.Code != http.StatusFound || a.validSession(c.Value) {
+		t.Fatal("logout retry failed")
+	}
+}
+
 func TestAuthenticatedLoginPageRedirects(t *testing.T) {
 	for _, base := range []string{"/", "/docklight"} {
 		t.Run(base, func(t *testing.T) {

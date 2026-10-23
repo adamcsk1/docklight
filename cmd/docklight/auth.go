@@ -54,7 +54,11 @@ func (app *App) login(w http.ResponseWriter, r *http.Request) {
 func (app *App) logout(w http.ResponseWriter, r *http.Request) {
 	if cookie, err := r.Cookie("docklight_session"); err == nil {
 		if sid, ok := app.verifySessionCookie(cookie.Value); ok {
-			_, _ = app.db.Exec(`DELETE FROM sessions WHERE id_hash = ?`, app.sessionIDHash(sid))
+			if _, err := app.db.Exec(`DELETE FROM sessions WHERE id_hash = ?`, app.sessionIDHash(sid)); err != nil {
+				log.Printf("session revocation failed: %v", err)
+				http.Error(w, "Unable to revoke session. Logout failed; retry when storage is available.", http.StatusServiceUnavailable)
+				return
+			}
 		}
 	}
 	http.SetCookie(w, &http.Cookie{Name: "docklight_session", Value: "", Path: app.cookiePath(), MaxAge: -1, HttpOnly: true, Secure: app.cookieSecure(r), SameSite: http.SameSiteLaxMode})
