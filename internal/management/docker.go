@@ -205,6 +205,7 @@ func (e *Engine) Inventory(ctx context.Context) (Inventory, error) {
 type composeTarget struct {
 	Dir, Project string
 	Files        []string
+	EnvFiles     []string
 }
 
 type composeService struct {
@@ -299,6 +300,19 @@ func (e *Engine) composeTarget(c inspectContainer) (composeTarget, error) {
 	if len(t.Files) == 0 {
 		return t, errors.New("original Compose files missing")
 	}
+	if value := l[EnvironmentFileLabel]; value != "" {
+		for _, p := range strings.Split(value, ",") {
+			file, err := e.safePath(strings.TrimSpace(p))
+			if err != nil {
+				return t, err
+			}
+			info, err := os.Stat(file)
+			if err != nil || !info.Mode().IsRegular() {
+				return t, errors.New("Compose environment file unavailable")
+			}
+			t.EnvFiles = append(t.EnvFiles, file)
+		}
+	}
 	return t, nil
 }
 
@@ -306,6 +320,9 @@ func (t composeTarget) args() []string {
 	args := []string{"compose", "--project-name", t.Project, "--project-directory", t.Dir}
 	for _, f := range t.Files {
 		args = append(args, "-f", f)
+	}
+	for _, f := range t.EnvFiles {
+		args = append(args, "--env-file", f)
 	}
 	return args
 }

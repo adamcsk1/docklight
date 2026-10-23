@@ -45,9 +45,10 @@ type Job struct {
 }
 
 const (
-	ProjectLabel    = "com.docker.compose.project"
-	ServiceLabel    = "com.docker.compose.service"
-	WorkingDirLabel = "com.docker.compose.project.working_dir"
-	FilesLabel      = "com.docker.compose.project.config_files"
-	RoleLabel       = "io.docklight.role"
+	ProjectLabel         = "com.docker.compose.project"
+	ServiceLabel         = "com.docker.compose.service"
+	WorkingDirLabel      = "com.docker.compose.project.working_dir"
+	FilesLabel           = "com.docker.compose.project.config_files"
+	EnvironmentFileLabel = "com.docker.compose.project.environment_file"
+	RoleLabel            = "io.docklight.role"
 )

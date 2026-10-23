@@ -41,14 +41,18 @@ func TestDockerIntegration(t *testing.T) {
 	}
 	root := t.TempDir()
 	file := filepath.Join(root, "compose.yml")
-	content := "services:\n  web:\n    image: docklight-test-image:mutable\n    command: [sh, -c, 'sleep 3600']\n    volumes: [data:/data]\nvolumes:\n  data: {}\n"
+	content := "services:\n  web:\n    image: docklight-test-image:mutable\n    command: [sh, -c, 'sleep 3600']\n    environment:\n      DEPLOYMENT: ${DEPLOYMENT:-wrong}\n    volumes: [data:/data]\nvolumes:\n  data: {}\n"
+	envFile := filepath.Join(root, "production.env")
+	if err := os.WriteFile(envFile, []byte("DEPLOYMENT=production\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(file, []byte(content), 0600); err != nil {
 		t.Fatal(err)
 	}
 	docker("pull", "alpine:3.23")
 	docker("tag", "alpine:3.23", "docklight-test-image:mutable")
 	project := "docklight-integration"
-	docker("compose", "-p", project, "-f", file, "up", "-d")
+	docker("compose", "-p", project, "-f", file, "--env-file", envFile, "up", "-d")
 	t.Cleanup(func() {
 		var out bytes.Buffer
 		_ = run(ctx, root, &out, "compose", "-p", project, "-f", file, "down", "-v")
@@ -69,6 +73,9 @@ func TestDockerIntegration(t *testing.T) {
 	}
 	if got := docker("inspect", "--format", "{{.Image}}", newID); got != original {
 		t.Fatalf("image changed: %s -> %s", original, got)
+	}
+	if got := docker("inspect", "--format", "{{json .Config.Env}}", newID); !strings.Contains(got, "DEPLOYMENT=production") {
+		t.Fatalf("custom environment lost after recreate: %s", got)
 	}
 	// The transient override must not break the next management operation.
 	inv, err := e.Inventory(ctx)

@@ -135,6 +135,8 @@ UI and agent image labels protect management containers from ordinary actions. C
 
 Keep the Docklight deployment and its `.env` within the agent's mounted root. Runtime-only shell variables are not inherited by update helpers; put required Compose substitutions in the project's `.env` or files referenced by Compose. Use matching release tags for UI and agent. Pinned image digests do not advance automatically; edit the Compose configuration outside Docklight to change them.
 
+Custom Compose `--env-file` settings are replayed from container labels, in their original order, for discovery, recreation, builds, upgrades and management updates. These files must remain accessible at their labeled absolute paths within `STACKS_ROOT`; missing files or symlink escapes disable Compose operations rather than silently falling back to `.env`.
+
 For private registries, mount a dedicated Docker CLI configuration into the agent at `/root/.docker:ro`. Helpers inherit this mount. Authenticate that configuration beforehand with `docker --config <directory> login <registry>`. Desktop credential-helper configurations will not work unless the helper exists inside the agent image. Do not mount unrelated host credentials.
 
 Keep `BUILDX_CONFIG: /data/buildx` in both local and remote agent environments. Buildx writes builder state and activity timestamps, so its directory must be writable even when `/root/.docker` is mounted read-only for registry credentials. The existing agent `/data` mount provides persistent writable storage; do not make the credentials mount writable. After changing the environment, recreate the agent with `docker compose up -d docklight-agent` before retrying Build.
