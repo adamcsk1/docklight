@@ -163,8 +163,13 @@ func (s *Server) refresh(j *storedJob) {
 	if err != nil {
 		return
 	} // A transient Docker failure must not permit concurrent mutations.
-	j.Status, j.Output = status, output
-	if err := s.save(j); err == nil && (status == "success" || status == "failed") {
+	candidate := *j
+	candidate.Status, candidate.Output = status, output
+	if err := s.save(&candidate); err != nil {
+		return
+	}
+	*j = candidate
+	if status == "success" || status == "failed" {
 		// Persist the result before releasing its Docker logs and old image references.
 		_ = s.Engine.removeFinishedHelper(ctx, j.Helper, j.Action.ID)
 	}
