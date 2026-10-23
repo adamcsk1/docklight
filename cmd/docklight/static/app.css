@@ -239,6 +239,7 @@ a { color: inherit; }
 .resource-row p { margin: var(--space-1) 0 0; }
 .resource-users { display: flex; flex-direction: column; align-items: flex-start; gap: var(--space-1); }
 .container-actions, .cleanup-actions { display: grid; gap: var(--space-3); }
+[data-maintenance] > .cleanup-actions { padding-top: var(--space-4); }
 .container-actions .muted { font-size: var(--font-size-sm); }
 .delete-action { display: grid; gap: var(--space-2); padding-top: var(--space-2); border-top: var(--line-width) solid var(--color-line); }
 .delete-action .button, .cleanup-actions .button, .container-actions > .button { justify-self: start; }
