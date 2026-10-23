@@ -88,6 +88,37 @@ Alternatively, use HTTPS termination in a trusted reverse proxy, with an isolate
 
 The UI refuses agent redirects, preventing credentials from being forwarded elsewhere. Keep host files, TLS keys, tokens and backups private. UI sessions expire after 24 hours; restarting with a different session secret invalidates them.
 
+### Generate an agent certificate
+
+For a private deployment without an existing certificate authority, generate a self-signed certificate using OpenSSL. Run these commands from the agent's Compose directory on Linux or inside WSL on Windows. For example, `C:\docker\docklight-agent` is `/mnt/c/docker/docklight-agent` in WSL. Replace the example DNS name and IP with the address(es) the UI will actually use to reach this agent, preferably through a VPN. The URL must match a Subject Alternative Name (SAN); setting only the certificate's common name is not sufficient.
+
+```bash
+umask 077
+mkdir -p certs
+openssl req -x509 -newkey rsa:3072 -sha256 -nodes -days 365 \
+  -keyout certs/agent.key \
+  -out certs/agent.crt \
+  -subj "/CN=docklight-agent" \
+  -addext "subjectAltName=DNS:pi.example.internal,IP:192.0.2.10" \
+  -addext "basicConstraints=critical,CA:TRUE"
+```
+
+Merge these settings into the existing agent service, keeping its token, socket, stack-root and data configuration:
+
+```yaml
+environment:
+  TLS_CERT: /certs/agent.crt
+  TLS_KEY: /certs/agent.key
+volumes:
+  - ./certs:/certs:ro
+```
+
+Copy **only `agent.crt`**, over a trusted connection, to the UI host as `./ui-data/certs/pi-agent.crt` (using the UI data mount from the example above). In the UI's `hosts.yml`, set the corresponding host's `url` to `https://pi.example.internal:8081` (or the IP included in the SAN), and `ca_file` to `/data/certs/pi-agent.crt`. The `ca_file` path is inside the UI container, not the agent. Never copy the private `agent.key` to the UI or commit it to Git.
+
+On the agent host, apply the TLS configuration with `docker compose up -d --force-recreate docklight-agent`. On the UI host, run `docker compose restart docklight` after installing the trusted certificate and updating `hosts.yml`.
+
+The certificate expires after one year. Renew it before expiry and replace it if the connection address changes to one not listed in the SAN; update the UI's trusted certificate and restart both components when replacing it. On Windows-mounted directories, also restrict the private key using Windows file permissions; WSL `umask` alone does not guarantee restrictive NTFS permissions. TLS encrypts and authenticates the connection but does not replace the agent token, VPN or firewall restrictions.
+
 ## Updates and private registries
 
 ### Locally built application images
