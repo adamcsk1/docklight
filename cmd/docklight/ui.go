@@ -18,6 +18,11 @@ import (
 )
 
 type hostView struct{ ID, Name string }
+
+type agentRejection struct{ message string }
+
+func (e *agentRejection) Error() string { return e.message }
+
 type containerGroup struct {
 	Project    string
 	Containers []management.Container
@@ -168,8 +173,14 @@ func (h *Host) request(r *http.Request, method, path string, body any, result an
 	}
 	defer res.Body.Close()
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		if res.StatusCode == 409 {
-			return errors.New("another operation or update is running on this host")
+		// Only fixed API rejections prove that submission did not start a job.
+		switch res.StatusCode {
+		case 400, 404, 405, 413:
+			return &agentRejection{"agent rejected the action; no operation was submitted"}
+		case 401, 403:
+			return &agentRejection{"agent authentication rejected; check the server-side host token"}
+		case 409:
+			return &agentRejection{"another operation or update is running on this host"}
 		}
 		return fmt.Errorf("agent request failed (HTTP %d)", res.StatusCode)
 	}
@@ -287,8 +298,17 @@ func (app *App) action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := management.Action{Kind: r.PostForm.Get("kind"), ID: r.PostForm.Get("id"), Operation: r.PostForm.Get("operation"), Scope: r.PostForm.Get("scope"), Confirmed: r.PostForm.Get("confirmed") == "yes"}
+	if err := management.ValidateAction(a); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	var j management.Job
 	if err = h.request(r, "POST", "/v1/jobs", a, &j); err != nil {
+		var rejection *agentRejection
+		if errors.As(err, &rejection) {
+			http.Error(w, rejection.Error(), http.StatusBadGateway)
+			return
+		}
 		http.Error(w, err.Error()+". Submission outcome may be unknown; inspect the host and agent logs before retrying.", 502)
 		return
 	}

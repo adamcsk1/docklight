@@ -13,7 +13,8 @@ import (
 	"strings"
 )
 
-func validateAction(a Action) error {
+// ValidateAction checks the fixed API's action shape, not current Docker state.
+func ValidateAction(a Action) error {
 	if a.ID == "" || len(a.ID) > 256 || strings.ContainsAny(a.ID, "\x00\r\n") {
 		return errors.New("invalid target")
 	}
@@ -41,7 +42,7 @@ func validateAction(a Action) error {
 }
 
 func (e *Engine) Execute(ctx context.Context, a Action, out io.Writer) error {
-	if err := validateAction(a); err != nil {
+	if err := ValidateAction(a); err != nil {
 		return err
 	}
 	if a.Kind != "container" {
@@ -228,7 +229,7 @@ func HelperName(a Action) string {
 type helperLaunchError struct{ error }
 
 func (e *Engine) Update(ctx context.Context, a Action, out io.Writer) error {
-	if err := validateAction(a); err != nil {
+	if err := ValidateAction(a); err != nil {
 		return err
 	}
 	if a.Kind != "container" || a.Operation != "update" || a.Scope != "" {

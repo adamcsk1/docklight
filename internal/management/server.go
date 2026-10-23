@@ -209,7 +209,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "trailing action data", 400)
 		return
 	}
-	if err := validateAction(a); err != nil {
+	if err := ValidateAction(a); err != nil {
 		http.Error(w, err.Error(), 400)
 		return
 	}
