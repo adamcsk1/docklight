@@ -29,6 +29,11 @@ const assert = require("node:assert/strict");
       const header = await page.locator(".topbar").boundingBox();
       assert(bounds.y >= header.y + header.height, "maintenance heading hidden behind navigation");
       const form = page.getByRole("form", { name: "Update all agents and UIs", exact: true });
+      const labelSpacing = await form.locator(".switch-label").evaluate(label => ({
+        actual: parseFloat(getComputedStyle(label).paddingTop),
+        expected: parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.75,
+      }));
+      assert(labelSpacing.actual >= labelSpacing.expected, "maintenance confirmation label needs top padding");
       await form.getByRole("button").click();
       assert.equal(await form.getByRole("checkbox").evaluate(input => input.validity.valueMissing), true);
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
