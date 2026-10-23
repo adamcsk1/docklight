@@ -28,6 +28,13 @@ const showStatus = text => {
   uiStatus.hidden = !text;
 };
 const hostForm = document.querySelector(".host-form");
+const setBuildCommit = (component, commit) => {
+  commit ||= "unknown";
+  const label = document.querySelector(`[data-build-component="${component}"]`);
+  label.textContent = commit === "unavailable" ? commit : commit.slice(0, 7);
+  label.title = commit;
+  label.setAttribute("aria-label", (component === "ui" ? "UI" : "Agent") + " build commit " + commit);
+};
 hostForm.querySelector("select").addEventListener("change", () => hostForm.requestSubmit());
 let submitting = false;
 document.addEventListener("submit", event => {
@@ -38,6 +45,7 @@ document.addEventListener("submit", event => {
   submitting = true;
   const button = event.submitter || form.querySelector('button[type="submit"]');
   const hostChange = form === hostForm;
+  if (hostChange) setBuildCommit("agent", "unavailable");
   const select = hostForm.querySelector("select");
   showStatus(hostChange
     ? "Connecting to " + select.selectedOptions[0].textContent + "…"
@@ -108,9 +116,12 @@ if (operation) {
       if (submitting) return;
       const states = new Map([...current.querySelectorAll("details.stack-group")].map(group => [group.dataset.project, group.open]));
       initGroups(next, states);
+      setBuildCommit("agent", next.dataset.agentCommit);
+      setBuildCommit("ui", next.dataset.uiCommit);
       current.replaceWith(next);
       setMessage("Operation " + operation.dataset.status + ". Inventory refreshed.");
     } catch {
+      if (!submitting) setBuildCommit("agent", "unavailable");
       setMessage(remaining > 1
         ? "Operation finished; inventory temporarily unavailable. Retrying automatically."
         : "Operation finished; inventory could not be refreshed. Reload to check current host state.");
@@ -146,6 +157,7 @@ if (operation) {
         ? "Management update running. Reconnecting automatically if the agent briefly disconnects."
         : runningMessage + (job.Output.trim() ? "" : " Waiting for output."));
     } catch {
+      if (!submitting) setBuildCommit("agent", "unavailable");
       setMessage("Reconnecting to agent. Retrying automatically; do not resubmit.");
     }
     scrollToEnd();

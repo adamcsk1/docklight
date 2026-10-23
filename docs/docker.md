@@ -27,6 +27,8 @@ Secrets in this YAML are literal; environment substitution is not performed. Mou
 
 Selecting a Docker host connects automatically when JavaScript is enabled. **Reconnect** reloads the selected host on demand; without JavaScript, use it to apply your selection. Submission, waiting-for-output, reconnecting and inventory-refresh status appear above the lists even when the operation output is hidden. Submission controls are locked while navigating so repeated clicks do not submit duplicate actions.
 
+Build commits appear below the host selector: **Agent** identifies the selected remote host's agent, and **UI** identifies the UI server. Hover or focus either short commit to see its full value. Agent updates appear after the next successful inventory refresh or Reconnect. Failed connections show `unavailable`; older agents and builds without revision metadata show `unknown`.
+
 Save `/srv/compose/docklight/compose.yml`:
 
 ```yaml

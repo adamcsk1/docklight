@@ -122,7 +122,13 @@ volumes:
 	}
 	deadline := time.Now().Add(30 * time.Second)
 	for {
-		if _, err := request("/v1/inventory", ""); err == nil {
+		if body, err := request("/v1/inventory", ""); err == nil {
+			if expected := os.Getenv("DOCKLIGHT_TEST_BUILD_COMMIT"); expected != "" {
+				var inv Inventory
+				if err := json.Unmarshal([]byte(body), &inv); err != nil || inv.Commit != expected {
+					t.Fatalf("agent image build commit: got %q, want %q (%v)", inv.Commit, expected, err)
+				}
+			}
 			break
 		}
 		if time.Now().After(deadline) {

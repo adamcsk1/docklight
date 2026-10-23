@@ -9,8 +9,8 @@ go vet ./...
 go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
 go build ./cmd/docklight
 go build ./cmd/docklight-agent
-docker build --target ui -t docklight:dev .
-docker build --target agent -t docklight-agent:dev .
+docker build --build-arg BUILD_COMMIT="$(git rev-parse HEAD)" --target ui -t docklight:dev .
+docker build --build-arg BUILD_COMMIT="$(git rev-parse HEAD)" --target agent -t docklight-agent:dev .
 ```
 
 Tests cover admin authentication/session expiry/throttling, CSRF/origin checks, per-host routing and token secrecy, TLS/redirect rejection, exact-image recreation, failed-pull behavior, mutation serialization, job restart recovery, protected containers and referenced-resource deletion. Removed feature tests are replaced with tests for the smaller API and UI; a passing suite is not proof that all operational failures are impossible.
@@ -78,6 +78,6 @@ The Dockerfile cross-compiles Go binaries on the build platform and uses multi-a
 For manual builds:
 
 ```sh
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 --target ui -t <registry>/docklight:<tag> --push .
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 --target agent -t <registry>/docklight-agent:<tag> --push .
+docker buildx build --build-arg BUILD_COMMIT="$(git rev-parse HEAD)" --platform linux/amd64,linux/arm64,linux/arm/v7 --target ui -t <registry>/docklight:<tag> --push .
+docker buildx build --build-arg BUILD_COMMIT="$(git rev-parse HEAD)" --platform linux/amd64,linux/arm64,linux/arm/v7 --target agent -t <registry>/docklight-agent:<tag> --push .
 ```

@@ -24,6 +24,7 @@ type Resource struct {
 }
 
 type Inventory struct {
+	Commit     string
 	Containers []Container
 	Resources  []Resource
 }

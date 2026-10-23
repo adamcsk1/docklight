@@ -2,15 +2,15 @@ FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
-ARG BUILD_DATE=unknown
+ARG BUILD_COMMIT=unknown
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} GOARM=${TARGETVARIANT#v} \
-    go build -trimpath -ldflags "-s -w -X main.buildDate=${BUILD_DATE}" -o /out/docklight ./cmd/docklight && \
+    go build -trimpath -ldflags "-s -w -X docklight/internal/buildinfo.Commit=${BUILD_COMMIT}" -o /out/docklight ./cmd/docklight && \
     CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} GOARM=${TARGETVARIANT#v} \
-    go build -trimpath -ldflags "-s -w" -o /out/docklight-agent ./cmd/docklight-agent
+    go build -trimpath -ldflags "-s -w -X docklight/internal/buildinfo.Commit=${BUILD_COMMIT}" -o /out/docklight-agent ./cmd/docklight-agent
 
 FROM build AS test
 RUN go test -race -cover ./... && go vet ./...

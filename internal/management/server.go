@@ -17,6 +17,8 @@ import (
 	"sync"
 	"time"
 
+	"docklight/internal/buildinfo"
+
 	"github.com/google/uuid"
 )
 
@@ -115,6 +117,7 @@ func (s *Server) inventory(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
+	inv.Commit = buildinfo.Commit
 	writeJSON(w, inv)
 }
 

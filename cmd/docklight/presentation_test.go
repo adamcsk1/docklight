@@ -41,6 +41,10 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 		switch {
 		case r.URL.Path == "/v1/inventory":
 			snapshot := inv
+			snapshot.Commit = strings.Repeat("a", 40)
+			if r.Header.Get("Authorization") == "Bearer "+strings.Repeat("p", 32) {
+				snapshot.Commit = strings.Repeat("b", 40)
+			}
 			if completed.Load() {
 				n := inventoryChecks.Add(1)
 				if n == 1 {
@@ -48,6 +52,7 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 					return
 				}
 				if n >= 3 {
+					snapshot.Commit = strings.Repeat("c", 40)
 					snapshot.Containers = append([]management.Container(nil), inv.Containers[:3]...)
 					snapshot.Containers[0].State = "exited"
 					snapshot.Containers[1].Name = "web-updated"

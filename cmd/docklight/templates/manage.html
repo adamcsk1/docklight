@@ -21,7 +21,7 @@
 {{template "layout_end" .}}
 
 {{define "inventory"}}
-<div data-inventory data-inventory-url="{{.Base}}/inventory?host={{.HostID}}">
+<div data-inventory data-inventory-url="{{.Base}}/inventory?host={{.HostID}}" data-agent-commit="{{.AgentCommit}}" data-ui-commit="{{.UICommit}}">
 <section class="resource-section" id="containers" aria-labelledby="containers-title">
   <div class="section-head"><h2 id="containers-title">Containers</h2><span class="badge">{{len .Inventory.Containers}} total</span></div>
    <p class="form-hint">Recreate preserves exact current images. Upgrade pulls registry images only. Build compiles local images, then deploys only after success. Stop containers before deletion; volumes and Compose files are preserved.</p>

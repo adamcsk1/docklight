@@ -14,6 +14,7 @@ import (
 	"sort"
 	"time"
 
+	"docklight/internal/buildinfo"
 	"docklight/internal/management"
 )
 
@@ -34,6 +35,7 @@ type resourceSection struct {
 }
 type PageData struct {
 	Title, Error, CSRF, Base, HostID string
+	UICommit, AgentCommit            string
 	Hosts                            []hostView
 	Inventory                        management.Inventory
 	ContainerGroups                  []containerGroup
@@ -86,11 +88,26 @@ func (app *App) withBase(path string) string {
 }
 func (app *App) loadTemplates() error {
 	var err error
-	app.templates, err = template.New("").ParseFS(webFS, "templates/*.html")
+	app.templates, err = template.New("").Funcs(template.FuncMap{"shortCommit": shortCommit}).ParseFS(webFS, "templates/*.html")
 	return err
 }
+
+func shortCommit(commit string) string {
+	if commit == "unavailable" {
+		return commit
+	}
+	if commit == "" {
+		return "unknown"
+	}
+	return commit[:min(7, len(commit))]
+}
+
 func (app *App) render(w http.ResponseWriter, r *http.Request, name string, data PageData) {
 	data.Base = app.withBase("")
+	data.UICommit = buildinfo.Commit
+	if data.AgentCommit == "" {
+		data.AgentCommit = "unavailable"
+	}
 	if cookie, err := r.Cookie("docklight_session"); err == nil {
 		data.CSRF = app.csrfToken(cookie.Value)
 	}
@@ -223,8 +240,13 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) loadInventory(r *http.Request, h *Host, d *PageData) error {
+	d.AgentCommit = "unavailable"
 	if err := h.request(r, "GET", "/v1/inventory", nil, &d.Inventory); err != nil {
 		return err
+	}
+	d.AgentCommit = d.Inventory.Commit
+	if d.AgentCommit == "" {
+		d.AgentCommit = "unknown"
 	}
 	d.ContainerGroups = groupContainers(d.Inventory.Containers)
 	d.ResourceSections = []resourceSection{{Kind: "image", Title: "Images"}, {Kind: "volume", Title: "Volumes"}, {Kind: "network", Title: "Networks"}}
