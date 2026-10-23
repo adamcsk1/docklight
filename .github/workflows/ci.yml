@@ -53,7 +53,7 @@ jobs:
         env:
           NODE_PATH: ${{ runner.temp }}/docklight-browser/node_modules
           DOCKLIGHT_UI_BROWSER_TEST: '1'
-        run: go test -v ./cmd/docklight -run TestBrowserPresentation -count=1 -timeout=5m
+        run: go test -v ./cmd/docklight -run TestBrowser -count=1 -timeout=6m
       - name: Build native images for management-update integration tests
         run: |
           docker build --build-arg BUILD_COMMIT="${{ github.sha }}" --target ui -t docklight:refactor .
@@ -72,7 +72,7 @@ jobs:
           DOCKLIGHT_TEST_DOCKER_HOST: tcp://127.0.0.1:23750
           DOCKLIGHT_TEST_OUTER_CONTAINER: docklight-test-daemon
           DOCKLIGHT_TEST_BUILD_COMMIT: ${{ github.sha }}
-        run: go test -v ./internal/management -run TestDocker -count=1 -timeout=10m
+        run: go test -v ./internal/management -run TestDocker -count=1 -timeout=12m
       - name: Stop test daemon
         if: always()
         run: docker rm -fv docklight-test-daemon || true

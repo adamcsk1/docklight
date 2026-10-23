@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"embed"
 	"errors"
@@ -19,11 +20,14 @@ import (
 var webFS embed.FS
 
 type App struct {
-	cfg       Config
-	db        *sql.DB
-	templates *template.Template
-	loginMu   sync.Mutex
-	logins    map[string]loginAttempt
+	cfg            Config
+	db             *sql.DB
+	templates      *template.Template
+	loginMu        sync.Mutex
+	logins         map[string]loginAttempt
+	maintenanceMu  sync.Mutex
+	coordinator    string
+	masterConflict string
 }
 type loginAttempt struct {
 	Count     int
@@ -54,6 +58,9 @@ func main() {
 	if err = app.loadTemplates(); err != nil {
 		log.Fatal(err)
 	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go app.maintenanceLoop(ctx)
 	server := &http.Server{Addr: cfg.Addr, Handler: app.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: time.Minute, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10}
 	log.Printf("Docklight listening on %s%s", cfg.Addr, cfg.BaseURL)
 	if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

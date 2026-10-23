@@ -744,6 +744,9 @@ func TestJobPersistenceFailureNeverRunsDocker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err = os.Remove(filepath.Join(f.e.DataDir, "maintenance.json")); err != nil {
+		t.Fatal(err)
+	}
 	if err = os.Remove(f.e.DataDir); err != nil {
 		t.Fatal(err)
 	}

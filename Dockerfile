@@ -17,16 +17,20 @@ RUN go test -race -cover ./... && go vet ./...
 
 # Official CLI image includes Compose on amd64, arm64 and arm/v7.
 FROM docker:29-cli AS agent
+ARG BUILD_COMMIT=unknown
 COPY --from=build /out/docklight-agent /usr/local/bin/docklight-agent
 LABEL io.docklight.role=agent
+LABEL org.opencontainers.image.revision=${BUILD_COMMIT}
 EXPOSE 8081
 VOLUME ["/data"]
 ENTRYPOINT ["docklight-agent"]
 
 FROM alpine:3.23 AS ui
+ARG BUILD_COMMIT=unknown
 RUN apk add --no-cache ca-certificates
 COPY --from=build /out/docklight /usr/local/bin/docklight
 LABEL io.docklight.role=ui
+LABEL org.opencontainers.image.revision=${BUILD_COMMIT}
 EXPOSE 8080
 VOLUME ["/data"]
 ENTRYPOINT ["docklight"]

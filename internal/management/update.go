@@ -52,6 +52,9 @@ func (e *Engine) Update(ctx context.Context, a Action, out io.Writer) error {
 	if target == nil || agent == nil {
 		return errors.New("update requires identifiable agent and target containers")
 	}
+	if _, err := e.capture(ctx, "image", "inspect", agent.Image); err != nil {
+		return errors.New("current agent image unavailable; restore it before updating")
+	}
 	role := target.Config.Labels[RoleLabel]
 	if role != "ui" && role != "agent" {
 		return errors.New("dedicated update is only for labeled UI/agent containers")

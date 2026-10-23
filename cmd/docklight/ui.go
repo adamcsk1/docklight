@@ -43,6 +43,10 @@ type PageData struct {
 	ResourceSections                 []resourceSection
 	Job                              *management.Job
 	HideOutput                       bool
+	Master                           bool
+	Maintenance                      *maintenanceRun
+	MaintenanceError                 string
+	Blocked                          bool
 }
 
 func groupContainers(containers []management.Container) []containerGroup {
@@ -141,6 +145,8 @@ func (app *App) routes() http.Handler {
 	mux.Handle("GET "+app.withBase("/operation"), app.requireAuth(http.HandlerFunc(app.operation)))
 	mux.Handle("GET "+app.withBase("/inventory"), app.requireAuth(http.HandlerFunc(app.inventory)))
 	mux.Handle("POST "+app.withBase("/action"), app.requireAuth(http.HandlerFunc(app.action)))
+	mux.Handle("POST "+app.withBase("/maintenance"), app.requireAuth(http.HandlerFunc(app.maintenanceStart)))
+	mux.Handle("GET "+app.withBase("/maintenance"), app.requireAuth(http.HandlerFunc(app.maintenanceStatus)))
 	if app.cfg.BaseURL != "/" {
 		mux.HandleFunc("GET "+app.cfg.BaseURL, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != app.cfg.BaseURL {
@@ -185,6 +191,9 @@ func (h *Host) request(r *http.Request, method, path string, body any, result an
 	}
 	req.Header.Set("Authorization", "Bearer "+h.Token)
 	req.Header.Set("Content-Type", "application/json")
+	if owner, ok := r.Context().Value(coordinatorContextKey{}).(string); ok {
+		req.Header.Set("X-Docklight-Coordinator", owner)
+	}
 	res, err := h.client.Do(req)
 	if err != nil {
 		return errors.New("agent unreachable or TLS verification failed")
@@ -220,6 +229,11 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 	d := PageData{Title: "Containers", HostID: h.ID, HideOutput: r.URL.Query().Get("output") == "hidden"}
 	for _, host := range app.cfg.Hosts {
 		d.Hosts = append(d.Hosts, hostView{host.ID, host.Name})
+	}
+	app.populateMaintenance(r, &d)
+	if d.Blocked {
+		app.render(w, r, "manage.html", d)
+		return
 	}
 	if id := r.URL.Query().Get("job"); id != "" {
 		if !validID(id) {
@@ -265,6 +279,9 @@ func (app *App) loadInventory(r *http.Request, h *Host, d *PageData) error {
 }
 
 func (app *App) inventory(w http.ResponseWriter, r *http.Request) {
+	if !app.allowManagement(w, r) {
+		return
+	}
 	hostID := r.URL.Query().Get("host")
 	if hostID == "" {
 		http.Error(w, "explicit host required", http.StatusBadRequest)
@@ -309,6 +326,12 @@ func (app *App) operation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (app *App) action(w http.ResponseWriter, r *http.Request) {
+	if !app.allowManagement(w, r) {
+		return
+	}
+	if app.masterHost() != nil {
+		r = r.WithContext(context.WithValue(r.Context(), coordinatorContextKey{}, app.coordinator))
+	}
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, "bad form", 400)
 		return

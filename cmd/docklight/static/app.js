@@ -71,6 +71,35 @@ window.addEventListener("pageshow", event => {
   if (event.persisted && submitting) window.location.reload();
 });
 
+if (document.querySelector("[data-maintenance]")) {
+  const refreshMaintenance = async () => {
+    if (submitting) return;
+    const current = document.querySelector("[data-maintenance]");
+    try {
+      const response = await fetch(current.dataset.maintenanceUrl, { cache: "no-store" });
+      if (response.redirected) { window.location.replace(response.url); return; }
+      if (response.status === 409) { window.location.reload(); return; }
+      if (!response.ok) throw new Error("Maintenance status unavailable");
+      const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-maintenance]");
+      if (!next) throw new Error("Invalid maintenance status");
+      if (submitting) return;
+      if (current.dataset.running === "true" && next.dataset.running !== "true") {
+        window.location.reload();
+        return;
+      }
+      if (current.dataset.running === "true" || next.dataset.running === "true") {
+        const open = [...current.querySelectorAll("details")].map(item => item.open);
+        [...next.querySelectorAll("details")].forEach((item, index) => item.open = open[index] || false);
+        current.replaceWith(next);
+      }
+    } catch {
+      showStatus("Reconnecting to maintenance coordinator. Do not resubmit updates.");
+    }
+    window.setTimeout(refreshMaintenance, 5000);
+  };
+  window.setTimeout(refreshMaintenance, 5000);
+}
+
 const operation = document.querySelector("[data-operation-url]");
 if (operation) {
   const output = operation.querySelector(".operation-output");

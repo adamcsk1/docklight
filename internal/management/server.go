@@ -24,16 +24,18 @@ import (
 
 type storedJob struct {
 	Job
-	Helper string
+	Helper           string
+	Coordinator, Run string
 }
 
 type Server struct {
-	Engine    *Engine
-	token     [32]byte
-	mu        sync.Mutex
-	refreshMu sync.Mutex
-	jobs      map[string]*storedJob
-	busy      bool
+	Engine      *Engine
+	token       [32]byte
+	mu          sync.Mutex
+	refreshMu   sync.Mutex
+	jobs        map[string]*storedJob
+	busy        bool
+	maintenance MaintenanceState
 }
 
 func NewServer(engine *Engine, token string) (*Server, error) {
@@ -56,6 +58,9 @@ func NewServer(engine *Engine, token string) (*Server, error) {
 		return nil, err
 	}
 	s := &Server{Engine: engine, token: sha256.Sum256([]byte(token)), jobs: map[string]*storedJob{}}
+	if err := s.initMaintenance(); err != nil {
+		return nil, err
+	}
 	files, err := filepath.Glob(filepath.Join(engine.DataDir, "job-*.json"))
 	if err != nil {
 		return nil, err
@@ -90,6 +95,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/inventory", s.inventory)
 	mux.HandleFunc("POST /v1/jobs", s.submit)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.job)
+	mux.HandleFunc("GET /v1/maintenance", s.maintenanceInfo)
+	mux.HandleFunc("POST /v1/maintenance", s.maintenanceAction)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -122,7 +129,11 @@ func (s *Server) inventory(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) save(j *storedJob) error {
-	b, err := json.Marshal(j)
+	return s.saveState("job-"+j.ID+".json", j)
+}
+
+func (s *Server) saveState(name string, value any) error {
+	b, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
@@ -142,7 +153,7 @@ func (s *Server) save(j *storedJob) error {
 	if err = f.Close(); err != nil {
 		return err
 	}
-	if err = os.Rename(f.Name(), filepath.Join(s.Engine.DataDir, "job-"+j.ID+".json")); err != nil {
+	if err = os.Rename(f.Name(), filepath.Join(s.Engine.DataDir, name)); err != nil {
 		return err
 	}
 	if runtime.GOOS != "windows" {
@@ -217,6 +228,34 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.mu.Lock()
+	owner, run, jobID := r.Header.Get("X-Docklight-Coordinator"), r.Header.Get("X-Docklight-Run"), r.Header.Get("X-Docklight-Job")
+	if err := s.authorizeMaintenance(owner, run); err != nil {
+		s.mu.Unlock()
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	if jobID != "" {
+		if !validUUID(jobID) || run == "" {
+			s.mu.Unlock()
+			http.Error(w, "invalid maintenance job identity", 400)
+			return
+		}
+		if old := s.jobs[jobID]; old != nil {
+			if old.Action != a || old.Coordinator != owner || old.Run != run {
+				s.mu.Unlock()
+				http.Error(w, "job identity conflict", 409)
+				return
+			}
+			result := old.Job
+			s.mu.Unlock()
+			writeJSON(w, result)
+			return
+		}
+	} else if run != "" {
+		s.mu.Unlock()
+		http.Error(w, "maintenance job identity required", 400)
+		return
+	}
 	var updating []string
 	for id, j := range s.jobs {
 		if j.Status == "updating" {
@@ -228,6 +267,24 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		s.refresh(id)
 	}
 	s.mu.Lock()
+	if err := s.authorizeMaintenance(owner, run); err != nil {
+		s.mu.Unlock()
+		http.Error(w, err.Error(), 409)
+		return
+	}
+	if jobID != "" {
+		if old := s.jobs[jobID]; old != nil {
+			if old.Action != a || old.Coordinator != owner || old.Run != run {
+				s.mu.Unlock()
+				http.Error(w, "job identity conflict", 409)
+				return
+			}
+			result := old.Job
+			s.mu.Unlock()
+			writeJSON(w, result)
+			return
+		}
+	}
 	if s.busy {
 		s.mu.Unlock()
 		http.Error(w, "another host operation is running (builds can take up to two hours)", 409)
@@ -241,6 +298,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	j := &storedJob{Job: Job{ID: uuid.NewString(), Action: a, Status: "running", Started: time.Now().UTC().Format(time.RFC3339)}}
+	if jobID != "" {
+		j.ID, j.Coordinator, j.Run = jobID, owner, run
+	}
 	if a.Operation == "update" {
 		j.Helper = HelperName(a)
 	}
@@ -326,6 +386,9 @@ func (s *Server) prune() {
 	}
 	sort.Slice(done, func(i, j int) bool { return done[i].Started > done[j].Started })
 	for _, j := range done[min(100, len(done)):] {
+		if j.Run != "" && j.Run == s.maintenance.Run {
+			continue
+		}
 		if err := os.Remove(filepath.Join(s.Engine.DataDir, "job-"+j.ID+".json")); err == nil {
 			delete(s.jobs, j.ID)
 		}

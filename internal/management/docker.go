@@ -61,7 +61,10 @@ type inspectContainer struct {
 		Image  string
 		Labels map[string]string
 	}
-	State           struct{ Status string }
+	State struct {
+		Status string
+		Health *struct{ Status string }
+	}
 	Mounts          []struct{ Type, Name string }
 	NetworkSettings struct{ Networks map[string]struct{} }
 }

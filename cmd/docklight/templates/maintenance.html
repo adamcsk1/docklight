@@ -1,0 +1,15 @@
+{{define "maintenance"}}{{if .Master}}
+<section class="panel" aria-labelledby="maintenance-title" data-maintenance data-maintenance-url="{{.Base}}/maintenance?host={{.HostID}}" data-running="{{with .Maintenance}}{{eq .Status "running"}}{{else}}false{{end}}">
+  <h2 id="maintenance-title">Maintenance</h2>
+  {{if .MaintenanceError}}<p class="alert alert-danger" role="alert">{{.MaintenanceError}}</p>{{end}}
+  <p class="form-hint">Update remote agents, then the main agent, then other UIs, and this UI last. Services briefly disconnect. Failed or uncertain agents block UI updates.</p>
+  {{with .Maintenance}}<p role="status">{{.Status}} · {{.Message}}</p>
+  {{range .Steps}}<details><summary>{{.Host}} · {{.Role}} · {{.Status}}</summary><p class="resource-break">Before: {{.Before}} ({{.BeforeBuild}}) · After: {{.After}} ({{.AfterBuild}})</p><pre class="operation-output">{{.Detail}}</pre></details>{{end}}{{end}}
+  <form class="cleanup-actions" method="post" action="{{.Base}}/maintenance" aria-label="Update all agents and UIs">
+    {{template "csrf" .}}<input type="hidden" name="host" value="{{.HostID}}">
+    <label class="switch-label"><input type="checkbox" name="confirmed" value="yes" required><span>I confirm updating all agents and UIs, with possible downtime and no automatic rollback</span></label>
+    <button class="button button-danger" type="submit" {{if .MaintenanceError}}disabled{{end}} {{with .Maintenance}}{{if eq .Status "running"}}disabled{{end}}{{end}}>{{with .Maintenance}}{{if eq .Status "attention"}}Retry / reconcile maintenance{{else}}Update all agents and UIs{{end}}{{else}}Update all agents and UIs{{end}}</button>
+  </form>
+  <p><a class="button button-ghost" href="{{.Base}}/?host={{.HostID}}">Refresh maintenance status</a></p>
+</section>
+{{end}}{{end}}

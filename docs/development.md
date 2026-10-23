@@ -13,7 +13,7 @@ docker build --build-arg BUILD_COMMIT="$(git rev-parse HEAD)" --target ui -t doc
 docker build --build-arg BUILD_COMMIT="$(git rev-parse HEAD)" --target agent -t docklight-agent:dev .
 ```
 
-Tests cover admin authentication/session expiry/throttling, CSRF/origin checks, per-host routing and token secrecy, TLS/redirect rejection, exact-image recreation, failed-pull behavior, mutation serialization, job restart recovery, protected containers and referenced-resource deletion. Removed feature tests are replaced with tests for the smaller API and UI; a passing suite is not proof that all operational failures are impossible.
+Tests cover admin authentication/session expiry/throttling, CSRF/origin checks, per-host routing and token secrecy, TLS/redirect rejection, exact-image recreation, failed-pull behavior, mutation serialization, job restart recovery, protected containers and referenced-resource deletion. Maintenance tests cover master conflicts, atomic claims, lease expiry with active helpers, replay-safe jobs, persistence failures, partial updates, retries, lost responses, service-health verification and coordinator restart. Removed feature tests are replaced with tests for the smaller API and UI; a passing suite is not proof that all operational failures are impossible.
 
 Symlink regressions cover Compose files, project directories and custom environment files, including chained escapes and valid links within the root. Linux tests fail rather than skip if symlinks are unavailable. On Windows, enable Developer Mode with administrator approval, or run the tests locally in a Linux container. Set `DOCKLIGHT_REQUIRE_SYMLINKS=1` to prohibit skips; CI enforces this explicitly.
 

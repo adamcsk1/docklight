@@ -10,7 +10,7 @@ import (
 	"time"
 )
 
-func TestSessionOnlyDatabasePersistsAcrossRestart(t *testing.T) {
+func TestSessionAndMaintenanceDatabasePersistsAcrossRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sessions.db")
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -22,6 +22,7 @@ func TestSessionOnlyDatabasePersistsAcrossRestart(t *testing.T) {
 		db.Close()
 		t.Fatal(err)
 	}
+	coordinator := a.coordinator
 	if _, err = db.Exec(`INSERT INTO sessions(id_hash,expires_at) VALUES(?,?)`, a.sessionIDHash("persisted"), time.Now().Add(time.Hour).Format(time.RFC3339)); err != nil {
 		db.Close()
 		t.Fatal(err)
@@ -39,11 +40,14 @@ func TestSessionOnlyDatabasePersistsAcrossRestart(t *testing.T) {
 	if err = a.initDB(); err != nil {
 		t.Fatal(err)
 	}
+	if a.coordinator != coordinator {
+		t.Fatal("coordinator identity changed after restart")
+	}
 	if !a.validSession(a.signSessionID("persisted")) {
 		t.Fatal("session lost on restart")
 	}
 	var tables string
-	if err = db.QueryRow(`SELECT group_concat(name, ',') FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'`).Scan(&tables); err != nil || tables != "sessions" {
+	if err = db.QueryRow(`SELECT group_concat(name, ',') FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'`).Scan(&tables); err != nil || tables != "sessions,maintenance" {
 		t.Fatalf("unexpected database tables: %q %v", tables, err)
 	}
 	files, err := os.ReadDir(filepath.Dir(path))

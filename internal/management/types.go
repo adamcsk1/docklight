@@ -45,6 +45,40 @@ type Job struct {
 	Started string
 }
 
+// MasterClaim identifies an installation, not an authentication credential.
+type MasterClaim struct {
+	Coordinator string
+	Master      string
+	Name        string
+}
+
+type MaintenanceRequest struct {
+	Operation string
+	Claim     MasterClaim
+	Run       string
+	Confirmed bool
+}
+
+type MaintenanceState struct {
+	NodeID string
+	Owner  MasterClaim
+	Run    string
+	Lease  int64
+}
+
+type UpdateTarget struct {
+	ID, Service, Role, Name, Image, Commit, State, Health, Error string
+	Self                                                         bool
+}
+
+type MaintenanceInfo struct {
+	Version        int
+	HostID, Commit string
+	State          MaintenanceState
+	Busy           bool
+	Targets        []UpdateTarget
+}
+
 const (
 	ProjectLabel         = "com.docker.compose.project"
 	ServiceLabel         = "com.docker.compose.service"

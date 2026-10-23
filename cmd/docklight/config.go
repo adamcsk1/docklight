@@ -27,6 +27,7 @@ type Host struct {
 	Token     string `yaml:"token"`
 	CAFile    string `yaml:"ca_file"`
 	AllowHTTP bool   `yaml:"allow_http"`
+	Master    bool   `yaml:"master"`
 	client    *http.Client
 }
 
@@ -83,6 +84,15 @@ func configureHosts(hosts []Host) error {
 		return errors.New("at least one agent host is required")
 	}
 	seen := map[string]bool{}
+	var masters []string
+	for _, h := range hosts {
+		if h.Master {
+			masters = append(masters, h.ID)
+		}
+	}
+	if len(masters) > 1 {
+		return fmt.Errorf("invalid hosts.yml: only one host may have master: true; conflicting hosts: %s", strings.Join(masters, ", "))
+	}
 	for i := range hosts {
 		h := &hosts[i]
 		if !validID(h.ID) || seen[h.ID] || h.Name == "" || len(h.Token) < 32 || strings.ContainsAny(h.Token, "\r\n") {

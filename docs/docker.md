@@ -131,6 +131,49 @@ The certificate expires after one year. Renew it before expiry and replace it if
 
 ## Updates and private registries
 
+### Coordinated maintenance
+
+Add `master: true` to **one host entry** in the coordinating UI's `hosts.yml` (inside the existing `hosts:` list). Omitted means `false`. More than one master blocks UI startup with the conflicting host IDs; no master keeps normal individual management available without bulk maintenance.
+
+```yaml
+hosts:
+  - id: main
+    name: Main server
+    url: https://main.example.internal:8081
+    token: replace-with-a-random-agent-token-at-least-32-characters
+    master: true
+  - id: vps
+    name: VPS
+    url: https://vps.example.internal:8081
+    token: replace-with-a-different-random-token-at-least-32-characters
+```
+
+Upgrade all agents individually to a maintenance-capable version before enabling this feature. Back up the UI SQLite database and agent data directories first. The UI adds a maintenance table without deleting sessions; older UI releases that only support the sessions-only schema cannot open the upgraded database. Keep the backup for a manual downgrade. Do not share one UI database between concurrent UI processes, or clone it into an independent coordinator: its persisted coordinator identity must be unique. Independent UIs should use their own data volumes and omit `master` unless they are the designated coordinator.
+
+The **Maintenance** section appears only while the master host is selected. One confirmation starts remote agents, then the main agent, then other discovered UI services, and finally the coordinating UI. Targets are labeled, Compose-managed services on configured hosts, not every installation on the network. Host aliases and UI replicas are deduplicated; multiple agent containers on one Docker host are rejected. The coordinating UI must run on the master host and use Docker's default container hostname, or set `UI_CONTAINER_ID` to its full container ID (or a unique prefix of at least 12 characters) when using a custom hostname. A fixed container ID override must be updated after replacement; prefer the default hostname.
+
+Preflight verifies all hosts and update configurations before acquiring host reservations. No update starts until all reservations are acquired. A failed or uncertain agent blocks all UI updates. Other UI failures block replacement of the coordinating UI. Successful updates remain installed; there is no automatic rollback. Pulling an already-current image or a pinned digest can leave the image unchanged, which is reported explicitly. Docker health checks are verified when configured; otherwise only running state and image/build metadata are verified, not application health.
+
+Progress and job identities survive UI/agent replacement and browser closure. With JavaScript, progress refreshes automatically and reconnects after UI replacement; without it, use **Refresh maintenance status**. Failed runs offer **Retry / reconcile maintenance**. Verified successes are not submitted again; uncertain jobs retain their original idempotency key. After 15 minutes without verified progress on an update, the run requires attention instead of assuming success. Restore the original host configuration before recovering an interrupted run; it must not silently retarget another machine.
+
+#### Master conflicts and recovery
+
+Agents persist the coordinator and master-host identity in their data directories. A competing registration on a shared agent blocks the claimant's normal management UI and all its mutation requests, with an authenticated conflict screen. A previously detected conflict stays blocked while a host is unreachable. Login/logout, job status and diagnostics remain accessible. Ordinary UIs without a master make no claim; normal authenticated access remains possible outside active maintenance reservations. Master registration is coordination metadata, not an additional authentication mechanism: administrators holding an agent token still control that agent.
+
+Conflict detection requires shared agents. Disjoint host lists cannot discover one another without a shared registry. Registrations do not expire just because a UI is offline. Active runs renew two-minute host leases; expiration never overrides an active or uncertain update helper. Do not delete ownership/job files to bypass a running helper.
+
+For a permanently removed coordinator, **stop or disable its master configuration first**. An administrator can inspect `GET /v1/maintenance` using the existing agent bearer token. To clear an abandoned registration, send the exact reported owner identity with explicit confirmation:
+
+```bash
+curl --fail --cacert agent.crt \
+  -H "Authorization: Bearer $AGENT_TOKEN" \
+  -H 'Content-Type: application/json' \
+  --data '{"Operation":"recover","Claim":{"Coordinator":"OWNER_UUID","Master":"REPORTED_MASTER_ID","Name":"REPORTED_OWNER_NAME"},"Confirmed":true}' \
+  https://agent.example.internal:8081/v1/maintenance
+```
+
+Recovery refuses a live lease or active/uncertain jobs. Inspect the existing helper/job outcome before retrying. Repeat recovery only on affected agents, then reconnect the intended coordinator. A live old coordinator would otherwise register again. For unresolved helper outcomes, inspect Docker helper logs and the durable job record on the host; do not assume a timed-out HTTP request means no update occurred. If the coordinating UI cannot restart, use the master agent's job/helper output and Docker logs for manual repair.
+
 ### Locally built application images
 
 **Build** appears for application services with a resolved Compose `build:` section. It runs `docker compose build` for the selected service (all replicas), or the existing buildable services in the selected stack. Only after a successful build does it run `up -d --no-deps --no-build --pull never` for those services. A failed build leaves existing containers running. Deployment failures after a successful build can still affect availability.
