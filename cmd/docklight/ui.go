@@ -50,6 +50,7 @@ type PageData struct {
 	Maintenance                      *maintenanceRun
 	MaintenanceError                 string
 	MaintenanceCanSkip               bool
+	MaintenanceHosts                 []maintenanceHostView
 	Blocked                          bool
 }
 

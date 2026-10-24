@@ -39,16 +39,37 @@ type maintenanceRun struct {
 	Claim                       management.MasterClaim
 	SkipOffline                 bool
 	Skipped                     []string
+	Selected                    []string
 	Hosts                       []maintenanceHost
 	Steps                       []maintenanceStep
 }
 type masterView struct {
+	Selected    []string
+	Errors      map[string]string
 	Claim       management.MasterClaim
 	Infos       map[string]management.MaintenanceInfo
 	Skipped     []string
 	Error       string
 	Conflict    bool
 	OfflineOnly bool
+}
+
+type maintenanceHostView struct {
+	ID, Name, Error         string
+	Online, Checked, Frozen bool
+}
+
+func selectedHost(selected []string, id string) bool {
+	// Legacy runs targeted every configured host.
+	if selected == nil {
+		return true
+	}
+	for _, value := range selected {
+		if value == id {
+			return true
+		}
+	}
+	return false
 }
 
 type coordinatorContextKey struct{}
@@ -59,12 +80,15 @@ func (app *App) populateMaintenance(r *http.Request, d *PageData) {
 		return
 	}
 	d.Master = d.HostID == master.ID
+	v := masterView{Errors: map[string]string{}}
 	if app.maintenanceMu.TryLock() {
 		ctx, cancel := context.WithTimeout(r.Context(), maintenanceVerificationTimeout+5*time.Second)
-		v := app.checkMaster(ctx, false)
+		v = app.checkMaster(ctx, false)
 		cancel()
 		app.maintenanceMu.Unlock()
 		d.MaintenanceError, d.Blocked, d.MaintenanceCanSkip = v.Error, v.Conflict, v.OfflineOnly
+	} else {
+		d.MaintenanceError = "Maintenance verification in progress; status unavailable until next refresh"
 	}
 	var conflict string
 	if err := app.db.QueryRow(`SELECT value FROM maintenance WHERE key='conflict'`).Scan(&conflict); err == nil {
@@ -83,6 +107,16 @@ func (app *App) populateMaintenance(r *http.Request, d *PageData) {
 		d.MaintenanceCanSkip = false
 	}
 	d.Maintenance = run
+	for _, h := range app.cfg.Hosts {
+		_, online := v.Infos[h.ID]
+		detail := v.Errors[h.ID]
+		if !online && detail == "" {
+			detail = "Verification in progress; status unavailable"
+		}
+		frozen := run != nil && run.Status != "success"
+		checked := !frozen || selectedHost(run.Selected, h.ID)
+		d.MaintenanceHosts = append(d.MaintenanceHosts, maintenanceHostView{h.ID, h.Name, detail, online, checked, frozen})
+	}
 }
 
 func (app *App) allowManagement(w http.ResponseWriter, r *http.Request) bool {
@@ -242,7 +276,11 @@ func maintenanceVerificationError(err error) string {
 const maintenanceVerificationTimeout = 30 * time.Second
 
 func (app *App) checkMasterSkipping(ctx context.Context, discovery bool, skipOffline map[string]bool) masterView {
-	v := masterView{Infos: map[string]management.MaintenanceInfo{}}
+	return app.checkMasterSelected(ctx, discovery, skipOffline, nil)
+}
+
+func (app *App) checkMasterSelected(ctx context.Context, discovery bool, skipOffline map[string]bool, selected []string) masterView {
+	v := masterView{Infos: map[string]management.MaintenanceInfo{}, Errors: map[string]string{}, Selected: selected}
 	master := app.masterHost()
 	if master == nil {
 		return v
@@ -252,10 +290,6 @@ func (app *App) checkMasterSkipping(ctx context.Context, discovery bool, skipOff
 		err  error
 	}
 	results := make([]result, len(app.cfg.Hosts))
-	path := "/v1/maintenance"
-	if discovery {
-		path += "?discovery=true"
-	}
 	// Independent requests keep one hanging host from consuming the fleet's deadline.
 	var wg sync.WaitGroup
 	for i := range app.cfg.Hosts {
@@ -265,6 +299,10 @@ func (app *App) checkMasterSkipping(ctx context.Context, discovery bool, skipOff
 			hostCtx, cancel := context.WithTimeout(ctx, maintenanceVerificationTimeout)
 			defer cancel()
 			h := &app.cfg.Hosts[i]
+			path := "/v1/maintenance"
+			if discovery && selectedHost(selected, h.ID) {
+				path = "/v1/maintenance?discovery=true"
+			}
 			results[i].err = h.maintenanceCall(hostCtx, "GET", path, nil, &results[i].info, nil)
 		}()
 	}
@@ -275,6 +313,10 @@ func (app *App) checkMasterSkipping(ctx context.Context, discovery bool, skipOff
 		h := &app.cfg.Hosts[i]
 		info, err := results[i].info, results[i].err
 		if err != nil {
+			v.Errors[h.ID] = maintenanceVerificationError(err)
+			if !selectedHost(selected, h.ID) && h.ID != master.ID {
+				continue
+			}
 			if errors.Is(err, errMaintenanceUnavailable) {
 				if h.ID != master.ID && skipOffline[h.ID] {
 					v.Skipped = append(v.Skipped, h.ID)
@@ -287,6 +329,10 @@ func (app *App) checkMasterSkipping(ctx context.Context, discovery bool, skipOff
 		}
 		_, nodeErr := uuid.Parse(info.State.NodeID)
 		if info.Version != 1 || info.HostID == "" || nodeErr != nil {
+			v.Errors[h.ID] = "invalid maintenance identity"
+			if !selectedHost(selected, h.ID) && h.ID != master.ID {
+				continue
+			}
 			problems = append(problems, h.ID+": invalid maintenance identity")
 			continue
 		}
@@ -316,7 +362,7 @@ func (app *App) checkMasterSkipping(ctx context.Context, discovery bool, skipOff
 		var acquired []*Host
 		var ordered []*Host
 		for i := range app.cfg.Hosts {
-			if _, ok := v.Infos[app.cfg.Hosts[i].ID]; ok {
+			if _, ok := v.Infos[app.cfg.Hosts[i].ID]; ok && (selectedHost(selected, app.cfg.Hosts[i].ID) || app.cfg.Hosts[i].Master) {
 				ordered = append(ordered, &app.cfg.Hosts[i])
 			}
 		}
@@ -339,7 +385,7 @@ func (app *App) checkMasterSkipping(ctx context.Context, discovery bool, skipOff
 				acquired = append(acquired, h)
 			}
 		}
-		if len(problems) == 0 && len(v.Skipped) == 0 {
+		if len(problems) == 0 && len(v.Skipped) == 0 && len(v.Infos) == len(app.cfg.Hosts) {
 			if _, err := app.db.Exec(`DELETE FROM maintenance WHERE key='conflict'`); err != nil {
 				problems = append(problems, "cannot clear durable conflict state")
 				v.Conflict = true
@@ -394,12 +440,13 @@ func (app *App) preflight(v masterView, previous *maintenanceRun) (*maintenanceR
 	if v.Error != "" {
 		return nil, errors.New(v.Error)
 	}
-	run := &maintenanceRun{ID: uuid.NewString(), Status: "running", Config: app.configurationDigest(), Claim: v.Claim}
+	run := &maintenanceRun{ID: uuid.NewString(), Status: "running", Config: app.configurationDigest(), Claim: v.Claim, Selected: v.Selected}
 	if previous != nil {
 		if previous.Config != run.Config || previous.Claim.Coordinator != run.Claim.Coordinator || previous.Claim.Master != run.Claim.Master {
 			return nil, errors.New("configuration or master identity changed; restore original configuration before recovery")
 		}
 		run.ID = previous.ID
+		run.Selected = previous.Selected
 		run.Claim = previous.Claim
 		run.SkipOffline = previous.SkipOffline
 		run.Skipped = append([]string(nil), previous.Skipped...)
@@ -425,7 +472,7 @@ func (app *App) preflight(v masterView, previous *maintenanceRun) (*maintenanceR
 		skipped[id] = true
 	}
 	for _, h := range hosts {
-		if skipped[h.ID] {
+		if skipped[h.ID] || !selectedHost(run.Selected, h.ID) {
 			continue
 		}
 		info, ok := v.Infos[h.ID]
@@ -511,7 +558,7 @@ func (app *App) preflight(v masterView, previous *maintenanceRun) (*maintenanceR
 			blockers = append(blockers, fmt.Errorf("%s: exactly one identifiable agent required", h.ID))
 		}
 	}
-	if finalServices != 1 {
+	if selectedHost(run.Selected, master.ID) && finalServices != 1 {
 		blockers = append(blockers, errors.New("cannot uniquely identify coordinating UI; use default Docker hostname or UI_CONTAINER_ID"))
 	}
 	if len(blockers) > 0 {
@@ -615,6 +662,28 @@ func (app *App) maintenanceStart(w http.ResponseWriter, r *http.Request) {
 	if old != nil && old.Status != "success" {
 		previous = old
 	}
+	selected := r.PostForm["selected"]
+	if len(selected) == 0 {
+		http.Error(w, "select at least one host", 400)
+		return
+	}
+	seen := map[string]bool{}
+	for _, id := range selected {
+		if _, err := app.host(id); err != nil || id == "" || seen[id] {
+			http.Error(w, "unknown or duplicate selected host", 400)
+			return
+		}
+		seen[id] = true
+	}
+	if previous != nil {
+		for _, h := range app.cfg.Hosts {
+			if seen[h.ID] != selectedHost(previous.Selected, h.ID) {
+				http.Error(w, "host selection cannot change during maintenance recovery", 409)
+				return
+			}
+		}
+		selected = previous.Selected
+	}
 	skipOffline := r.PostForm.Get("skip_offline") == "yes"
 	skippable := map[string]bool{}
 	if previous != nil {
@@ -630,7 +699,7 @@ func (app *App) maintenanceStart(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	v := app.checkMasterSkipping(ctx, true, skippable)
+	v := app.checkMasterSelected(ctx, true, skippable, selected)
 	run, err := app.preflight(v, previous)
 	if err != nil {
 		http.Error(w, err.Error(), 409)
@@ -697,12 +766,18 @@ func (app *App) maintenanceTick(parent context.Context) {
 			}
 		}
 	}
-	v := app.checkMasterSkipping(ctx, true, maintenanceSkipHosts(run))
+	v := app.checkMasterSelected(ctx, true, maintenanceSkipHosts(run), run.Selected)
 	if v.Error != "" {
 		run.stall(v.Error)
 		if v.Conflict {
 			run.Status = "attention"
 		}
+		app.saveRun(run)
+		return
+	}
+	if v.Claim.Master != run.Claim.Master || v.Claim.Coordinator != run.Claim.Coordinator {
+		run.Status = "attention"
+		run.Message = "Master identity changed; inspect before recovery"
 		app.saveRun(run)
 		return
 	}
@@ -880,6 +955,9 @@ func (app *App) maintenanceTick(parent context.Context) {
 	}
 	run.Status = "success"
 	run.Message = "All agents and UIs verified."
+	if run.Selected != nil && len(run.Selected) < len(app.cfg.Hosts) {
+		run.Message = "Selected agents and UIs verified."
+	}
 	if len(run.Skipped) > 0 {
 		run.Message = "Selected agents and UIs verified. Skipped offline devices: " + strings.Join(run.Skipped, ", ") + "."
 	}

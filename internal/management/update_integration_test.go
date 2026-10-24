@@ -372,7 +372,7 @@ volumes:
 			}
 			must("push", tag)
 		}
-		body, err = uiRequest("/maintenance", url.Values{"host": {"local"}, "confirmed": {"yes"}, "csrf_token": {match[1]}}.Encode(), cookie)
+		body, err = uiRequest("/maintenance", url.Values{"host": {"local"}, "confirmed": {"yes"}, "selected": {"local", "remote"}, "csrf_token": {match[1]}}.Encode(), cookie)
 		// Redirect or agent replacement can interrupt this request; reconcile via persisted state.
 		if err != nil && !strings.Contains(body, "Location:") {
 			t.Log("maintenance acceptance interrupted:", body, err)

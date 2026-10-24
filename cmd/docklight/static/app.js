@@ -91,8 +91,22 @@ if (document.querySelector("[data-maintenance]")) {
         const open = [...current.querySelectorAll("details")].map(item => item.open);
         [...next.querySelectorAll("details")].forEach((item, index) => item.open = open[index] || false);
         current.replaceWith(next);
+      } else {
+        // Keep form nodes intact: polling must preserve edits and keyboard focus.
+        for (const status of current.querySelectorAll("[data-maintenance-host-status]")) {
+          const fresh = [...next.querySelectorAll("[data-maintenance-host-status]")].find(item => item.dataset.maintenanceHostStatus === status.dataset.maintenanceHostStatus);
+          if (fresh) status.replaceChildren(...fresh.childNodes);
+        }
+        const verification = current.querySelector("[data-maintenance-verification]");
+        verification.replaceChildren(...next.querySelector("[data-maintenance-verification]").childNodes);
       }
     } catch {
+      for (const status of current.querySelectorAll("[data-maintenance-host-status]")) {
+        const dot = document.createElement("span");
+        dot.className = "maintenance-dot";
+        dot.setAttribute("aria-hidden", "true");
+        status.replaceChildren(dot, " Offline / Unavailable · status refresh failed");
+      }
       showStatus("Reconnecting to maintenance coordinator. Do not resubmit updates.");
     }
     window.setTimeout(refreshMaintenance, 5000);

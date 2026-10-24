@@ -267,7 +267,7 @@ func TestMasterConflictBlocksUIAndPersistsWhileOffline(t *testing.T) {
 		}
 		for _, path := range []string{"/action", "/maintenance"} {
 			w = httptest.NewRecorder()
-			a.routes().ServeHTTP(w, formRequest(a, cookie, path, url.Values{"host": {"main"}, "confirmed": {"yes"}, "kind": {"container"}, "id": {"x"}, "operation": {"stop"}}))
+			a.routes().ServeHTTP(w, formRequest(a, cookie, path, url.Values{"host": {"main"}, "confirmed": {"yes"}, "selected": {"main", "remote"}, "kind": {"container"}, "id": {"x"}, "operation": {"stop"}}))
 			if w.Code != 409 {
 				t.Fatalf("conflict mutation accepted on %s: %d", path, w.Code)
 			}
@@ -364,12 +364,12 @@ func TestMaintenanceFormScopeConfirmationAndAliases(t *testing.T) {
 		t.Fatal("alias duplicated targets")
 	}
 	w := httptest.NewRecorder()
-	a.routes().ServeHTTP(w, formRequest(a, cookie, "/maintenance", url.Values{"host": {"main"}, "confirmed": {"yes"}}))
+	a.routes().ServeHTTP(w, formRequest(a, cookie, "/maintenance", url.Values{"host": {"main"}, "confirmed": {"yes"}, "selected": {"main", "remote", "alias"}}))
 	if w.Code != 303 {
 		t.Fatal(w.Body.String())
 	}
 	w = httptest.NewRecorder()
-	a.routes().ServeHTTP(w, formRequest(a, cookie, "/maintenance", url.Values{"host": {"main"}, "confirmed": {"yes"}}))
+	a.routes().ServeHTTP(w, formRequest(a, cookie, "/maintenance", url.Values{"host": {"main"}, "confirmed": {"yes"}, "selected": {"main", "remote", "alias"}}))
 	if w.Code != 409 {
 		t.Fatal("duplicate run accepted")
 	}
@@ -706,7 +706,7 @@ func TestBrowserMaintenance(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if agents[0].posts != 4 || agents[1].posts != 2 {
+			if agents[0].posts != 4 || agents[1].posts != 4 {
 				t.Fatalf("skipped device received updates: main=%d remote=%d", agents[0].posts, agents[1].posts)
 			}
 		})

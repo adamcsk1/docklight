@@ -32,6 +32,27 @@ const assert = require("node:assert/strict");
       const skip = form.getByRole("checkbox", { name: "Skip offline devices", exact: true });
       const confirmation = form.getByRole("checkbox", { name: /I confirm updating all agents and UIs/ });
       const submit = form.getByRole("button");
+      const hosts = form.locator('input[type="checkbox"][name="selected"]');
+      assert.equal(await hosts.count(), 2);
+      assert.equal(await hosts.nth(0).isChecked(), true);
+      assert.equal(await hosts.nth(1).isChecked(), true);
+      assert.equal(await page.locator('[data-maintenance] p[role="status"]').count(), 0, "idle page must not render empty run status");
+      assert((await hosts.last().boundingBox()).y < (await skip.boundingBox()).y, "hosts must precede skip control");
+      if (javaScriptEnabled) {
+        const remote = form.locator('input[type="checkbox"][name="selected"][value="remote"]');
+        await remote.uncheck();
+        await confirmation.check();
+        await remote.focus();
+        await page.request.post(`${base}/test-remote-offline`);
+        await page.waitForFunction(() => document.querySelector('[data-maintenance-host-status="remote"]')?.textContent.includes("agent offline or unavailable"), null, { timeout: 45_000 });
+        assert.equal(await remote.isChecked(), false, "poll reset selection");
+        assert.equal(await confirmation.isChecked(), true, "poll reset confirmation");
+        assert.equal(await remote.evaluate(input => input === document.activeElement), true, "poll stole focus");
+        await page.request.post(`${base}/test-remote-online`);
+        await page.waitForFunction(() => document.querySelector('[data-maintenance-host-status="remote"]')?.textContent.trim() === "Online", null, { timeout: 45_000 });
+        await remote.check();
+        await confirmation.uncheck();
+      }
       const labelSpacing = await confirmation.locator("..").evaluate(label => ({
         actual: parseFloat(getComputedStyle(label).paddingTop),
         expected: parseFloat(getComputedStyle(document.documentElement).fontSize) * 0.75,
@@ -95,6 +116,14 @@ const assert = require("node:assert/strict");
         assert((await page.locator("[data-maintenance] pre").first().textContent()).includes("<script>not executable</script>"));
         assert.equal(await page.locator("script:not([src])").count(), 0);
         assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+        // Master remains coordinator, but deselecting it submits only remote updates.
+        await form.locator('input[type="checkbox"][name="selected"][value="main"]').uncheck();
+        await confirmation.check();
+        await submit.click();
+        await page.waitForFunction(() => document.querySelector('[data-maintenance]')?.dataset.running === "true");
+        await page.waitForFunction(() => document.querySelector('[data-maintenance]')?.dataset.running === "false", null, { timeout: 90_000 });
+        assert.equal(await page.locator('[data-maintenance] details').count(), 2);
+        assert.equal(await hosts.nth(0).isChecked(), true, "new run must default to all hosts");
         await page.request.post(`${base}/test-master-conflict`);
         await page.getByText("Master conflict — management blocked", { exact: true }).waitFor({ timeout: 30_000 });
         assert.equal(await page.locator("[data-inventory]").count(), 0);

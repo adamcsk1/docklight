@@ -1,16 +1,23 @@
 {{define "maintenance"}}{{if .Master}}
 <section class="panel" id="maintenance" aria-labelledby="maintenance-title" data-maintenance data-maintenance-url="{{.Base}}/maintenance?host={{.HostID}}" data-running="{{with .Maintenance}}{{eq .Status "running"}}{{else}}false{{end}}">
   <h2 id="maintenance-title">Maintenance</h2>
-  {{if .MaintenanceError}}<p class="alert alert-danger" role="alert">{{.MaintenanceError}}</p>{{end}}
-  <p class="form-hint">Update remote agents, then the main agent, then other UIs, and this UI last. Services briefly disconnect. Failed or uncertain agents block UI updates.</p>
+  <div data-maintenance-verification>{{if .MaintenanceError}}<p class="alert alert-danger" role="alert">{{.MaintenanceError}}</p>{{end}}</div>
+  <p class="form-hint">Update selected hosts: remote agents, then the main agent, then other UIs, and this UI last. The master must remain reachable even when deselected. Services briefly disconnect. Failed or uncertain agents block UI updates.</p>
   {{with .Maintenance}}<p role="status">{{.Status}} · {{.Message}}</p>
   {{range .Skipped}}<p class="form-hint" data-maintenance-skipped><span class="badge badge-partial">skipped — offline</span> {{.}} · no updates submitted</p>{{end}}
   {{range .Steps}}<details><summary>{{.Host}} · {{.Role}} · {{.Status}}</summary><p class="resource-break">Before: {{.Before}} ({{.BeforeBuild}}) · After: {{.After}} ({{.AfterBuild}})</p><pre class="operation-output">{{.Detail}}</pre></details>{{end}}{{end}}
   <form class="cleanup-actions" method="post" action="{{.Base}}/maintenance" aria-label="Update all agents and UIs">
     {{template "csrf" .}}<input type="hidden" name="host" value="{{.HostID}}">
+    <fieldset><legend>Hosts to update</legend>
+    {{range .MaintenanceHosts}}<div class="maintenance-host">
+      <label class="switch-label"><input type="checkbox" name="selected" value="{{.ID}}" aria-describedby="maintenance-host-{{.ID}}" {{if .Checked}}checked{{end}} {{if .Frozen}}disabled{{end}}><span>{{.Name}} ({{.ID}})</span></label>
+      {{if and .Frozen .Checked}}<input type="hidden" name="selected" value="{{.ID}}">{{end}}
+      <span id="maintenance-host-{{.ID}}" data-maintenance-host-status="{{.ID}}"><span class="maintenance-dot {{if .Online}}online{{end}}" aria-hidden="true"></span> {{if .Online}}Online{{else}}Offline / Unavailable{{end}}{{if .Error}} · {{.Error}}{{end}}</span>
+    </div>{{end}}
+    </fieldset>
     <label class="switch-label"><input type="checkbox" name="skip_offline" value="yes" {{with .Maintenance}}{{if and .SkipOffline (ne .Status "success")}}checked{{end}}{{end}}><span>Skip offline devices</span></label>
-    <label class="switch-label"><input type="checkbox" name="confirmed" value="yes" required><span>I confirm updating all agents and UIs, with possible downtime and no automatic rollback</span></label>
-    <button class="button button-danger" type="submit" {{if and .MaintenanceError (not .MaintenanceCanSkip)}}disabled{{end}} {{with .Maintenance}}{{if eq .Status "running"}}disabled{{end}}{{end}}>{{with .Maintenance}}{{if eq .Status "attention"}}Retry / reconcile maintenance{{else}}Update all agents and UIs{{end}}{{else}}Update all agents and UIs{{end}}</button>
+    <label class="switch-label"><input type="checkbox" name="confirmed" value="yes" required><span>I confirm updating all agents and UIs on selected hosts, with possible downtime and no automatic rollback</span></label>
+    <button class="button button-danger" type="submit" {{if .Blocked}}disabled{{end}} {{with .Maintenance}}{{if eq .Status "running"}}disabled{{end}}{{end}}>{{with .Maintenance}}{{if eq .Status "attention"}}Retry / reconcile maintenance{{else}}Update all agents and UIs{{end}}{{else}}Update all agents and UIs{{end}}</button>
   </form>
   <p><a class="button button-ghost" href="{{.Base}}/?host={{.HostID}}">Refresh maintenance status</a></p>
 </section>

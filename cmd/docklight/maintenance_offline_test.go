@@ -34,7 +34,7 @@ func maintenanceTransportOffline(a *App, host int) func(bool) {
 
 func submitMaintenance(t *testing.T, a *App, cookie *http.Cookie, skip bool) *httptest.ResponseRecorder {
 	t.Helper()
-	values := url.Values{"host": {"main"}, "confirmed": {"yes"}}
+	values := url.Values{"host": {"main"}, "confirmed": {"yes"}, "selected": {"main", "remote"}}
 	if skip {
 		values.Set("skip_offline", "yes")
 	}
@@ -80,7 +80,7 @@ func TestMaintenanceSkipsOnlyInitiallyOfflineDevices(t *testing.T) {
 		t.Fatalf("skip request rejected: %d %s", w.Code, w.Body.String())
 	}
 	started, err := a.loadMaintenance()
-	if err != nil || started == nil || !started.SkipOffline || strings.Join(started.Skipped, ",") != "remote" || len(started.Hosts) != 1 || started.Hosts[0].ID != "main" || len(started.Steps) != 2 {
+	if err != nil || started == nil || !started.SkipOffline || strings.Join(started.Selected, ",") != "main,remote" || strings.Join(started.Skipped, ",") != "remote" || len(started.Hosts) != 1 || started.Hosts[0].ID != "main" || len(started.Steps) != 2 {
 		t.Fatalf("wrong offline run scope: %+v, %v", started, err)
 	}
 	for _, step := range started.Steps {
@@ -160,7 +160,7 @@ func TestMaintenanceHangingOfflineHostDoesNotBlockFleetVerification(t *testing.T
 			defer mainAgent.Close()
 			a.cfg.Hosts[1].URL = mainAgent.URL
 
-			values := url.Values{"host": {"main"}, "confirmed": {"yes"}}
+			values := url.Values{"host": {"main"}, "confirmed": {"yes"}, "selected": {"main", "remote"}}
 			if skip {
 				values.Set("skip_offline", "yes")
 			}
