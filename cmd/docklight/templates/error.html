@@ -1,0 +1,13 @@
+{{define "error"}}<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar"><a class="brand" href="{{.Base}}/">Docklight</a></header>
+  <main class="page" id="main">
+    <section class="page-head"><div><p class="eyebrow">docklight</p><h1>Request failed</h1></div></section>
+    <section class="alert alert-danger" role="alert">{{.Error}}</section>
+    <p><a class="button button-primary" href="{{.Base}}/{{if .HostID}}?host={{.HostID}}{{end}}">Return to dashboard</a></p>
+  </main>
+</body>
+</html>{{end}}

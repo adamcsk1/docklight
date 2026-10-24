@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strings"
 	"time"
 
 	"docklight/internal/buildinfo"
@@ -44,9 +45,11 @@ type PageData struct {
 	ResourceSections                 []resourceSection
 	Job                              *management.Job
 	HideOutput                       bool
+	NoScript                         bool
 	Master                           bool
 	Maintenance                      *maintenanceRun
 	MaintenanceError                 string
+	MaintenanceCanSkip               bool
 	Blocked                          bool
 }
 
@@ -109,6 +112,10 @@ func shortCommit(commit string) string {
 }
 
 func (app *App) render(w http.ResponseWriter, r *http.Request, name string, data PageData) {
+	app.renderStatus(w, r, name, data, http.StatusOK)
+}
+
+func (app *App) renderStatus(w http.ResponseWriter, r *http.Request, name string, data PageData, status int) {
 	data.Base = app.withBase("")
 	data.UICommit = buildinfo.Commit
 	if data.AgentCommit == "" {
@@ -123,7 +130,61 @@ func (app *App) render(w http.ResponseWriter, r *http.Request, name string, data
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	_, _ = w.Write(b.Bytes())
+}
+
+type browserErrorResponse struct {
+	http.ResponseWriter
+	status int
+	body   bytes.Buffer
+}
+
+func (w *browserErrorResponse) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	if status < 400 {
+		w.ResponseWriter.WriteHeader(status)
+	}
+}
+
+func (w *browserErrorResponse) Write(p []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.status >= 400 {
+		return w.body.Write(p)
+	}
+	return w.ResponseWriter.Write(p)
+}
+
+func (w *browserErrorResponse) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+func (app *App) browserErrors(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := &browserErrorResponse{ResponseWriter: w}
+		next.ServeHTTP(response, r)
+		if response.status < 400 {
+			return
+		}
+		message := strings.TrimSpace(response.body.String())
+		if message == "" {
+			message = http.StatusText(response.status)
+		}
+		hostID := r.URL.Query().Get("host")
+		if r.Method != http.MethodGet {
+			hostID = r.PostForm.Get("host")
+		}
+		if hostID != "" {
+			if _, err := app.host(hostID); err != nil {
+				hostID = ""
+			}
+		}
+		w.Header().Del("Content-Length")
+		app.renderStatus(w, r, "error", PageData{Title: "Request failed", Error: message, HostID: hostID, NoScript: true}, response.status)
+	})
 }
 
 func (app *App) routes() http.Handler {
@@ -157,14 +218,14 @@ func (app *App) routes() http.Handler {
 			http.Redirect(w, r, app.withBase("/"), 302)
 		})
 	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return app.browserErrors(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'")
 		r.Body = http.MaxBytesReader(w, r.Body, 8192)
 		mux.ServeHTTP(w, r)
-	})
+	}))
 }
 
 func (app *App) host(id string) (*Host, error) {

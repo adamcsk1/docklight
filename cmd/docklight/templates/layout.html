@@ -4,7 +4,7 @@
   <title>{{if .Title}}{{.Title}} · {{end}}Docklight</title>
   <link rel="icon" href="{{.Base}}/static/logo.ico" type="image/x-icon">
   <link rel="stylesheet" href="{{.Base}}/static/app.css">
-  {{if .HostID}}<script src="{{.Base}}/static/app.js" defer></script>{{end}}
+  {{if and .HostID (not .NoScript)}}<script src="{{.Base}}/static/app.js" defer></script>{{end}}
 {{end}}
 
 {{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}

@@ -23,6 +23,7 @@ func TestActionRejectionsAndUncertainOutcomes(t *testing.T) {
 			w := httptest.NewRecorder()
 			a.routes().ServeHTTP(w, formRequest(a, cookie, "/action", values))
 			body := w.Body.String()
+			requireDocklightError(t, w, 502, "")
 			if w.Code != 502 || strings.Contains(body, "private-token") || strings.Contains(body, "outcome may be unknown") != (status >= 500 || status == 202) {
 				t.Fatalf("misleading rejection: %d %s", w.Code, body)
 			}
@@ -40,6 +41,7 @@ func TestActionTransportFailureKeepsUncertainWarning(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	a.routes().ServeHTTP(w, formRequest(a, session(t, a), "/action", url.Values{"host": {"local"}, "kind": {"container"}, "id": {"target"}, "operation": {"stop"}}))
+	requireDocklightError(t, w, 502, "outcome may be unknown")
 	if w.Code != 502 || !strings.Contains(w.Body.String(), "outcome may be unknown") {
 		t.Fatalf("transport failure misreported: %d %s", w.Code, w.Body.String())
 	}

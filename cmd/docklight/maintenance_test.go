@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -670,20 +672,32 @@ func TestBrowserMaintenance(t *testing.T) {
 		t.Run(base, func(t *testing.T) {
 			a, agents, _ := maintenanceApp(t)
 			a.cfg.BaseURL = base
+			transport := a.cfg.Hosts[1].client.Transport
+			var remoteOffline atomic.Bool
+			a.cfg.Hosts[1].client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				if remoteOffline.Load() {
+					return nil, errors.New("device offline")
+				}
+				return transport.RoundTrip(r)
+			})
 			ctx, cancel := context.WithCancel(context.Background())
 			done := make(chan struct{})
 			go func() { defer close(done); a.maintenanceLoop(ctx) }()
 			defer func() { cancel(); <-done }()
 			handler := a.routes()
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == a.withBase("/test-master-conflict") {
+				switch r.URL.Path {
+				case a.withBase("/test-remote-offline"), a.withBase("/test-remote-online"):
+					remoteOffline.Store(r.URL.Path == a.withBase("/test-remote-offline"))
+					w.WriteHeader(204)
+				case a.withBase("/test-master-conflict"):
 					agents[1].mu.Lock()
 					agents[1].info.State.Owner = management.MasterClaim{Coordinator: uuid.NewString(), Master: "other", Name: "Other"}
 					agents[1].mu.Unlock()
 					w.WriteHeader(204)
-					return
+				default:
+					handler.ServeHTTP(w, r)
 				}
-				handler.ServeHTTP(w, r)
 			}))
 			defer server.Close()
 			cmd := exec.Command("node", "../../scripts/maintenance-smoke.cjs", server.URL+a.withBase(""))
@@ -691,6 +705,9 @@ func TestBrowserMaintenance(t *testing.T) {
 			t.Log(string(out))
 			if err != nil {
 				t.Fatal(err)
+			}
+			if agents[0].posts != 4 || agents[1].posts != 2 {
+				t.Fatalf("skipped device received updates: main=%d remote=%d", agents[0].posts, agents[1].posts)
 			}
 		})
 	}
