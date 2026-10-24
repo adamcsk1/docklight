@@ -106,6 +106,8 @@ func TestDockerManagementUpdateIntegration(t *testing.T) {
     environment:
       ADMIN_PASSWORD: test-password
       SESSION_SECRET: %s
+      ADDR: :9090
+      BASE_URL: docklight/
     volumes:
       - other-ui-data:/data
       - %s/hosts-secondary.yml:/data/hosts.yml:ro
@@ -154,6 +156,82 @@ volumes:
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+	waitHealthy := func(t *testing.T, inspect func(...string) string, names ...string) {
+		t.Helper()
+		statuses := map[string]string{}
+		deadline := time.Now().Add(90 * time.Second)
+		for {
+			healthy := true
+			for _, name := range names {
+				statuses[name] = inspect("inspect", "--format", "{{.State.Health.Status}}", name)
+				healthy = healthy && statuses[name] == "healthy"
+			}
+			if healthy {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("containers did not become healthy: %v", statuses)
+			}
+			time.Sleep(250 * time.Millisecond)
+		}
+	}
+	t.Run("image-health-checks", func(t *testing.T) {
+		type healthConfig struct {
+			Test                           []string
+			Interval, Timeout, StartPeriod time.Duration
+			Retries                        int
+		}
+		configs := map[string]healthConfig{}
+		names := []string{"docklight-e2e-ui", "docklight-e2e-other-ui", "docklight-e2e-agent"}
+		for _, name := range names {
+			var config healthConfig
+			raw := must("inspect", "--format", "{{json .Config.Healthcheck}}", name)
+			if err := json.Unmarshal([]byte(raw), &config); err != nil {
+				t.Fatalf("%s health config: %v (%s)", name, err, raw)
+			}
+			if len(config.Test) != 2 || config.Test[0] != "CMD-SHELL" || config.Interval != 30*time.Second || config.Timeout != 5*time.Second || config.StartPeriod != 20*time.Second || config.Retries != 3 {
+				t.Fatalf("%s inherited wrong health config: %+v", name, config)
+			}
+			configs[name] = config
+		}
+		waitHealthy(t, must, names...)
+		for _, target := range []struct{ name, url string }{
+			{"docklight-e2e-agent", "http://127.0.0.1:8081/healthz"},
+			{"docklight-e2e-ui", "http://docklight-e2e-ui:8080/healthz"},
+			{"docklight-e2e-other-ui", "http://docklight-e2e-other-ui:9090/docklight/healthz"},
+		} {
+			body, err := remote("exec", "docklight-e2e-agent", "wget", "-qO-", target.url)
+			if err != nil || body != "ok" {
+				t.Fatalf("%s unauthenticated health response: %q %v", target.name, body, err)
+			}
+		}
+		if body, err := remote("exec", "docklight-e2e-agent", "wget", "-qO-", "http://127.0.0.1:8081/v1/inventory"); err == nil {
+			t.Fatalf("inventory allowed unauthenticated access: %s", body)
+		}
+		for _, name := range names {
+			if body, err := remote("exec", name, "sh", "-c", configs[name].Test[1]); err != nil {
+				t.Fatalf("%s runtime probe failed: %s %v", name, body, err)
+			}
+		}
+		for _, test := range []struct {
+			name string
+			env  []string
+		}{
+			{"docklight-e2e-ui", []string{"BASE_URL=/"}},
+			{"docklight-e2e-ui", []string{"ADDR=   "}},
+			{"docklight-e2e-other-ui", []string{"ADDR=127.0.0.1:9090", "BASE_URL=/docklight"}},
+			{"docklight-e2e-agent", []string{"ADDR=127.0.0.1:8081"}},
+		} {
+			args := []string{"exec"}
+			for _, value := range test.env {
+				args = append(args, "-e", value)
+			}
+			args = append(args, test.name, "sh", "-c", configs[test.name].Test[1])
+			if body, err := remote(args...); err != nil {
+				t.Fatalf("%s explicit address/base probe failed: %s %v", test.name, body, err)
+			}
+		}
+	})
 	for _, service := range []string{"ui", "agent"} {
 		t.Run(service, func(t *testing.T) {
 			name := "docklight-e2e-" + service
@@ -266,6 +344,8 @@ volumes:
 		if b, err := local(append(composeOuter, "restart", "ui")...); err != nil {
 			t.Fatal(b, err)
 		}
+		waitHealthy(t, must, "docklight-e2e-ui", "docklight-e2e-other-ui", "docklight-e2e-agent")
+		waitHealthy(t, remoteMust, remoteID("agent"), remoteID("ui"))
 		uiRequest := func(path, body, cookie string) (string, error) {
 			method := "GET"
 			if body != "" {

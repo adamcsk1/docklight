@@ -23,6 +23,12 @@ LABEL io.docklight.role=agent
 LABEL org.opencontainers.image.revision=${BUILD_COMMIT}
 EXPOSE 8081
 VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD addr=${ADDR:-:8081}; host=${addr%:*}; port=${addr##*:}; host=${host#\[}; host=${host%\]}; \
+        case "$host" in ""|"*"|"0.0.0.0"|"::") host=localhost;; esac; \
+        case "$host" in *:*) host="[$host]";; esac; \
+        if [ -n "$TLS_CERT" ]; then docklight-agent -healthcheck; else \
+            wget -q -O /dev/null "http://$host:$port/healthz"; fi && docker info >/dev/null 2>&1
 ENTRYPOINT ["docklight-agent"]
 
 FROM alpine:3.23 AS ui
@@ -33,4 +39,13 @@ LABEL io.docklight.role=ui
 LABEL org.opencontainers.image.revision=${BUILD_COMMIT}
 EXPOSE 8080
 VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD addr=$(printf '%s\n' "${ADDR:-:8080}" | xargs); addr=${addr:-:8080}; host=${addr%:*}; port=${addr##*:}; \
+        host=${host#\[}; host=${host%\]}; \
+        case "$host" in ""|"*"|"0.0.0.0"|"::") host=localhost;; esac; \
+        case "$host" in *:*) host="[$host]";; esac; \
+        base=$(printf '%s\n' "${BASE_URL:-/}" | xargs); \
+        while [ "${base#/}" != "$base" ]; do base=${base#?}; done; \
+        while [ "${base%/}" != "$base" ]; do base=${base%?}; done; \
+        base="/$base"; wget -q -O /dev/null "http://$host:$port${base%/}/healthz"
 ENTRYPOINT ["docklight"]

@@ -191,6 +191,58 @@ func TestLoginPageDoesNotRedirectInvalidSessions(t *testing.T) {
 	}
 }
 
+func TestHealthEndpointIsMinimalAndUnauthenticated(t *testing.T) {
+	for _, base := range []string{"/", "/docklight"} {
+		t.Run(base, func(t *testing.T) {
+			a := newTestApp(t)
+			a.cfg.BaseURL = base
+			a.cfg.Hosts = []Host{{ID: "private-host", Name: "private-name", Token: "private-agent-token"}}
+			handler := a.routes()
+			db := a.db
+			a.db = nil
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest("GET", "https://docklight.local"+a.withBase("/healthz"), nil))
+			a.db = db
+			if w.Code != http.StatusOK || w.Body.String() != "ok" || w.Header().Get("Content-Type") != "text/plain; charset=utf-8" {
+				t.Fatalf("health response: %d %q", w.Code, w.Body.String())
+			}
+			for name, want := range map[string]string{"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Content-Security-Policy": "default-src 'none'; script-src 'self'; connect-src 'self'; style-src 'self'; img-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"} {
+				if got := w.Header().Get(name); got != want {
+					t.Fatalf("%s: %q", name, got)
+				}
+			}
+			if len(w.Result().Cookies()) != 0 || strings.Contains(w.Body.String(), "private") {
+				t.Fatal("health response created a session or leaked configuration")
+			}
+			for _, method := range []string{"POST", "PUT", "DELETE"} {
+				w = httptest.NewRecorder()
+				handler.ServeHTTP(w, httptest.NewRequest(method, "https://docklight.local"+a.withBase("/healthz"), nil))
+				if w.Code != http.StatusMethodNotAllowed {
+					t.Fatalf("%s health: HTTP %d", method, w.Code)
+				}
+			}
+			wrongBase := "/healthz"
+			if base == "/" {
+				wrongBase = "/docklight/healthz"
+			}
+			for _, path := range []string{wrongBase, a.withBase("/healthz/")} {
+				w = httptest.NewRecorder()
+				handler.ServeHTTP(w, httptest.NewRequest("GET", "https://docklight.local"+path, nil))
+				if w.Code != http.StatusNotFound {
+					t.Fatalf("non-exact health path %s: HTTP %d", path, w.Code)
+				}
+			}
+			for _, path := range []string{"/", "/inventory"} {
+				w = httptest.NewRecorder()
+				handler.ServeHTTP(w, httptest.NewRequest("GET", "https://docklight.local"+a.withBase(path), nil))
+				if w.Code != http.StatusFound || w.Header().Get("Location") != a.withBase("/login") {
+					t.Fatalf("protected UI route %s lost authentication: HTTP %d", path, w.Code)
+				}
+			}
+		})
+	}
+}
+
 func TestCSPAllowsOnlySameOriginAssets(t *testing.T) {
 	a := newTestApp(t)
 	for _, base := range []string{"/", "/docklight"} {

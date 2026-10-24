@@ -92,6 +92,10 @@ func NewServer(engine *Engine, token string) (*Server, error) {
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = io.WriteString(w, "ok")
+	})
 	mux.HandleFunc("GET /v1/inventory", s.inventory)
 	mux.HandleFunc("POST /v1/jobs", s.submit)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.job)
@@ -100,6 +104,10 @@ func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.Method == http.MethodGet && r.URL.Path == "/healthz" {
+			mux.ServeHTTP(w, r)
+			return
+		}
 		header := r.Header.Get("Authorization")
 		given := sha256.Sum256([]byte(strings.TrimPrefix(header, "Bearer ")))
 		if !strings.HasPrefix(header, "Bearer ") || subtle.ConstantTimeCompare(given[:], s.token[:]) != 1 {

@@ -72,6 +72,26 @@ The agent needs outbound access to pull images. The internal management network 
 
 Run `docker compose up -d` from the project directory. No automatic pulling/building occurs during start, stop or recreate actions. Newly created stacks must be deployed using the CLI first: Docklight manages existing containers, not unstarted Compose folders. A deleted container disappears from Docklight; deploy it again from the CLI if needed.
 
+## Container health
+
+Both Docklight images include a Docker `HEALTHCHECK`, so the Compose examples inherit it without a service-level `healthcheck:` block. The UI probe requests its unauthenticated `GET <BASE_URL>/healthz` endpoint and succeeds when it returns a successful HTTP response; this verifies HTTP responsiveness, including the configured listen address and normalized base path. The endpoint itself returns only `ok`. The agent probe requests `GET /healthz` on its effective listen address and runs `docker info`, verifying both its HTTP API and access to the mounted Docker daemon. The health endpoints return no inventory, tokens, host configuration or maintenance state. These checks do not prove that every application managed by Docklight is healthy.
+
+Existing containers do not gain health checks until their new images are pulled and the containers are recreated. Using the service names from the example above, update only the agent with:
+
+```sh
+docker compose pull docklight-agent
+docker compose up -d --no-deps docklight-agent
+```
+
+To enable health checks on both the UI and agent, pull and recreate both services instead:
+
+```sh
+docker compose pull docklight docklight-agent
+docker compose up -d --no-deps docklight docklight-agent
+```
+
+Inspect health with `docker ps`, or see the current status and recent probe results with `docker inspect --format '{{json .State.Health}}' <container>`. A starting or unhealthy management service delays coordinated maintenance; a healthy result removes the earlier warning that application health could not be verified.
+
 ## Removing unused resources
 
 Images, Volumes and Networks each provide **Remove all unused**, with a required confirmation checkbox. The count excludes protected resources and anything referenced by a container, including stopped containers. Empty cleanup controls are disabled. Cleanup applies only to the selected host and resource type; individual deletion remains available.
@@ -152,7 +172,7 @@ Upgrade all agents individually to a maintenance-capable version before enabling
 
 The **Maintenance** section appears only while the master host is selected. One confirmation starts remote agents, then the main agent, then other discovered UI services, and finally the coordinating UI. Targets are labeled, Compose-managed services on configured hosts, not every installation on the network. Host aliases and UI replicas are deduplicated; multiple agent containers on one Docker host are rejected. The coordinating UI must run on the master host and use Docker's default container hostname, or set `UI_CONTAINER_ID` to its full container ID (or a unique prefix of at least 12 characters) when using a custom hostname. A fixed container ID override must be updated after replacement; prefer the default hostname.
 
-Preflight verifies all hosts and update configurations before acquiring host reservations. No update starts until all reservations are acquired. A failed or uncertain agent blocks all UI updates. Other UI failures block replacement of the coordinating UI. Successful updates remain installed; there is no automatic rollback. Pulling an already-current image or a pinned digest can leave the image unchanged, which is reported explicitly. Docker health checks are verified when configured; otherwise only running state and image/build metadata are verified, not application health.
+Preflight verifies all hosts and update configurations before acquiring host reservations. No update starts until all reservations are acquired. A failed or uncertain agent blocks all UI updates. Other UI failures block replacement of the coordinating UI. Successful updates remain installed; there is no automatic rollback. Pulling an already-current image or a pinned digest can leave the image unchanged, which is reported explicitly. Docker health checks are verified when configured; current Docklight images configure them as described above. For other images or older Docklight containers without health checks, only running state and image/build metadata are verified, not application health.
 
 Progress and job identities survive UI/agent replacement and browser closure. With JavaScript, progress refreshes automatically and reconnects after UI replacement; without it, use **Refresh maintenance status**. Failed runs offer **Retry / reconcile maintenance**. Verified successes are not submitted again; uncertain jobs retain their original idempotency key. After 15 minutes without verified progress on an update, the run requires attention instead of assuming success. Restore the original host configuration before recovering an interrupted run; it must not silently retarget another machine.
 

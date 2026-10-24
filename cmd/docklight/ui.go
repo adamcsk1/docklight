@@ -195,6 +195,10 @@ func (app *App) routes() http.Handler {
 			http.ServeFileFS(w, r, webFS, "static/"+asset)
 		})
 	}
+	mux.HandleFunc("GET "+app.withBase("/healthz"), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = io.WriteString(w, "ok")
+	})
 	mux.HandleFunc("GET "+app.withBase("/login"), app.loginPage)
 	mux.HandleFunc("POST "+app.withBase("/login"), func(w http.ResponseWriter, r *http.Request) {
 		if !validRequestOrigin(r) {

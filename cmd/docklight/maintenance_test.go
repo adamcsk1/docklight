@@ -427,6 +427,25 @@ func TestMaintenanceWaitsForHealthAndHandlesPinnedImages(t *testing.T) {
 	}
 }
 
+func TestMaintenanceHealthyTargetsOmitHealthWarning(t *testing.T) {
+	a, agents, _ := maintenanceApp(t)
+	for _, agent := range agents {
+		for i := range agent.info.Targets {
+			agent.info.Targets[i].Health = "healthy"
+		}
+	}
+	prepareMaintenance(t, a)
+	run := tickMaintenance(t, a, 8)
+	if run.Status != "success" {
+		t.Fatalf("healthy targets did not complete maintenance: %+v", run)
+	}
+	for _, step := range run.Steps {
+		if step.Status != "success" || strings.Contains(step.Detail, "application health is not verified") {
+			t.Fatalf("healthy target retained missing-health warning: %+v", step)
+		}
+	}
+}
+
 func TestMaintenancePendingJobTimeoutAndIdentityMismatch(t *testing.T) {
 	for _, scenario := range []string{"timeout", "identity", "missing", "lease", "conflict"} {
 		t.Run(scenario, func(t *testing.T) {
