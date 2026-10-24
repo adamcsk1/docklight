@@ -16,6 +16,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"docklight/internal/management"
@@ -59,7 +60,7 @@ func (app *App) populateMaintenance(r *http.Request, d *PageData) {
 	}
 	d.Master = d.HostID == master.ID
 	if app.maintenanceMu.TryLock() {
-		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		ctx, cancel := context.WithTimeout(r.Context(), maintenanceVerificationTimeout+5*time.Second)
 		v := app.checkMaster(ctx, false)
 		cancel()
 		app.maintenanceMu.Unlock()
@@ -238,22 +239,42 @@ func maintenanceVerificationError(err error) string {
 	return "invalid maintenance response"
 }
 
+const maintenanceVerificationTimeout = 30 * time.Second
+
 func (app *App) checkMasterSkipping(ctx context.Context, discovery bool, skipOffline map[string]bool) masterView {
 	v := masterView{Infos: map[string]management.MaintenanceInfo{}}
 	master := app.masterHost()
 	if master == nil {
 		return v
 	}
+	type result struct {
+		info management.MaintenanceInfo
+		err  error
+	}
+	results := make([]result, len(app.cfg.Hosts))
+	path := "/v1/maintenance"
+	if discovery {
+		path += "?discovery=true"
+	}
+	// Independent requests keep one hanging host from consuming the fleet's deadline.
+	var wg sync.WaitGroup
+	for i := range app.cfg.Hosts {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			hostCtx, cancel := context.WithTimeout(ctx, maintenanceVerificationTimeout)
+			defer cancel()
+			h := &app.cfg.Hosts[i]
+			results[i].err = h.maintenanceCall(hostCtx, "GET", path, nil, &results[i].info, nil)
+		}()
+	}
+	wg.Wait()
 	var problems []string
 	offlineProblems := 0
 	for i := range app.cfg.Hosts {
 		h := &app.cfg.Hosts[i]
-		var info management.MaintenanceInfo
-		path := "/v1/maintenance"
-		if discovery {
-			path += "?discovery=true"
-		}
-		if err := h.maintenanceCall(ctx, "GET", path, nil, &info, nil); err != nil {
+		info, err := results[i].info, results[i].err
+		if err != nil {
 			if errors.Is(err, errMaintenanceUnavailable) {
 				if h.ID != master.ID && skipOffline[h.ID] {
 					v.Skipped = append(v.Skipped, h.ID)

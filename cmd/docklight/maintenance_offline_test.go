@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -120,6 +122,140 @@ func TestMaintenanceSkipsOnlyInitiallyOfflineDevices(t *testing.T) {
 	}
 }
 
+func TestMaintenanceHangingOfflineHostDoesNotBlockFleetVerification(t *testing.T) {
+	for _, skip := range []bool{false, true} {
+		name := "required"
+		if skip {
+			name = "skip"
+		}
+		t.Run(name, func(t *testing.T) {
+			a, agents, _ := maintenanceApp(t)
+			// Put the hanging host first to catch sequential head-of-line blocking.
+			a.cfg.Hosts[0], a.cfg.Hosts[1] = a.cfg.Hosts[1], a.cfg.Hosts[0]
+			offlineStarted := make(chan struct{})
+			releaseOffline := make(chan struct{})
+			deadline := make(chan time.Duration, 1)
+			var offlineOnce, releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(releaseOffline) }) }
+			a.cfg.Hosts[0].client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				offlineOnce.Do(func() {
+					remaining := time.Duration(0)
+					if until, ok := r.Context().Deadline(); ok {
+						remaining = time.Until(until)
+					}
+					deadline <- remaining
+					close(offlineStarted)
+				})
+				<-releaseOffline
+				return nil, errors.New("device offline")
+			})
+			mainVerified := make(chan struct{})
+			var mainOnce sync.Once
+			mainAgent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == "GET" && r.URL.Path == "/v1/maintenance" {
+					mainOnce.Do(func() { close(mainVerified) })
+				}
+				agents[0].serve(w, r)
+			}))
+			defer mainAgent.Close()
+			a.cfg.Hosts[1].URL = mainAgent.URL
+
+			values := url.Values{"host": {"main"}, "confirmed": {"yes"}}
+			if skip {
+				values.Set("skip_offline", "yes")
+			}
+			r := formRequest(a, session(t, a), "/maintenance", values)
+			w := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() {
+				a.routes().ServeHTTP(w, r)
+				close(done)
+			}()
+			defer func() {
+				release()
+				select {
+				case <-done:
+				case <-time.After(2 * time.Second):
+				}
+			}()
+			wait := func(ch <-chan struct{}) bool {
+				select {
+				case <-ch:
+					return true
+				case <-time.After(2 * time.Second):
+					return false
+				}
+			}
+			if !wait(offlineStarted) {
+				t.Fatal("offline verification did not start")
+			}
+			if remaining := <-deadline; remaining <= 0 || remaining > maintenanceVerificationTimeout {
+				t.Errorf("offline request inherited fleet deadline instead of independent timeout: %v", remaining)
+			}
+			mainReached := wait(mainVerified)
+			release()
+			if !wait(done) {
+				t.Fatal("maintenance request did not finish")
+			}
+			if !mainReached {
+				t.Fatal("hanging offline host prevented master verification")
+			}
+			run, err := a.loadMaintenance()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if skip {
+				if w.Code != http.StatusSeeOther || run == nil || strings.Join(run.Skipped, ",") != "remote" || len(run.Hosts) != 1 || run.Hosts[0].ID != "main" {
+					t.Fatalf("hanging offline host blocked skip: %d %s %+v", w.Code, w.Body.String(), run)
+				}
+			} else {
+				requireDocklightError(t, w, http.StatusConflict, "remote: agent offline or unavailable")
+				if strings.Contains(w.Body.String(), "main: agent offline") || run != nil {
+					t.Fatalf("offline host made healthy master unavailable: %s %+v", w.Body.String(), run)
+				}
+			}
+		})
+	}
+}
+
+func TestMaintenanceHostDeadlineKeepsDashboardSkipAvailable(t *testing.T) {
+	a, _, _ := maintenanceApp(t)
+	a.cfg.Hosts[0], a.cfg.Hosts[1] = a.cfg.Hosts[1], a.cfg.Hosts[0]
+	a.cfg.Hosts[0].client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	r := httptest.NewRequest("GET", "/docklight/?host=main", nil)
+	d := PageData{HostID: "main"}
+	a.populateMaintenance(r, &d)
+	if !d.MaintenanceCanSkip || d.Blocked || d.MaintenanceError != "remote: agent offline or unavailable" {
+		t.Fatalf("host timeout disabled offline skipping or poisoned healthy hosts: %+v", d)
+	}
+	w := httptest.NewRecorder()
+	a.render(w, r, "maintenance", d)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `name="skip_offline"`) || strings.Contains(w.Body.String(), "disabled") {
+		t.Fatalf("skip form unavailable after host timeout: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestMaintenanceParentCancellationStillBlocksSkipping(t *testing.T) {
+	a, _, _ := maintenanceApp(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	a.cfg.Hosts[1].client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		cancel()
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	defer cancel()
+	v := a.checkMasterSkipping(ctx, true, map[string]bool{"remote": true})
+	if !strings.Contains(v.Error, "maintenance verification timed out") || v.OfflineOnly {
+		t.Fatalf("parent cancellation treated as skippable host failure: %+v", v)
+	}
+	if run, err := a.preflight(v, nil); err == nil || run != nil {
+		t.Fatalf("canceled verification accepted a run: %+v %v", run, err)
+	}
+}
+
 func TestMaintenanceSkipRejectsUnsafeFailures(t *testing.T) {
 	for _, scenario := range []string{"master-offline", "authentication", "old-agent", "agent-error", "docker-discovery", "conflict", "remembered-conflict", "tls", "tls-alert"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -127,7 +263,7 @@ func TestMaintenanceSkipRejectsUnsafeFailures(t *testing.T) {
 			var reject *httptest.Server
 			switch scenario {
 			case "master-offline":
-				agents[0].offline = true
+				maintenanceTransportOffline(a, 0)(true)
 			case "authentication", "agent-error":
 				status := http.StatusUnauthorized
 				if scenario == "agent-error" {
