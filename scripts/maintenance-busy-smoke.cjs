@@ -19,13 +19,27 @@ const assert = require("node:assert/strict");
         await page.request.post(`${base}/test-verification-busy`);
         busy = true;
         await page.locator('details[data-project="web"] > summary').click();
-        await page.getByRole("form", { name: "Actions for web-stopped", exact: true }).getByRole("button", { name: "Start", exact: true }).click();
-        await page.waitForURL(`${base}/?host=pi&notice=maintenance-busy`);
-        assert((await page.locator("[data-ui-status]").textContent()).includes("No operation was submitted."));
-        assert.equal(await page.locator("[data-ui-status]").isVisible(), true);
+        const actionRequest = page.waitForRequest(request => request.url() === `${base}/action` && request.method() === "POST");
+        const actionNavigation = page.waitForURL(url => url.searchParams.get("job") === "presentation-job" || url.searchParams.get("notice") === "maintenance-busy");
+        const actionClick = page.getByRole("form", { name: "Actions for web-stopped", exact: true }).getByRole("button", { name: "Start", exact: true }).click();
+        await actionRequest;
+        await page.request.post(`${base}/test-action-entered`);
+        const actionState = await Promise.race([
+          actionNavigation.then(() => "completed"),
+          page.waitForTimeout(100).then(() => "pending"),
+        ]);
+        assert.equal(actionState, "pending", "action did not wait for verification");
+        await page.request.post(`${base}/test-verification-idle`);
+        busy = false;
+        await actionClick;
+        await actionNavigation;
+        assert.equal(page.url(), `${base}/?host=pi&job=presentation-job`);
         assert.equal(await page.locator("[data-inventory]").count(), 1);
         assert.equal(await page.getByLabel("Docker host").inputValue(), "pi");
+        assert(!(await page.locator("[data-ui-status]").textContent()).includes("No operation was submitted."));
         if (javaScriptEnabled) {
+          await page.request.post(`${base}/test-verification-busy`);
+          busy = true;
           let retries = 0;
           const fourRetries = new Promise(resolve => page.on("response", response => {
             if (response.url().includes("/inventory?") && response.status() === 503 && ++retries === 4) resolve();
@@ -46,6 +60,6 @@ const assert = require("node:assert/strict");
         await context.close();
       }
     }
-    console.log("PASS busy verification: dashboard retained, no-JS notice, inventory retries beyond four checks and recovers without navigation");
+    console.log("PASS busy verification: actions wait then submit once, dashboard retained, inventory retries and recovers without navigation");
   } finally { await browser.close(); }
 })().catch(error => { console.error(error); process.exitCode = 1; });

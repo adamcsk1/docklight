@@ -37,7 +37,6 @@ type resourceSection struct {
 }
 type PageData struct {
 	Title, Error, CSRF, Base, HostID string
-	Notice                           string
 	UICommit, AgentCommit            string
 	Hosts                            []hostView
 	Inventory                        management.Inventory
@@ -294,9 +293,6 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := PageData{Title: "Containers", HostID: h.ID, HideOutput: r.URL.Query().Get("output") == "hidden"}
-	if r.URL.Query().Get("notice") == "maintenance-busy" {
-		d.Notice = "Maintenance verification is in progress. No operation was submitted. Wait briefly, then try again."
-	}
 	for _, host := range app.cfg.Hosts {
 		d.Hosts = append(d.Hosts, hostView{host.ID, host.Name})
 	}
@@ -395,6 +391,8 @@ func (app *App) operation(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(job)
 }
 
+const actionTimeout = time.Minute - 5*time.Second
+
 func (app *App) action(w http.ResponseWriter, r *http.Request) {
 	if app.masterHost() != nil {
 		r = r.WithContext(context.WithValue(r.Context(), coordinatorContextKey{}, app.coordinator))
@@ -418,7 +416,14 @@ func (app *App) action(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), actionTimeout)
+	defer cancel()
+	r = r.WithContext(ctx)
 	if !app.allowManagement(w, r) {
+		return
+	}
+	if r.Context().Err() != nil {
+		http.Error(w, "maintenance verification interrupted; no operation was submitted", http.StatusServiceUnavailable)
 		return
 	}
 	var j management.Job

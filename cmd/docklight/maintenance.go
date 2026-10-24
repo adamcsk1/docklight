@@ -12,7 +12,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"net/url"
 	"os"
 	"sort"
 	"strings"
@@ -124,15 +123,26 @@ func (app *App) allowManagement(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	if !app.maintenanceMu.TryLock() {
-		if r.Method == http.MethodPost {
-			http.Redirect(w, r, app.withBase("/")+"?host="+url.QueryEscape(r.PostForm.Get("host"))+"&notice=maintenance-busy", http.StatusSeeOther)
-		} else {
+		if r.Method != http.MethodPost {
 			w.Header().Set("Retry-After", "3")
 			http.Error(w, "maintenance verification in progress; retry shortly", http.StatusServiceUnavailable)
+			return false
 		}
-		return false
+		// Mutations wait for verification instead of rejecting on slow hosts.
+		for !app.maintenanceMu.TryLock() {
+			select {
+			case <-r.Context().Done():
+				http.Error(w, "maintenance verification interrupted; no operation was submitted", http.StatusServiceUnavailable)
+				return false
+			case <-time.After(100 * time.Millisecond):
+			}
+		}
 	}
 	defer app.maintenanceMu.Unlock()
+	if r.Context().Err() != nil {
+		http.Error(w, "maintenance verification interrupted; no operation was submitted", http.StatusServiceUnavailable)
+		return false
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	v := app.checkMaster(ctx, false)

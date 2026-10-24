@@ -41,7 +41,7 @@
         <p class="form-hint build-info">Agent: <span class="build-commit" data-build-component="agent" tabindex="0" title="{{.AgentCommit}}" aria-label="Agent build commit {{.AgentCommit}}">{{shortCommit .AgentCommit}}</span> · UI: <span class="build-commit" data-build-component="ui" tabindex="0" title="{{.UICommit}}" aria-label="UI build commit {{.UICommit}}">{{shortCommit .UICommit}}</span></p>
       </form>
     </section>
-    <p class="form-hint" role="status" data-ui-status {{if not .Notice}}hidden{{end}}>{{.Notice}}</p>
+    <p class="form-hint" role="status" data-ui-status hidden></p>
     {{if .Error}}<section class="alert alert-danger" role="alert">{{.Error}}</section>{{end}}
 {{end}}
 
