@@ -49,7 +49,7 @@ func TestMaintenanceSkipsOnlyInitiallyOfflineDevices(t *testing.T) {
 	setRemoteOffline := maintenanceTransportOffline(a, 1)
 	setRemoteOffline(true)
 
-	r := httptest.NewRequest("GET", "https://docklight.local/docklight/?host=main", nil)
+	r := httptest.NewRequest("GET", "https://docklight.local/docklight/?host=main&view=maintenance", nil)
 	r.AddCookie(cookie)
 	w := httptest.NewRecorder()
 	a.routes().ServeHTTP(w, r)
@@ -227,6 +227,7 @@ func TestMaintenanceHostDeadlineKeepsDashboardSkipAvailable(t *testing.T) {
 	})
 	r := httptest.NewRequest("GET", "/docklight/?host=main", nil)
 	d := PageData{HostID: "main"}
+	a.checkMaster(r.Context(), false)
 	a.populateMaintenance(r, &d)
 	if !d.MaintenanceCanSkip || d.Blocked || d.MaintenanceError != "remote: agent offline or unavailable" {
 		t.Fatalf("host timeout disabled offline skipping or poisoned healthy hosts: %+v", d)

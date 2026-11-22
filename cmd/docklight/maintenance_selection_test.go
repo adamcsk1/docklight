@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -165,6 +166,7 @@ func TestMaintenanceSelectionRetryAndLegacy(t *testing.T) {
 func TestMaintenanceIdleHostStatusAndBusy(t *testing.T) {
 	a, _, _ := maintenanceApp(t)
 	maintenanceTransportOffline(a, 1)(true)
+	a.checkMaster(context.Background(), false)
 	for _, busy := range []bool{false, true} {
 		if busy {
 			a.maintenanceMu.Lock()
@@ -179,7 +181,7 @@ func TestMaintenanceIdleHostStatusAndBusy(t *testing.T) {
 			t.Fatalf("missing idle hosts: %+v", d)
 		}
 		for _, h := range d.MaintenanceHosts {
-			if !h.Checked || h.Frozen || (h.Online != (!busy && h.ID == "main")) {
+			if !h.Checked || h.Frozen || (h.Online != (h.ID == "main")) {
 				t.Fatalf("wrong host state: %+v", h)
 			}
 		}

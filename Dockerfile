@@ -1,4 +1,4 @@
-FROM --platform=$BUILDPLATFORM golang:1.27-bookworm AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-bookworm AS build
 ARG TARGETOS
 ARG TARGETARCH
 ARG TARGETVARIANT
@@ -31,7 +31,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
             wget -q -O /dev/null "http://$host:$port/healthz"; fi && docker info >/dev/null 2>&1
 ENTRYPOINT ["docklight-agent"]
 
-FROM alpine:3.23 AS ui
+FROM alpine:3.24 AS ui
 ARG BUILD_COMMIT=unknown
 RUN apk add --no-cache ca-certificates
 COPY --from=build /out/docklight /usr/local/bin/docklight

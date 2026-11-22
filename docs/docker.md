@@ -94,7 +94,7 @@ Inspect health with `docker ps`, or see the current status and recent probe resu
 
 ## Removing unused resources
 
-Images, Volumes and Networks each provide **Remove all unused**, with a required confirmation checkbox. The count excludes protected resources and anything referenced by a container, including stopped containers. Empty cleanup controls are disabled. Cleanup applies only to the selected host and resource type; individual deletion remains available.
+Open **Cleanup** to manage Images, Volumes and Networks. Each provides **Remove all unused**, with a required confirmation checkbox. The count excludes protected resources and anything referenced by a container, including stopped containers. Empty cleanup controls are disabled. Cleanup applies only to the selected host and resource type; individual deletion remains available.
 
 The agent takes a fresh candidate snapshot when the job starts, then rechecks each resource immediately before non-force removal. Resources created after that snapshot are excluded. External Docker clients can still race cleanup; Docker may refuse a removal. A stored Compose file without an existing container does not count as a reference. **Unused volumes may contain valuable data: deleting them permanently destroys that data. Back up anything you need first.** Images may need to be pulled or rebuilt, and removed networks may need to be recreated before a future deployment.
 
@@ -151,6 +151,12 @@ The certificate expires after one year. Renew it before expiry and replace it if
 
 ## Updates and private registries
 
+### Operation continuity
+
+Once an agent accepts an ordinary operation (including Compose upgrade/build), it owns execution. Closing a tab, refreshing a page or restarting the UI does not cancel that accepted job. Reopening the selected host restores the agent's active job, or its latest retained result, and reads current inventory. Browser or UI failure before acceptance does not prove that a job started: reconnect and inspect the restored state before retrying.
+
+Update agents before the UI to enable automatic job rediscovery and replay-safe ordinary submissions. Older agents still accept ordinary operations and explicit job links, but do not provide the new recovery guarantees. Agents retain at most 100 completed jobs, apart from jobs protected by an active maintenance run; replay protection ends when a job is pruned. Restarting the agent itself during an ordinary operation is not equivalent to restarting the UI: the agent reports an unknown outcome rather than automatically repeating Docker commands.
+
 ### Coordinated maintenance
 
 Add `master: true` to **one host entry** in the coordinating UI's `hosts.yml` (inside the existing `hosts:` list). Omitted means `false`. More than one master blocks UI startup with the conflicting host IDs; no master keeps normal individual management available without bulk maintenance.
@@ -170,11 +176,13 @@ hosts:
 
 Upgrade all agents individually to a maintenance-capable version before enabling this feature. Back up the UI SQLite database and agent data directories first. The UI adds a maintenance table without deleting sessions; older UI releases that only support the sessions-only schema cannot open the upgraded database. Keep the backup for a manual downgrade. Do not share one UI database between concurrent UI processes, or clone it into an independent coordinator: its persisted coordinator identity must be unique. Independent UIs should use their own data volumes and omit `master` unless they are the designated coordinator.
 
-The **Maintenance** section appears only while the master host is selected. One confirmation starts remote agents, then the main agent, then other discovered UI services, and finally the coordinating UI. Targets are labeled, Compose-managed services on configured hosts, not every installation on the network. Host aliases and UI replicas are deduplicated; multiple agent containers on one Docker host are rejected. The coordinating UI must run on the master host and use Docker's default container hostname, or set `UI_CONTAINER_ID` to its full container ID (or a unique prefix of at least 12 characters) when using a custom hostname. A fixed container ID override must be updated after replacement; prefer the default hostname.
+The **Maintenance** screen appears only while the master host is selected. Its host status is a timestamped background snapshot; reading pages does not run fleet verification. Ordinary operations do not wait for unrelated hosts, but known conflicts and active reservations still block mutations. One confirmation starts remote agents, then the main agent, then other discovered UI services, and finally the coordinating UI. Targets are labeled, Compose-managed services on configured hosts, not every installation on the network. Host aliases and UI replicas are deduplicated; multiple agent containers on one Docker host are rejected. The coordinating UI must run on the master host and use Docker's default container hostname, or set `UI_CONTAINER_ID` to its full container ID (or a unique prefix of at least 12 characters) when using a custom hostname. A fixed container ID override must be updated after replacement; prefer the default hostname.
 
 Preflight verifies all hosts and update configurations before acquiring host reservations. No update starts until all reservations are acquired. A failed or uncertain agent blocks all UI updates. Other UI failures block replacement of the coordinating UI. Successful updates remain installed; there is no automatic rollback. Pulling an already-current image or a pinned digest can leave the image unchanged, which is reported explicitly. Docker health checks are verified when configured; current Docklight images configure them as described above. For other images or older Docklight containers without health checks, only running state and image/build metadata are verified, not application health.
 
 Progress and job identities survive UI/agent replacement and browser closure. With JavaScript, progress refreshes automatically and reconnects after UI replacement; without it, use **Refresh maintenance status**. Failed runs offer **Retry / reconcile maintenance**. Verified successes are not submitted again; uncertain jobs retain their original idempotency key. After 15 minutes without verified progress on an update, the run requires attention instead of assuming success. Restore the original host configuration before recovering an interrupted run; it must not silently retarget another machine.
+
+The fleet scheduler still runs in the UI service. If that service stops, already accepted agent jobs continue, but subsequent fleet steps wait for the UI to restart and recover its durable state. This is not an agent-hosted fleet orchestrator.
 
 #### Master conflicts and recovery
 

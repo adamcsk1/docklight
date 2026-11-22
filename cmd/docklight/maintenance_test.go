@@ -258,11 +258,12 @@ func TestMasterConflictBlocksUIAndPersistsWhileOffline(t *testing.T) {
 	cookie := session(t, a)
 	for _, offline := range []bool{false, true} {
 		agents[1].offline = offline
+		a.checkMaster(context.Background(), false)
 		r := httptest.NewRequest("GET", "https://docklight.local/docklight/?host=main", nil)
 		r.AddCookie(cookie)
 		w := httptest.NewRecorder()
 		a.routes().ServeHTTP(w, r)
-		if w.Code != 200 || !strings.Contains(w.Body.String(), "management blocked") || strings.Contains(w.Body.String(), "data-inventory ") || strings.Contains(w.Body.String(), "<script>") {
+		if w.Code != 200 || !strings.Contains(w.Body.String(), "management blocked") || !strings.Contains(w.Body.String(), "data-inventory ") || strings.Contains(w.Body.String(), "<script>") || strings.Contains(w.Body.String(), `action="/docklight/action"`) {
 			t.Fatalf("conflict UI: %d %s", w.Code, w.Body.String())
 		}
 		for _, path := range []string{"/action", "/maintenance"} {
@@ -501,7 +502,7 @@ func TestMaintenanceSectionPlacementAndNavigation(t *testing.T) {
 		{name: "blocked-master", master: true, blocked: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			d := PageData{HostID: "main", Master: tc.master, Blocked: tc.blocked, Maintenance: tc.run,
+			d := PageData{HostID: "main", View: "maintenance", Master: tc.master, Blocked: tc.blocked, Maintenance: tc.run,
 				ResourceSections: []resourceSection{{Kind: "image", Title: "Images"}, {Kind: "volume", Title: "Volumes"}, {Kind: "network", Title: "Networks"}}}
 			r := httptest.NewRequest("GET", "/docklight/?host=main", nil)
 			w := httptest.NewRecorder()
@@ -511,7 +512,7 @@ func TestMaintenanceSectionPlacementAndNavigation(t *testing.T) {
 			}
 			html := w.Body.String()
 			visible := tc.master && !tc.blocked
-			for _, marker := range []string{`href="#maintenance"`, `id="maintenance"`} {
+			for _, marker := range []string{`>maintenance</a>`, `id="maintenance"`} {
 				want := 0
 				if visible {
 					want = 1

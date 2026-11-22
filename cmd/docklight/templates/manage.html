@@ -2,19 +2,19 @@
 
 {{if .Blocked}}
 <section class="alert alert-danger" role="alert"><h2>Master conflict — management blocked</h2><p>{{.MaintenanceError}}</p><p>Resolve the registration conflict, then reconnect. Existing job status remains available.</p></section>
-{{else}}
+{{end}}
 
 {{with .Job}}
-<p data-operation-reopen {{if not $.HideOutput}}hidden{{end}}><a class="button button-ghost" data-operation-toggle="show" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}">Show output</a></p>
+<p data-operation-reopen {{if not $.HideOutput}}hidden{{end}}><a class="button button-ghost" data-operation-toggle="show" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}{{if $.View}}&amp;view={{$.View}}{{end}}&amp;job={{.ID}}">Show output</a></p>
 <section id="operation-panel" class="panel" aria-labelledby="operation-title" data-operation-url="{{$.Base}}/operation?host={{$.HostID}}&amp;job={{.ID}}" data-status="{{.Status}}" {{if $.HideOutput}}hidden{{end}}>
   <div class="operation-head">
     <div class="operation-heading">
       <h2 id="operation-title">{{.Action.Kind}} {{.Action.Operation}}</h2>
       <span class="badge badge-{{.Status}}" data-operation-status>{{.Status}}</span>
     </div>
-    <a class="button button-ghost" data-operation-toggle="hide" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}&amp;job={{.ID}}&amp;output=hidden">Close output</a>
+    <a class="button button-ghost" data-operation-toggle="hide" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}{{if $.View}}&amp;view={{$.View}}{{end}}&amp;job={{.ID}}&amp;output=hidden">Close output</a>
   </div>
-  <p class="muted">{{.Started}} · target={{.Action.ID}}</p>
+  <p class="muted resource-break">{{.Started}} · target={{.Action.ID}}</p>
   <p class="form-hint" role="status" data-operation-message>{{if eq .Status "running"}}{{if eq .Action.Operation "build"}}Build running; other mutations on this host are blocked. Builds may take up to two hours.{{else}}Operation running.{{end}} Output updates every three seconds; inventory refreshes when finished.{{else if eq .Status "updating"}}Management update running. Reconnecting automatically if the agent briefly disconnects.{{end}}</p>
   <noscript><p class="form-hint">Reload this page to update operation status and output; automatic updates require JavaScript.</p></noscript>
   <pre class="operation-output" aria-label="Operation output">{{.Output}}</pre>
@@ -22,13 +22,12 @@
 {{end}}
 
 {{template "inventory" .}}
-{{template "maintenance" .}}
-{{end}}
+{{if eq .View "maintenance"}}{{template "maintenance" .}}{{end}}
 {{template "layout_end" .}}
 
 {{define "inventory"}}
-<div data-inventory data-inventory-url="{{.Base}}/inventory?host={{.HostID}}" data-agent-commit="{{.AgentCommit}}" data-ui-commit="{{.UICommit}}">
-<section class="resource-section" id="containers" aria-labelledby="containers-title">
+<div data-inventory data-inventory-url="{{.Base}}/inventory?host={{.HostID}}&amp;view={{.View}}" data-agent-commit="{{.AgentCommit}}" data-ui-commit="{{.UICommit}}">
+<section class="resource-section" id="containers" aria-labelledby="containers-title" {{if .View}}hidden{{end}}>
   <div class="section-head"><h2 id="containers-title">Containers</h2><span class="badge">{{len .Inventory.Containers}} total</span></div>
    <p class="form-hint">Recreate preserves exact current images. Upgrade pulls registry images only. Build compiles local images, then deploys only after success. Stop containers before deletion; volumes and Compose files are preserved.</p>
   {{if .Inventory.Containers}}
@@ -47,8 +46,9 @@
       <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">service</span>{{if .Service}}{{.Service}}{{else}}-{{end}}{{if .Protected}}<p class="muted">protected: management</p>{{end}}</div>
       <div role="cell">
         <span class="cell-label" aria-hidden="true">actions</span>
+        {{if $.Blocked}}<p class="muted">Read-only: resolve master conflict before changing containers.</p>{{else}}
         <form class="container-actions" method="post" action="{{$.Base}}/action" aria-label="Actions for {{.Name}}">
-          {{template "csrf" $}}
+          {{template "csrf" $}}{{template "request_id" $}}
           <input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="kind" value="container">
           {{if .Protected}}
             {{if .ComposeAvailable}}
@@ -60,17 +60,23 @@
             <div class="actions">
               <button class="button button-primary" name="operation" value="start" type="submit">Start</button>
               <button class="button" name="operation" value="stop" type="submit">Stop</button>
-              {{if .ComposeAvailable}}<button class="button" name="operation" value="recreate" type="submit">Recreate</button><button class="button button-secondary" name="operation" value="upgrade" type="submit">Upgrade</button>{{end}}
+              {{if .ComposeAvailable}}<button class="button button-secondary" name="operation" value="upgrade" type="submit">Upgrade</button>{{end}}
+            </div>
+            <details class="secondary-actions"><summary>More actions</summary>
+            <div class="actions">
+              {{if .ComposeAvailable}}<button class="button" name="operation" value="recreate" type="submit">Recreate</button>{{end}}
               {{if .Buildable}}<button class="button button-secondary" name="operation" value="build" type="submit">Build</button>{{end}}
             </div>
             <div class="delete-action">
               <label class="switch-label"><input type="checkbox" name="confirmed" value="yes"><span>confirm deletion</span></label>
               <button class="button button-danger" name="operation" value="delete" type="submit" {{if not (or (eq .State "exited") (eq .State "created") (eq .State "dead"))}}disabled title="Stop this container before deleting"{{end}}>Delete stopped</button>
             </div>
+            </details>
             {{if not .ComposeAvailable}}<p class="muted">Recreate/upgrade require accessible Compose files.</p>{{end}}
             {{if .BuildError}}<p class="muted">Build unavailable: {{.BuildError}}</p>{{end}}
           {{end}}
         </form>
+        {{end}}
       </div>
     </article>
     {{end}}
@@ -80,17 +86,19 @@
   {{else}}<div class="empty"><h3>No containers</h3><p class="muted">No container inventory available for this host.</p></div>{{end}}
 </section>
 
+{{if eq .View "cleanup"}}<nav class="actions" aria-label="Cleanup sections"><a class="button button-ghost" href="#images">Images</a><a class="button button-ghost" href="#volumes">Volumes</a><a class="button button-ghost" href="#networks">Networks</a></nav>{{end}}
 {{range .ResourceSections}}
-<section class="resource-section" id="{{.Kind}}s" aria-labelledby="{{.Kind}}s-title">
+<section class="resource-section" id="{{.Kind}}s" aria-labelledby="{{.Kind}}s-title" {{if ne $.View "cleanup"}}hidden{{end}}>
   <div class="section-head"><h2 id="{{.Kind}}s-title">{{.Title}}</h2><span class="badge">{{len .Items}} total</span></div>
   <p class="form-hint">Referenced resources are read-only, including references from stopped containers.{{if eq .Kind "volume"}} Deleting an unused volume permanently destroys its data.{{end}}</p>
-  <form class="cleanup-actions" method="post" action="{{$.Base}}/action" aria-label="Remove all unused {{.Title}}">
-    {{template "csrf" $}}
+  {{if not $.Blocked}}<form class="cleanup-actions" method="post" action="{{$.Base}}/action" aria-label="Remove all unused {{.Title}}">
+    {{template "csrf" $}}{{template "request_id" $}}
     <input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="kind" value="{{.Kind}}"><input type="hidden" name="id" value="unused"><input type="hidden" name="operation" value="delete-unused">
     <p class="form-hint">{{.Unused}} unused, unprotected · checked again when cleanup runs on this host.</p>
     <label class="switch-label"><input type="checkbox" name="confirmed" value="yes" required {{if not .Unused}}disabled{{end}}><span>{{if eq .Kind "volume"}}Permanently delete all unused volumes and their data{{else}}Permanently delete all unused {{.Kind}}s{{end}}</span></label>
     <button class="button button-danger" type="submit" {{if not .Unused}}disabled{{end}}>Remove all unused</button>
   </form>
+  {{end}}
   {{if .Items}}
   <div class="resource-table" role="table" aria-label="{{.Title}}">
     <div class="resource-row resource-head resource-row-cleanup" role="row"><span role="columnheader">name</span><span role="columnheader">used by</span><span role="columnheader">actions</span></div>
@@ -99,9 +107,9 @@
       <div role="cell" class="resource-break"><span class="cell-label" aria-hidden="true">name</span><strong>{{.Name}}</strong>{{if ne .ID .Name}}<p class="muted resource-id">{{.ID}}</p>{{end}}</div>
       <div role="cell" class="resource-users"><span class="cell-label" aria-hidden="true">used by</span>{{range .UsedBy}}<span class="resource-break">{{.}}</span>{{else}}<span class="badge badge-unused">unused</span>{{end}}{{if .Protected}}<span class="muted">protected resource</span>{{end}}</div>
       <div role="cell"><span class="cell-label" aria-hidden="true">actions</span>
-        {{if or .UsedBy .Protected}}<span class="badge badge-muted">read-only</span>{{else}}
+        {{if or .UsedBy .Protected $.Blocked}}<span class="badge badge-muted">read-only</span>{{else}}
         <form class="cleanup-actions" method="post" action="{{$.Base}}/action" aria-label="Delete {{.Kind}} {{.Name}}">
-          {{template "csrf" $}}
+          {{template "csrf" $}}{{template "request_id" $}}
           <input type="hidden" name="host" value="{{$.HostID}}"><input type="hidden" name="kind" value="{{.Kind}}"><input type="hidden" name="id" value="{{.ID}}"><input type="hidden" name="operation" value="delete">
           <label class="switch-label"><input type="checkbox" name="confirmed" value="yes" required><span>permanently delete</span></label>
           <button class="button button-danger" type="submit">Delete</button>

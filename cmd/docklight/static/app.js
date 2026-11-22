@@ -40,11 +40,11 @@ let submitting = false;
 document.addEventListener("submit", event => {
   const form = event.target;
   if (!form.matches(".host-form, .container-actions, .cleanup-actions")) return;
-  if (submitting) { event.preventDefault(); return; }
+  const hostChange = form === hostForm;
+  if (submitting && !hostChange) { event.preventDefault(); return; }
   event.preventDefault();
   submitting = true;
   const button = event.submitter || form.querySelector('button[type="submit"]');
-  const hostChange = form === hostForm;
   if (hostChange) setBuildCommit("agent", "unavailable");
   const select = hostForm.querySelector("select");
   showStatus(hostChange
@@ -61,7 +61,9 @@ document.addEventListener("submit", event => {
   }
   button.textContent = hostChange ? "Connecting…" : "Submitting…";
   form.setAttribute("aria-busy", "true");
-  for (const control of document.querySelectorAll(".host-form select, .host-form button, .container-actions button, .cleanup-actions button")) {
+  for (const control of document.querySelectorAll(hostChange
+    ? ".host-form select, .host-form button, .container-actions button, .cleanup-actions button"
+    : ".container-actions button, .cleanup-actions button")) {
     control.disabled = true;
   }
   // Paint feedback before native navigation can suspend the current document.
@@ -89,8 +91,10 @@ if (document.querySelector("[data-maintenance]")) {
       }
       if (current.dataset.running === "true" || next.dataset.running === "true") {
         const open = [...current.querySelectorAll("details")].map(item => item.open);
+        const focusedDetail = [...current.querySelectorAll("details > summary")].indexOf(document.activeElement);
         [...next.querySelectorAll("details")].forEach((item, index) => item.open = open[index] || false);
         current.replaceWith(next);
+        if (focusedDetail >= 0) next.querySelectorAll("details > summary")[focusedDetail]?.focus({ preventScroll: true });
       } else {
         // Keep form nodes intact: polling must preserve edits and keyboard focus.
         for (const status of current.querySelectorAll("[data-maintenance-host-status]")) {
@@ -100,12 +104,13 @@ if (document.querySelector("[data-maintenance]")) {
         const verification = current.querySelector("[data-maintenance-verification]");
         verification.replaceChildren(...next.querySelector("[data-maintenance-verification]").childNodes);
       }
+      if (uiStatus.textContent.startsWith("Reconnecting to maintenance coordinator.")) showStatus("");
     } catch {
       for (const status of current.querySelectorAll("[data-maintenance-host-status]")) {
         const dot = document.createElement("span");
-        dot.className = "maintenance-dot";
+        dot.className = "maintenance-dot pending";
         dot.setAttribute("aria-hidden", "true");
-        status.replaceChildren(dot, " Offline / Unavailable · status refresh failed");
+        status.replaceChildren(dot, " Status unavailable · refresh failed");
       }
       showStatus("Reconnecting to maintenance coordinator. Do not resubmit updates.");
     }
@@ -147,26 +152,38 @@ if (operation) {
   const active = status => status === "running" || status === "updating";
   const refreshInventory = async (remaining = 3) => {
     if (submitting) return;
+    const current = document.querySelector("[data-inventory]");
+    if (current.contains(document.activeElement) && document.activeElement.closest("form")) {
+      setMessage("Operation " + operation.dataset.status + ". Inventory refresh paused while controls have focus.");
+      window.setTimeout(() => refreshInventory(remaining), 3000);
+      return;
+    }
     setMessage("Operation " + operation.dataset.status + ". Refreshing containers…");
     document.querySelector("[data-inventory]").setAttribute("aria-busy", "true");
     try {
-      const current = document.querySelector("[data-inventory]");
       const response = await fetch(current.dataset.inventoryUrl, { cache: "no-store" });
       if (response.redirected) { window.location.replace(response.url); return; }
-      if (response.status === 503 && response.headers.get("Retry-After")) {
-        setMessage("Maintenance verification in progress. Keeping current inventory; retrying automatically.");
-        window.setTimeout(() => refreshInventory(remaining), 3000);
-        return;
-      }
       if (!response.ok) throw new Error("Inventory unavailable");
       const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-inventory]");
       if (!next) throw new Error("Invalid inventory response");
       if (submitting) return;
+      if (current.contains(document.activeElement) && document.activeElement.closest("form")) {
+        window.setTimeout(() => refreshInventory(remaining), 3000);
+        return;
+      }
       const states = new Map([...current.querySelectorAll("details.stack-group")].map(group => [group.dataset.project, group.open]));
       initGroups(next, states);
+      const expanded = new Set([...current.querySelectorAll(".secondary-actions[open]")].map(item => item.closest("form").elements.id.value));
+      for (const item of next.querySelectorAll(".secondary-actions")) item.open = expanded.has(item.closest("form").elements.id.value);
+      const scopes = new Map([...current.querySelectorAll('select[name="scope"]')].map(select => [select.form.elements.id.value, select.value]));
+      for (const select of next.querySelectorAll('select[name="scope"]')) {
+        if ([...select.options].some(option => option.value === scopes.get(select.form.elements.id.value))) select.value = scopes.get(select.form.elements.id.value);
+      }
+      const focusedStack = document.activeElement.closest("summary.stack-summary")?.parentElement.dataset.project;
       setBuildCommit("agent", next.dataset.agentCommit);
       setBuildCommit("ui", next.dataset.uiCommit);
       current.replaceWith(next);
+      if (focusedStack !== undefined) next.querySelector(`details.stack-group[data-project="${CSS.escape(focusedStack)}"] > summary`)?.focus({ preventScroll: true });
       setMessage("Operation " + operation.dataset.status + ". Inventory refreshed.");
     } catch {
       if (!submitting) setBuildCommit("agent", "unavailable");

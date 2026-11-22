@@ -45,7 +45,7 @@ func TestCleanupFormsAndSubmission(t *testing.T) {
 			r := formRequest(a, cookie, "/action", url.Values{"host": {"pi"}, "kind": {kind}, "id": {"unused"}, "operation": {"delete-unused"}, "confirmed": {"yes"}})
 			r.URL.Path = a.withBase("/action")
 			a.routes().ServeHTTP(w, r)
-			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != a.withBase("/")+"?host=pi&job=presentation-job" {
+			if w.Code != http.StatusSeeOther || w.Header().Get("Location") != a.withBase("/")+"?host=pi&view=cleanup&job=presentation-job" {
 				t.Fatalf("cleanup redirect: %d %s", w.Code, w.Body.String())
 			}
 			got := <-actions

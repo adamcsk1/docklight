@@ -14,7 +14,7 @@ import (
 	"time"
 )
 
-func TestSlowMaintenanceVerificationWaitsThenSubmitsAction(t *testing.T) {
+func TestSlowMaintenanceVerificationDoesNotDelayAction(t *testing.T) {
 	a, agents, _ := maintenanceApp(t)
 	cookie := session(t, a)
 	entered, release := make(chan struct{}), make(chan struct{})
@@ -84,11 +84,11 @@ func TestSlowMaintenanceVerificationWaitsThenSubmitsAction(t *testing.T) {
 	}
 	select {
 	case <-actionDone:
-		t.Fatal("action completed while verification held the lock")
-	case <-time.After(100 * time.Millisecond):
+	case <-time.After(2 * time.Second):
+		t.Fatal("background verification delayed ordinary action")
 	}
-	if submissions.Load() != 0 {
-		t.Fatal("action reached agent before verification finished")
+	if submissions.Load() != 1 {
+		t.Fatal("action was not accepted independently of fleet verification")
 	}
 	releaseOnce.Do(func() { close(release) })
 	select {
@@ -112,7 +112,7 @@ func TestSlowMaintenanceVerificationWaitsThenSubmitsAction(t *testing.T) {
 	}
 }
 
-func TestActionWaitInterruptionDoesNotSubmit(t *testing.T) {
+func TestCanceledActionDoesNotSubmit(t *testing.T) {
 	for _, interruption := range []string{"timeout", "cancel"} {
 		t.Run(interruption, func(t *testing.T) {
 			a, actions := presentationApp(t)
@@ -123,11 +123,15 @@ func TestActionWaitInterruptionDoesNotSubmit(t *testing.T) {
 			var cancel context.CancelFunc
 			if interruption == "timeout" {
 				var ctx context.Context
-				ctx, cancel = context.WithTimeout(r.Context(), 100*time.Millisecond)
+				ctx, cancel = context.WithDeadline(r.Context(), time.Now().Add(-time.Second))
 				r = r.WithContext(ctx)
+				if ctx.Err() != context.DeadlineExceeded {
+					t.Fatal("deadline did not expire")
+				}
 			} else {
 				var ctx context.Context
 				ctx, cancel = context.WithCancel(r.Context())
+				cancel()
 				r = r.WithContext(ctx)
 			}
 			defer cancel()
@@ -158,9 +162,6 @@ func TestActionWaitInterruptionDoesNotSubmit(t *testing.T) {
 			case <-entered:
 			case <-time.After(5 * time.Second):
 				t.Fatal("action never reached server")
-			}
-			if interruption == "cancel" {
-				cancel()
 			}
 			select {
 			case <-done:
@@ -203,8 +204,8 @@ func TestMaintenanceVerificationBusyKeepsDashboard(t *testing.T) {
 			r.AddCookie(cookie)
 			w = httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
-			if w.Code != http.StatusServiceUnavailable || w.Header().Get("Retry-After") != "3" {
-				t.Fatalf("busy inventory not retryable: %d %v", w.Code, w.Header())
+			if w.Code != http.StatusOK {
+				t.Fatalf("background verification blocked read-only inventory: %d %v", w.Code, w.Header())
 			}
 			for _, values := range []url.Values{
 				{"kind": {"container"}, "id": {"stopped-id"}, "operation": {"start"}},

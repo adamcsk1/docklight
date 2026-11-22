@@ -8,6 +8,7 @@
 {{end}}
 
 {{define "csrf"}}<input type="hidden" name="csrf_token" value="{{.CSRF}}">{{end}}
+{{define "request_id"}}<input type="hidden" name="request_id" value="{{newRequestID}}">{{end}}
 
 {{define "layout_start"}}
 <!doctype html>
@@ -18,11 +19,9 @@
   <header class="topbar">
     <a class="brand" href="{{.Base}}/?host={{.HostID}}">Docklight</a>
     <nav class="nav" aria-label="Main navigation">
-      <a href="#containers">containers</a>
-      <a href="#images">images</a>
-      <a href="#volumes">volumes</a>
-      <a href="#networks">networks</a>
-      {{if and .Master (not .Blocked)}}<a href="#maintenance">maintenance</a>{{end}}
+      <a href="{{.Base}}/?host={{.HostID}}" {{if not .View}}aria-current="page"{{end}}>containers</a>
+      <a href="{{.Base}}/?host={{.HostID}}&amp;view=cleanup" {{if eq .View "cleanup"}}aria-current="page"{{end}}>cleanup</a>
+      {{if and .Master (not .Blocked)}}<a href="{{.Base}}/?host={{.HostID}}&amp;view=maintenance" {{if eq .View "maintenance"}}aria-current="page"{{end}}>maintenance</a>{{end}}
     </nav>
     <form method="post" action="{{.Base}}/logout">
       {{template "csrf" .}}
@@ -31,9 +30,10 @@
   </header>
   <main class="page" id="main">
     <section class="page-head">
-      <div><p class="eyebrow">docker host management</p><h1>Containers</h1><p class="metric-line">{{len .Inventory.Containers}} containers · {{len .Inventory.Resources}} resources</p></div>
+      <div><p class="eyebrow">docker host management</p><h1>{{.Title}}</h1><p class="metric-line">{{len .Inventory.Containers}} containers · {{len .Inventory.Resources}} resources</p></div>
       <form class="host-form" method="get" action="{{.Base}}/">
         <label for="host">Docker host</label>
+        {{if .View}}<input type="hidden" name="view" value="{{.View}}">{{end}}
         <div class="host-controls">
           <select id="host" name="host">{{range .Hosts}}<option value="{{.ID}}" {{if eq $.HostID .ID}}selected{{end}}>{{.Name}}</option>{{end}}</select>
           <button class="button button-primary" type="submit">Reconnect</button>

@@ -26,6 +26,9 @@ type App struct {
 	loginMu        sync.Mutex
 	logins         map[string]loginAttempt
 	maintenanceMu  sync.Mutex
+	verificationMu sync.RWMutex
+	verification   masterView
+	verifiedAt     time.Time
 	coordinator    string
 	masterConflict string
 }
