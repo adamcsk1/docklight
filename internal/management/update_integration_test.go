@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Run only against the explicitly named disposable DinD container and daemon.
@@ -175,6 +177,139 @@ volumes:
 			time.Sleep(250 * time.Millisecond)
 		}
 	}
+	uiRequest := func(path, body, cookie string) (string, error) {
+		return integrationUIRequest(host, path, body, cookie)
+	}
+	t.Run("ordinary-upgrade-ui-crash", func(t *testing.T) {
+		copyFile("Dockerfile", "FROM alpine:3.24\nLABEL docklight.recovery.version=one\n")
+		tag := "localhost:5000/docklight-recovery:latest"
+		if b, err := local("exec", outer, "docker", "build", "-t", tag, root); err != nil {
+			t.Fatal(b, err)
+		}
+		must("push", tag)
+		events := root + "/recovery-events-" + uuid.NewString()
+		copyFile("recovery.yml", fmt.Sprintf(`services:
+  web:
+    image: %s
+    command: [sh, -c, 'echo started >> /events/starts; exec sleep 3600']
+    volumes: [%s:/events]
+`, tag, events))
+		composeApp := []string{"exec", outer, "docker", "compose", "-p", "docklight-recovery", "-f", root + "/recovery.yml"}
+		if b, err := local(append(composeApp, "up", "-d")...); err != nil {
+			t.Fatal(b, err)
+		}
+		t.Cleanup(func() { _, _ = local(append(composeApp, "down", "-v")...) })
+		before := must("ps", "--no-trunc", "-q", "--filter", "label=com.docker.compose.project=docklight-recovery")
+		oldImage := must("inspect", "--format", "{{.Image}}", before)
+		copyFile("Dockerfile", "FROM alpine:3.24\nLABEL docklight.recovery.version=two\n")
+		if b, err := local("exec", outer, "docker", "build", "-t", tag, root); err != nil {
+			t.Fatal(b, err)
+		}
+		must("push", tag)
+		newImage := must("image", "inspect", "--format", "{{.Id}}", tag)
+		if newImage == oldImage {
+			t.Fatal("fixture image did not change")
+		}
+		cookiePattern := regexp.MustCompile(`Set-Cookie: docklight_session=([^;\s]+)`)
+		csrfPattern := regexp.MustCompile(`name="csrf_token" value="([^"]+)"`)
+		var cookie string
+		deadline := time.Now().Add(time.Minute)
+		for time.Now().Before(deadline) {
+			body, err := uiRequest("/login", "password=test-password", "")
+			if match := cookiePattern.FindStringSubmatch(body); err == nil && len(match) == 2 {
+				cookie = match[1]
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if cookie == "" {
+			t.Fatal("UI login unavailable")
+		}
+		body, err := uiRequest("/?host=local", "", cookie)
+		if err != nil {
+			t.Fatal(body, err)
+		}
+		csrf := csrfPattern.FindStringSubmatch(body)
+		if len(csrf) != 2 {
+			t.Fatal("missing CSRF token")
+		}
+		// Hold real Compose pull at the registry until the UI process has been killed.
+		must("pause", "docklight-e2e-registry")
+		t.Cleanup(func() { _, _ = remote("unpause", "docklight-e2e-registry") })
+		id := uuid.NewString()
+		form := url.Values{"csrf_token": {csrf[1]}, "host": {"local"}, "kind": {"container"}, "id": {before}, "operation": {"upgrade"}, "scope": {"service"}, "request_id": {id}}
+		body, err = uiRequest("/action", form.Encode(), cookie)
+		if err != nil || !strings.Contains(body, "job="+id) {
+			t.Fatalf("acceptance: %s %v", body, err)
+		}
+		job := Job{}
+		deadline = time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			body, err = request("/v1/jobs/"+id, "")
+			if err == nil && json.Unmarshal([]byte(body), &job) == nil && strings.Contains(job.Output, "upgrade selected Compose services: web") {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if job.Status != "running" || !strings.Contains(job.Output, "upgrade selected Compose services: web") {
+			t.Fatalf("upgrade did not reach pull: %+v", job)
+		}
+		agentID := must("inspect", "--format", "{{.Id}}", "docklight-e2e-agent")
+		must("kill", "--signal", "KILL", "docklight-e2e-ui")
+		t.Cleanup(func() { _, _ = remote("start", "docklight-e2e-ui") })
+		if must("inspect", "--format", "{{.State.Running}}", "docklight-e2e-ui") != "false" {
+			t.Fatal("UI was not killed")
+		}
+		must("unpause", "docklight-e2e-registry")
+		deadline = time.Now().Add(90 * time.Second)
+		for time.Now().Before(deadline) {
+			body, err = request("/v1/jobs/"+id, "")
+			if err == nil && json.Unmarshal([]byte(body), &job) == nil && (job.Status == "success" || job.Status == "failed") {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if job.Status != "success" {
+			t.Fatalf("upgrade failed while UI dead: %+v (%v)", job, err)
+		}
+		if must("inspect", "--format", "{{.State.Running}}", "docklight-e2e-ui") != "false" {
+			t.Fatal("UI restarted before completion")
+		}
+		after := must("ps", "--no-trunc", "-q", "--filter", "label=com.docker.compose.project=docklight-recovery")
+		if after == before || must("inspect", "--format", "{{.Image}}", after) != newImage {
+			t.Fatal("Compose did not deploy new container/image")
+		}
+		must("start", "docklight-e2e-ui")
+		deadline = time.Now().Add(30 * time.Second)
+		for time.Now().Before(deadline) {
+			body, err = uiRequest("/?host=local", "", cookie)
+			if err == nil && strings.Contains(body, `data-status="success"`) && strings.Contains(body, "job="+id) && strings.Contains(body, after) {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if err != nil || !strings.Contains(body, `data-status="success"`) || !strings.Contains(body, "job="+id) || !strings.Contains(body, after) {
+			t.Fatalf("UI did not restore durable session/job/inventory without job URL: %s %v", body, err)
+		}
+		body, err = uiRequest("/action", form.Encode(), cookie)
+		if err != nil || !strings.Contains(body, "job="+id) {
+			t.Fatalf("replayed acceptance: %s %v", body, err)
+		}
+		var replay Job
+		body, err = request("/v1/jobs/"+id, "")
+		if err != nil || json.Unmarshal([]byte(body), &replay) != nil || replay != job {
+			t.Fatalf("replay changed completed job: before=%+v after=%+v (%v)", job, replay, err)
+		}
+		if got := must("exec", after, "sh", "-c", "wc -l < /events/starts"); got != "2" {
+			t.Fatalf("expected initial start and one replacement, got %q", got)
+		}
+		if got := must("exec", "docklight-e2e-agent", "sh", "-c", "find /data -name 'job-*.json' | wc -l"); got != "1" {
+			t.Fatalf("replay created extra job files: %s", got)
+		}
+		if must("inspect", "--format", "{{.Id}}", "docklight-e2e-agent") != agentID {
+			t.Fatal("agent restarted during UI-only outage")
+		}
+	})
 	t.Run("image-health-checks", func(t *testing.T) {
 		type healthConfig struct {
 			Test                           []string
@@ -346,65 +481,6 @@ volumes:
 		}
 		waitHealthy(t, must, "docklight-e2e-ui", "docklight-e2e-other-ui", "docklight-e2e-agent")
 		waitHealthy(t, remoteMust, remoteID("agent"), remoteID("ui"))
-		uiRequest := func(path, body, cookie string) (string, error) {
-			method := "GET"
-			if body != "" {
-				method = "POST"
-			}
-			req, err := http.NewRequest(method, "http://docklight-e2e-ui:8080"+path, strings.NewReader(body))
-			if err != nil {
-				return "", err
-			}
-			req.Header.Set("Origin", "http://docklight-e2e-ui:8080")
-			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			req.Close = true
-			if cookie != "" {
-				req.AddCookie(&http.Cookie{Name: "docklight_session", Value: cookie})
-			}
-			var wire bytes.Buffer
-			if err := req.Write(&wire); err != nil {
-				return "", err
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-			defer cancel()
-			cmd := exec.CommandContext(ctx, "docker", "--host", host, "exec", "-i", "docklight-e2e-agent", "nc", "-w", "40", "docklight-e2e-ui", "8080")
-			// Keep stdin open until the HTTP response closes the connection. EOF here
-			// would half-close nc and cancel the UI request's context during preflight.
-			input, err := cmd.StdinPipe()
-			if err != nil {
-				return "", err
-			}
-			defer input.Close()
-			output, err := cmd.StdoutPipe()
-			if err != nil {
-				return "", err
-			}
-			if err = cmd.Start(); err != nil {
-				return "", err
-			}
-			if _, err = io.Copy(input, &wire); err != nil {
-				_ = cmd.Wait()
-				return "", err
-			}
-			res, err := http.ReadResponse(bufio.NewReader(output), req)
-			if err != nil {
-				_ = input.Close()
-				_ = cmd.Wait()
-				return "", err
-			}
-			defer res.Body.Close()
-			content, err := io.ReadAll(res.Body)
-			_ = input.Close()
-			_ = cmd.Wait()
-			if err != nil {
-				return string(content), err
-			}
-			text := "Set-Cookie: " + res.Header.Get("Set-Cookie") + "\n" + string(content)
-			if res.StatusCode >= 400 {
-				return text, fmt.Errorf("UI HTTP %d", res.StatusCode)
-			}
-			return text, nil
-		}
 		cookiePattern := regexp.MustCompile(`Set-Cookie: docklight_session=([^;\s]+)`)
 		csrfPattern := regexp.MustCompile(`name="csrf_token" value="([^"]+)"`)
 		var cookie string
@@ -424,7 +500,7 @@ volumes:
 			logs, _ := remote("logs", "--tail", "30", "docklight-e2e-ui")
 			t.Fatalf("maintenance UI did not start/login: %s\n%s", lastLogin, logs)
 		}
-		body, err := uiRequest("/?host=local", "", cookie)
+		body, err := uiRequest("/?host=local&view=maintenance", "", cookie)
 		if err != nil {
 			t.Fatal(body, err)
 		}
@@ -459,7 +535,7 @@ volumes:
 		}
 		deadline = time.Now().Add(3 * time.Minute)
 		for time.Now().Before(deadline) {
-			body, err = uiRequest("/?host=local", "", cookie)
+			body, err = uiRequest("/?host=local&view=maintenance", "", cookie)
 			if err == nil && strings.Contains(body, "All agents and UIs verified.") {
 				break
 			}
@@ -483,6 +559,66 @@ volumes:
 			t.Fatalf("lost registration or leaked lock: %s %v", body, err)
 		}
 	})
+}
+
+func integrationUIRequest(host, path, body, cookie string) (string, error) {
+	method := "GET"
+	if body != "" {
+		method = "POST"
+	}
+	req, err := http.NewRequest(method, "http://docklight-e2e-ui:8080"+path, strings.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Origin", "http://docklight-e2e-ui:8080")
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Close = true
+	if cookie != "" {
+		req.AddCookie(&http.Cookie{Name: "docklight_session", Value: cookie})
+	}
+	var wire bytes.Buffer
+	if err := req.Write(&wire); err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", "--host", host, "exec", "-i", "docklight-e2e-agent", "nc", "-w", "40", "docklight-e2e-ui", "8080")
+	// Keep stdin open until the HTTP response closes; EOF would cancel UI preflight.
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		return "", err
+	}
+	defer input.Close()
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	if _, err := io.Copy(input, &wire); err != nil {
+		_ = input.Close()
+		_ = cmd.Wait()
+		return "", err
+	}
+	res, err := http.ReadResponse(bufio.NewReader(output), req)
+	if err != nil {
+		_ = input.Close()
+		_ = cmd.Wait()
+		return "", err
+	}
+	defer res.Body.Close()
+	content, err := io.ReadAll(res.Body)
+	_ = input.Close()
+	_ = cmd.Wait()
+	if err != nil {
+		return string(content), err
+	}
+	text := "Set-Cookie: " + res.Header.Get("Set-Cookie") + "\nLocation: " + res.Header.Get("Location") + "\n" + string(content)
+	if res.StatusCode >= 400 {
+		return text, fmt.Errorf("UI HTTP %d", res.StatusCode)
+	}
+	return text, nil
 }
 
 func envTest(key, fallback string) string {

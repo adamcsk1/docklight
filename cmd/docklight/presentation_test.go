@@ -73,6 +73,8 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 			actions <- action
 			w.WriteHeader(http.StatusAccepted)
 			_ = json.NewEncoder(w).Encode(management.Job{ID: "presentation-job"})
+		case r.URL.Path == "/v1/jobs/current":
+			_ = json.NewEncoder(w).Encode(nil)
 		case r.URL.Path == "/v1/jobs":
 			t.Error("dashboard requested removed operation history")
 			http.Error(w, "history removed", http.StatusMethodNotAllowed)

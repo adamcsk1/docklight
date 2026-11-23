@@ -98,6 +98,7 @@ func (s *Server) Handler() http.Handler {
 	})
 	mux.HandleFunc("GET /v1/inventory", s.inventory)
 	mux.HandleFunc("POST /v1/jobs", s.submit)
+	mux.HandleFunc("GET /v1/jobs/current", s.currentJob)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.job)
 	mux.HandleFunc("GET /v1/maintenance", s.maintenanceInfo)
 	mux.HandleFunc("POST /v1/maintenance", s.maintenanceAction)
@@ -237,13 +238,22 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Lock()
 	owner, run, jobID := r.Header.Get("X-Docklight-Coordinator"), r.Header.Get("X-Docklight-Run"), r.Header.Get("X-Docklight-Job")
+	requestID := r.Header.Get("X-Docklight-Request")
+	if requestID != "" {
+		if !validUUID(requestID) || jobID != "" || run != "" {
+			s.mu.Unlock()
+			http.Error(w, "invalid operation request identity", 400)
+			return
+		}
+		jobID = requestID
+	}
 	if err := s.authorizeMaintenance(owner, run); err != nil {
 		s.mu.Unlock()
 		http.Error(w, err.Error(), 409)
 		return
 	}
 	if jobID != "" {
-		if !validUUID(jobID) || run == "" {
+		if !validUUID(jobID) || run == "" && requestID == "" {
 			s.mu.Unlock()
 			http.Error(w, "invalid maintenance job identity", 400)
 			return
@@ -305,7 +315,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	j := &storedJob{Job: Job{ID: uuid.NewString(), Action: a, Status: "running", Started: time.Now().UTC().Format(time.RFC3339)}}
+	j := &storedJob{Job: Job{ID: uuid.NewString(), Action: a, Status: "running", Started: time.Now().UTC().Format(time.RFC3339Nano)}}
 	if jobID != "" {
 		j.ID, j.Coordinator, j.Run = jobID, owner, run
 	}
@@ -392,7 +402,8 @@ func (s *Server) prune() {
 			done = append(done, j)
 		}
 	}
-	sort.Slice(done, func(i, j int) bool { return done[i].Started > done[j].Started })
+	sort.Slice(done, func(i, j int) bool { return newerJob(done[i].Job, done[j].Job) })
+	// shortcut: replay protection ends when jobs are pruned; add tombstones for a longer replay horizon.
 	for _, j := range done[min(100, len(done)):] {
 		if j.Run != "" && j.Run == s.maintenance.Run {
 			continue
@@ -416,4 +427,33 @@ func (s *Server) job(w http.ResponseWriter, r *http.Request) {
 	result := j.Job
 	s.mu.Unlock()
 	writeJSON(w, result)
+}
+
+// currentJob restores the operation panel without browser or UI-process state.
+func (s *Server) currentJob(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	var selected *storedJob
+	active := func(j *storedJob) bool { return j.Status == "running" || j.Status == "updating" }
+	for _, j := range s.jobs {
+		if selected == nil || active(j) && !active(selected) || active(j) == active(selected) && newerJob(j.Job, selected.Job) {
+			selected = j
+		}
+	}
+	var id string
+	if selected != nil {
+		id = selected.ID
+	}
+	s.mu.Unlock()
+	if id == "" {
+		writeJSON(w, nil)
+		return
+	}
+	r.SetPathValue("id", id)
+	s.job(w, r)
+}
+
+func newerJob(a, b Job) bool {
+	first, _ := time.Parse(time.RFC3339Nano, a.Started)
+	second, _ := time.Parse(time.RFC3339Nano, b.Started)
+	return first.After(second) || first.Equal(second) && a.ID > b.ID
 }

@@ -62,7 +62,7 @@ func TestDockerfileImageHealthchecks(t *testing.T) {
 		if strings.HasPrefix(line, "FROM ") {
 			stage = ""
 			if i := strings.LastIndex(line, " AS "); i >= 0 {
-				stage = line[i+4:]
+				stage = strings.TrimSpace(line[i+4:])
 			}
 		}
 		if strings.HasPrefix(line, "HEALTHCHECK ") {

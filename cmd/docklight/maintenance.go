@@ -79,15 +79,13 @@ func (app *App) populateMaintenance(r *http.Request, d *PageData) {
 		return
 	}
 	d.Master = d.HostID == master.ID
-	v := masterView{Errors: map[string]string{}}
-	if app.maintenanceMu.TryLock() {
-		ctx, cancel := context.WithTimeout(r.Context(), maintenanceVerificationTimeout+5*time.Second)
-		v = app.checkMaster(ctx, false)
-		cancel()
-		app.maintenanceMu.Unlock()
-		d.MaintenanceError, d.Blocked, d.MaintenanceCanSkip = v.Error, v.Conflict, v.OfflineOnly
-	} else {
-		d.MaintenanceError = "Maintenance verification in progress; status unavailable until next refresh"
+	app.verificationMu.RLock()
+	v, checked := app.verification, app.verifiedAt
+	app.verificationMu.RUnlock()
+	d.MaintenanceError, d.Blocked, d.MaintenanceCanSkip = v.Error, v.Conflict, v.OfflineOnly
+	if !checked.IsZero() {
+		d.MaintenanceChecked = checked.UTC().Format(time.RFC3339)
+		d.MaintenanceStale = time.Since(checked) > time.Minute
 	}
 	var conflict string
 	if err := app.db.QueryRow(`SELECT value FROM maintenance WHERE key='conflict'`).Scan(&conflict); err == nil {
@@ -109,8 +107,8 @@ func (app *App) populateMaintenance(r *http.Request, d *PageData) {
 	for _, h := range app.cfg.Hosts {
 		_, online := v.Infos[h.ID]
 		detail := v.Errors[h.ID]
-		if !online && detail == "" {
-			detail = "Verification in progress; status unavailable"
+		if !online && detail == "" && !checked.IsZero() {
+			detail = "Status unavailable"
 		}
 		frozen := run != nil && run.Status != "success"
 		checked := !frozen || selectedHost(run.Selected, h.ID)
@@ -122,31 +120,20 @@ func (app *App) allowManagement(w http.ResponseWriter, r *http.Request) bool {
 	if app.masterHost() == nil {
 		return true
 	}
-	if !app.maintenanceMu.TryLock() {
-		if r.Method != http.MethodPost {
-			w.Header().Set("Retry-After", "3")
-			http.Error(w, "maintenance verification in progress; retry shortly", http.StatusServiceUnavailable)
-			return false
-		}
-		// Mutations wait for verification instead of rejecting on slow hosts.
-		for !app.maintenanceMu.TryLock() {
-			select {
-			case <-r.Context().Done():
-				http.Error(w, "maintenance verification interrupted; no operation was submitted", http.StatusServiceUnavailable)
-				return false
-			case <-time.After(100 * time.Millisecond):
-			}
-		}
-	}
-	defer app.maintenanceMu.Unlock()
 	if r.Context().Err() != nil {
 		http.Error(w, "maintenance verification interrupted; no operation was submitted", http.StatusServiceUnavailable)
 		return false
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	v := app.checkMaster(ctx, false)
-	if v.Conflict {
+	var conflict string
+	err := app.db.QueryRowContext(r.Context(), `SELECT value FROM maintenance WHERE key='conflict'`).Scan(&conflict)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "cannot verify durable conflict state", 503)
+		return false
+	}
+	app.verificationMu.RLock()
+	knownConflict := app.verification.Conflict
+	app.verificationMu.RUnlock()
+	if err == nil || knownConflict {
 		http.Error(w, "Master conflict: management blocked. Reconnect for details.", 409)
 		return false
 	}
@@ -155,6 +142,8 @@ func (app *App) allowManagement(w http.ResponseWriter, r *http.Request) bool {
 		http.Error(w, "maintenance active or state unavailable", 409)
 		return false
 	}
+	// The agent checks ownership and host reservations atomically with job acceptance.
+	// Background fleet discovery must not serialize unrelated host operations.
 	return true
 }
 
@@ -291,6 +280,11 @@ func (app *App) checkMasterSkipping(ctx context.Context, discovery bool, skipOff
 
 func (app *App) checkMasterSelected(ctx context.Context, discovery bool, skipOffline map[string]bool, selected []string) masterView {
 	v := masterView{Infos: map[string]management.MaintenanceInfo{}, Errors: map[string]string{}, Selected: selected}
+	defer func() {
+		app.verificationMu.Lock()
+		app.verification, app.verifiedAt = v, time.Now()
+		app.verificationMu.Unlock()
+	}()
 	master := app.masterHost()
 	if master == nil {
 		return v
@@ -720,7 +714,7 @@ func (app *App) maintenanceStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cannot persist maintenance run", 500)
 		return
 	}
-	http.Redirect(w, r, app.withBase("/")+"?host="+master.ID, http.StatusSeeOther)
+	http.Redirect(w, r, app.withBase("/")+"?host="+master.ID+"&view=maintenance", http.StatusSeeOther)
 }
 
 func (app *App) maintenanceLoop(ctx context.Context) {

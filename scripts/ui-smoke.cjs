@@ -29,6 +29,11 @@ const path = require("node:path");
         assert.equal(metrics.background, "rgb(8, 9, 11)");
         assert.equal(metrics.font, "monospace");
         assert.equal(metrics.inlineContent, 0);
+        if (metrics.width <= 672) {
+          for (const control of await page.locator(".button:visible, .nav a:visible").all()) {
+            assert((await control.boundingBox()).height >= 44, "mobile touch control smaller than 44px");
+          }
+        }
       };
       await page.goto(`${base}/login`);
       await assertLayout();
@@ -81,18 +86,21 @@ const path = require("node:path");
       }
       await assertLayout();
       assert.equal(await page.locator("details.stack-group[open]").count(), 0);
-      for (const group of await page.locator("details.stack-group").all()) await group.locator("summary").click();
-      for (const name of ["Containers in docklight", "Containers in web", "Standalone containers", "Images", "Volumes", "Networks"]) assert.equal(await page.getByRole("table", { name, exact: true }).count(), 1);
+      for (const group of await page.locator("details.stack-group").all()) await group.locator(":scope > summary").click();
+      for (const name of ["Containers in docklight", "Containers in web", "Standalone containers"]) assert.equal(await page.getByRole("table", { name, exact: true }).count(), 1);
+      assert.equal(await page.locator("#volumes").isVisible(), false, "cleanup should not crowd container screen");
       const webGroup = page.locator('details.stack-group[aria-label="Compose stack web"]');
-      assert((await webGroup.locator("summary").textContent()).includes("1 / 2 running"));
+      assert((await webGroup.locator(":scope > summary").textContent()).includes("1 / 2 running"));
       assert.equal(await webGroup.getByRole("row").count(), 3);
       assert.equal(await page.locator('#activity, [href="#activity"], .activity-list, .activity-item').count(), 0);
-      await webGroup.locator("summary").click();
+      await webGroup.locator(":scope > summary").click();
       assert.equal(await webGroup.evaluate(group => group.open), false);
       assert.equal(await webGroup.getByRole("row").count(), 0);
-      await webGroup.locator("summary").press("Space");
+      await webGroup.locator(":scope > summary").press("Space");
       assert.equal(await webGroup.evaluate(group => group.open), true);
       const row = name => page.getByRole("row").filter({ has: page.getByText(name, { exact: true }) });
+      assert.equal(await row("web-running").getByLabel("Target").isVisible(), true, "primary action target hidden behind secondary actions");
+      for (const summary of await page.locator(".secondary-actions > summary").all()) await summary.click();
       assert.equal(await row("web-running").getByRole("button", { name: "Delete stopped", exact: true }).isDisabled(), true);
       assert.equal(await row("docklight-agent").getByRole("button").count(), 1);
       assert.equal(await row("docklight-agent").getByRole("button", { name: "Update", exact: true }).count(), 1);
@@ -100,8 +108,6 @@ const path = require("node:path");
       assert.equal(await row("web-stopped").getByRole("button", { name: "Build", exact: true }).count(), 1);
       for (const name of ["web-running", "docklight-agent", "standalone"]) assert.equal(await row(name).getByRole("button", { name: "Build", exact: true }).count(), 0);
       assert((await webGroup.getByRole("row").filter({ has: page.getByText("web-running", { exact: true }) }).textContent()).includes("Build unavailable: Compose config unavailable"));
-      assert.equal(await row("used-volume").locator("form").count(), 0);
-      assert.equal(await row("bridge").locator("form").count(), 0);
       if (screenshots) {
         await page.screenshot({ path: path.join(screenshots, `${label}-${width}.png`) });
       }
@@ -110,7 +116,7 @@ const path = require("node:path");
       await page.getByRole("button", { name: "Reconnect", exact: true }).click();
       await page.waitForURL(`${base}/?host=pi`);
       assert.equal(await page.locator('[data-build-component="agent"]').textContent(), "bbbbbbb", "host switch retained old agent commit");
-      await webGroup.locator("summary").click();
+      await webGroup.locator(":scope > summary").click();
       await row("web-stopped").getByRole("button", { name: "Start", exact: true }).click();
       await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
       await assertLayout();
@@ -129,19 +135,26 @@ const path = require("node:path");
       await page.waitForURL(`${base}/?host=pi&job=presentation-job&output=hidden`);
       assert.equal(await page.getByLabel("Operation output").isVisible(), false);
       assert.equal(await page.getByRole("link", { name: "Show output", exact: true }).isVisible(), true);
-      await webGroup.locator("summary").click();
+      await webGroup.locator(":scope > summary").click();
+      await row("web-stopped").locator(".secondary-actions > summary").click();
       await row("web-stopped").getByRole("button", { name: "Build", exact: true }).click();
       await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
       assert.equal(await page.getByLabel("Operation output").isVisible(), true, "new operation must reopen output");
       // Required confirmation must stop an unchecked resource delete in the browser.
+      await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "cleanup", exact: true }).click();
+      for (const name of ["Images", "Volumes", "Networks"]) assert.equal(await page.getByRole("table", { name, exact: true }).count(), 1);
+      assert.equal(await row("used-volume").locator("form").count(), 0);
+      assert.equal(await row("bridge").locator("form").count(), 0);
       const unused = row("unused-volume");
       await unused.getByRole("button", { name: "Delete", exact: true }).click();
       assert.equal(await unused.getByRole("checkbox").evaluate(input => input.validity.valueMissing), true);
       await unused.getByRole("checkbox").check();
       await unused.getByRole("button", { name: "Delete", exact: true }).click();
-      await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
+      await page.waitForURL(`${base}/?host=pi&view=cleanup&job=presentation-job`);
+      assert.equal(await page.getByRole("heading", { level: 1 }).textContent(), "Cleanup");
       await assertLayout();
       for (const [kind, title] of [["image", "Images"], ["volume", "Volumes"], ["network", "Networks"]]) {
+        await page.goto(`${base}/?host=pi&view=cleanup`);
         const cleanup = page.getByRole("form", { name: `Remove all unused ${title}`, exact: true });
         assert((await cleanup.textContent()).includes("1 unused, unprotected"));
         if (kind === "volume") assert((await cleanup.textContent()).includes("Permanently delete all unused volumes and their data"));
@@ -149,17 +162,18 @@ const path = require("node:path");
         assert.equal(await cleanup.getByRole("checkbox").evaluate(input => input.validity.valueMissing), true);
         await cleanup.getByRole("checkbox").check();
         await cleanup.getByRole("button").click();
-        await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
+        await page.waitForURL(`${base}/?host=pi&view=cleanup&job=presentation-job`);
       }
-      for (const section of ["containers", "images", "networks"]) {
-        await page.getByRole("navigation").getByRole("link", { name: section, exact: true }).click();
-        await page.waitForURL(`${base}/?host=pi&job=presentation-job#${section}`);
+      await page.goto(`${base}/?host=pi&view=cleanup`);
+      for (const section of ["images", "networks"]) {
+        await page.getByRole("navigation", { name: "Cleanup sections" }).getByRole("link", { name: section, exact: false }).click();
+        await page.waitForURL(`${base}/?host=pi&view=cleanup#${section}`);
         const target = await page.locator(`#${section}`).boundingBox();
         const topbar = await page.locator(".topbar").boundingBox();
-        assert(target.y >= topbar.y + topbar.height, `navigation hides ${section} heading`);
+        assert(target.y >= topbar.y + topbar.height, `navigation hides ${section} heading: target=${JSON.stringify(target)}, topbar=${JSON.stringify(topbar)}`);
       }
-      await page.getByRole("navigation").getByRole("link", { name: "volumes", exact: true }).click();
-      await page.waitForURL(`${base}/?host=pi&job=presentation-job#volumes`);
+      await page.getByRole("navigation", { name: "Cleanup sections" }).getByRole("link", { name: "Volumes", exact: true }).click();
+      await page.waitForURL(`${base}/?host=pi&view=cleanup#volumes`);
       const section = await page.locator("#volumes").boundingBox();
       const bar = await page.locator(".topbar").boundingBox();
       assert(section.y >= bar.y + bar.height, "sticky navigation hides the section heading");
@@ -180,6 +194,7 @@ const path = require("node:path");
       await page.getByLabel("Docker host").selectOption("pi");
       await page.waitForURL(`${base}/?host=pi`);
       for (const title of ["Images", "Volumes", "Networks"]) {
+        await page.goto(`${base}/?host=pi&view=cleanup`);
         const cleanup = page.getByRole("form", { name: `Remove all unused ${title}`, exact: true });
         let submissions = 0;
         const count = request => { if (request.method() === "POST" && new URL(request.url()).pathname.endsWith("/action")) submissions++; };
@@ -191,7 +206,8 @@ const path = require("node:path");
         const response = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/action"));
         await cleanup.getByRole("button").click();
         await response;
-        await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
+        await page.waitForURL(`${base}/?host=pi&view=cleanup&job=presentation-job`);
+        assert.equal(await page.getByRole("heading", { level: 1 }).textContent(), "Cleanup");
         assert.equal(submissions, 1, "cleanup submitted more than once");
         page.off("request", count);
       }
@@ -225,35 +241,35 @@ const path = require("node:path");
         await page.reload();
         assert.equal(await web.evaluate(group => group.open), false, "invalid saved state must stay collapsed");
       }
-      await web.locator("summary").click();
+      await web.locator(":scope > summary").click();
       assert.equal(await web.evaluate(group => group.open), true);
       if (storageBlocked) {
         await page.reload();
         assert.equal(await web.evaluate(group => group.open), false);
-        await web.locator("summary").press("Space");
+        await web.locator(":scope > summary").press("Space");
         assert.equal(await web.evaluate(group => group.open), true, "blocked storage must not break native controls");
       } else {
         await waitStored("local", "web", "open");
         await page.reload();
         assert.equal(await web.evaluate(group => group.open), true, "expanded state was not restored");
         assert.equal(await agent.evaluate(group => group.open), false, "another stack inherited the expanded state");
-        await web.locator("summary").click();
+        await web.locator(":scope > summary").click();
         await waitStored("local", "web", "closed");
         await page.reload();
         assert.equal(await web.evaluate(group => group.open), false, "collapsed state was not restored");
-        await web.locator("summary").click();
+        await web.locator(":scope > summary").click();
         await waitStored("local", "web", "open");
         await page.getByLabel("Docker host").selectOption("pi");
         await page.waitForURL(`${base}/?host=pi`);
         assert.equal(await page.locator("details.stack-group[open]").count(), 0, "another host inherited saved stack state");
-        await agent.locator("summary").click();
+        await agent.locator(":scope > summary").click();
         await waitStored("pi", "docklight", "open");
         await page.getByLabel("Docker host").selectOption("local");
         await page.waitForURL(`${base}/?host=local`);
         assert.equal(await web.evaluate(group => group.open), true);
         assert.equal(await agent.evaluate(group => group.open), false);
         assert.equal(await standalone.evaluate(group => group.open), false);
-        await standalone.locator("summary").click();
+        await standalone.locator(":scope > summary").click();
         await waitStored("local", "", "open");
         const session = (await context.cookies()).find(cookie => cookie.name === "docklight_session").value;
         for (const width of [390, 1440]) {
@@ -310,13 +326,16 @@ const path = require("node:path");
         assert.equal(await page.getByLabel("Docker host").inputValue(), "pi", "host selection missing from GET submission");
         assert.equal(await page.getByRole("button", { name: "Reconnect", exact: true }).isEnabled(), true);
       }
-      const group = page.locator('details.stack-group[data-project="web"]');
-      await group.locator("summary").click();
+      await page.goto(`${base}/?host=pi&view=cleanup`);
       const deleteForm = page.getByRole("form", { name: "Delete volume unused-volume", exact: true });
       await deleteForm.getByRole("button", { name: "Delete", exact: true }).click();
       assert.equal(await deleteForm.getByRole("checkbox").evaluate(input => input.validity.valueMissing), true);
       assert.equal(await page.getByLabel("Docker host").isEnabled(), true, "invalid confirmation locked page controls");
+      await page.goto(`${base}/?host=pi`);
+      const group = page.locator('details.stack-group[data-project="web"]');
+      if (!(await group.evaluate(item => item.open))) await group.locator(":scope > summary").click();
       const form = page.getByRole("form", { name: "Actions for web-running", exact: true });
+      await form.locator(".secondary-actions > summary").click();
       await form.getByLabel("Target").selectOption("stack");
       await holdSubmission();
       const requests = [];
@@ -335,6 +354,7 @@ const path = require("node:path");
       assert(feedback.status.includes("Submitting Upgrade"), "slow submission has no immediate feedback");
       assert.equal(feedback.busy, "true");
       assert.equal(feedback.disabled, true);
+      assert.equal(await page.getByLabel("Docker host").isEnabled(), true, "submission blocked browsing another host");
       assert.equal(await page.evaluate(() => window.pendingSubmissions), 1, "duplicate submission reached native form handler");
       await Promise.all([page.waitForEvent("load"), page.evaluate(() => window.nativeSubmit.call(window.pendingForm))]);
       assert.equal(requests.length, 1, "duplicate submission reached server");
@@ -363,7 +383,7 @@ const path = require("node:path");
       let releaseInventory;
       let firstInventory = true;
       const inventoryGate = new Promise(resolve => { releaseInventory = resolve; });
-      await page.route(`${base}/inventory?host=pi`, async route => {
+      await page.route(`${base}/inventory?host=pi&view=`, async route => {
         if (firstInventory) { firstInventory = false; await inventoryGate; }
         await route.continue();
       });
@@ -392,7 +412,7 @@ const path = require("node:path");
       await output.evaluate(log => { log.scrollTop = 0; });
       await page.evaluate(() => { window.operationPageMarker = "unchanged"; });
       const web = page.locator('details.stack-group[data-project="web"]');
-      await web.locator("summary").click();
+      await web.locator(":scope > summary").click();
       await page.waitForFunction(() => document.querySelector(".operation-output").textContent.endsWith("running output"));
       assert((await page.locator("[data-operation-message]").textContent()).includes("two hours"), "poll discarded build timeout notice");
       assert.equal(await atEnd(), true, "new output not scrolled to end");
@@ -435,9 +455,9 @@ const path = require("node:path");
       assert.equal(await page.locator('details.stack-group[data-project=""]').count(), 1, "inventory failure wiped existing rows");
       await page.waitForFunction(() => document.querySelector("[data-inventory]").textContent.includes("web-updated"));
       for (const title of ["Volumes", "Networks"]) {
-        const cleanup = page.getByRole("form", { name: `Remove all unused ${title}`, exact: true });
-        assert.equal(await cleanup.getByRole("button").isDisabled(), true, "empty cleanup remained enabled after refresh");
-        assert.equal(await cleanup.getByRole("checkbox").isDisabled(), true);
+        const cleanup = page.getByRole("form", { name: `Remove all unused ${title}`, exact: true, includeHidden: true });
+        assert.equal(await cleanup.getByRole("button", { includeHidden: true }).isDisabled(), true, "empty cleanup remained enabled after refresh");
+        assert.equal(await cleanup.getByRole("checkbox", { includeHidden: true }).isDisabled(), true);
       }
       assert.equal(await page.locator('[data-build-component="agent"]').textContent(), "ccccccc", "inventory refresh did not update agent commit");
       assert.equal(inventoryRequests, 3, "completion must perform three bounded inventory checks");

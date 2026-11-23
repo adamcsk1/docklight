@@ -17,6 +17,7 @@ import (
 
 	"docklight/internal/buildinfo"
 	"docklight/internal/management"
+	"github.com/google/uuid"
 )
 
 type hostView struct{ ID, Name string }
@@ -37,6 +38,7 @@ type resourceSection struct {
 }
 type PageData struct {
 	Title, Error, CSRF, Base, HostID string
+	View                             string
 	UICommit, AgentCommit            string
 	Hosts                            []hostView
 	Inventory                        management.Inventory
@@ -48,6 +50,8 @@ type PageData struct {
 	Master                           bool
 	Maintenance                      *maintenanceRun
 	MaintenanceError                 string
+	MaintenanceChecked               string
+	MaintenanceStale                 bool
 	MaintenanceCanSkip               bool
 	MaintenanceHosts                 []maintenanceHostView
 	Blocked                          bool
@@ -97,7 +101,7 @@ func (app *App) withBase(path string) string {
 }
 func (app *App) loadTemplates() error {
 	var err error
-	app.templates, err = template.New("").Funcs(template.FuncMap{"shortCommit": shortCommit}).ParseFS(webFS, "templates/*.html")
+	app.templates, err = template.New("").Funcs(template.FuncMap{"shortCommit": shortCommit, "newRequestID": uuid.NewString}).ParseFS(webFS, "templates/*.html")
 	return err
 }
 
@@ -260,6 +264,9 @@ func (h *Host) request(r *http.Request, method, path string, body any, result an
 	if owner, ok := r.Context().Value(coordinatorContextKey{}).(string); ok {
 		req.Header.Set("X-Docklight-Coordinator", owner)
 	}
+	if id, ok := r.Context().Value(operationRequestKey{}).(string); ok {
+		req.Header.Set("X-Docklight-Request", id)
+	}
 	res, err := h.client.Do(req)
 	if err != nil {
 		return errors.New("agent unreachable or TLS verification failed")
@@ -292,15 +299,27 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	d := PageData{Title: "Containers", HostID: h.ID, HideOutput: r.URL.Query().Get("output") == "hidden"}
+	view := r.URL.Query().Get("view")
+	if view != "" && view != "cleanup" && view != "maintenance" {
+		http.Error(w, "unknown view", 400)
+		return
+	}
+	if view == "maintenance" {
+		if master := app.masterHost(); master == nil || master.ID != h.ID {
+			http.Redirect(w, r, app.withBase("/")+"?host="+url.QueryEscape(h.ID), http.StatusSeeOther)
+			return
+		}
+	}
+	d := PageData{Title: "Containers", HostID: h.ID, View: view, HideOutput: r.URL.Query().Get("output") == "hidden"}
+	if view == "cleanup" {
+		d.Title = "Cleanup"
+	} else if view == "maintenance" {
+		d.Title = "Maintenance"
+	}
 	for _, host := range app.cfg.Hosts {
 		d.Hosts = append(d.Hosts, hostView{host.ID, host.Name})
 	}
 	app.populateMaintenance(r, &d)
-	if d.Blocked {
-		app.render(w, r, "manage.html", d)
-		return
-	}
 	if id := r.URL.Query().Get("job"); id != "" {
 		if !validID(id) {
 			http.Error(w, "invalid job ID", 400)
@@ -311,6 +330,14 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			d.Error = err.Error()
 		} else {
 			d.Job = &job
+		}
+	} else {
+		// Older agents return 404; their explicit job links remain usable.
+		if err := h.request(r, "GET", "/v1/jobs/current", nil, &d.Job); err != nil {
+			var rejection *agentRejection
+			if !errors.As(err, &rejection) {
+				d.Error = "Operation status unavailable; reconnect before submitting another action"
+			}
 		}
 	}
 	// Read inventory after job status so a completed job cannot describe an earlier snapshot.
@@ -345,9 +372,6 @@ func (app *App) loadInventory(r *http.Request, h *Host, d *PageData) error {
 }
 
 func (app *App) inventory(w http.ResponseWriter, r *http.Request) {
-	if !app.allowManagement(w, r) {
-		return
-	}
 	hostID := r.URL.Query().Get("host")
 	if hostID == "" {
 		http.Error(w, "explicit host required", http.StatusBadRequest)
@@ -361,7 +385,8 @@ func (app *App) inventory(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 35*time.Second)
 	defer cancel()
 	r = r.WithContext(ctx)
-	d := PageData{HostID: h.ID}
+	d := PageData{HostID: h.ID, View: r.URL.Query().Get("view")}
+	app.populateMaintenance(r, &d)
 	if err = app.loadInventory(r, h, &d); err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -393,6 +418,8 @@ func (app *App) operation(w http.ResponseWriter, r *http.Request) {
 
 const actionTimeout = time.Minute - 5*time.Second
 
+type operationRequestKey struct{}
+
 func (app *App) action(w http.ResponseWriter, r *http.Request) {
 	if app.masterHost() != nil {
 		r = r.WithContext(context.WithValue(r.Context(), coordinatorContextKey{}, app.coordinator))
@@ -416,9 +443,22 @@ func (app *App) action(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), actionTimeout)
+	id := r.PostForm.Get("request_id")
+	if id == "" {
+		id = uuid.NewString()
+	}
+	if parsed, err := uuid.Parse(id); err != nil || parsed.String() != id {
+		http.Error(w, "invalid operation request identity", 400)
+		return
+	}
+	if r.Context().Err() != nil {
+		http.Error(w, "submission interrupted; no operation was submitted", 503)
+		return
+	}
+	// Once validated, finish acceptance even if navigation closes the browser request.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), actionTimeout)
 	defer cancel()
-	r = r.WithContext(ctx)
+	r = r.WithContext(context.WithValue(ctx, operationRequestKey{}, id))
 	if !app.allowManagement(w, r) {
 		return
 	}
@@ -437,5 +477,9 @@ func (app *App) action(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("submitted agent operation: host=%q kind=%q action=%q target=%q job=%q", h.ID, a.Kind, a.Operation, a.ID, j.ID)
-	http.Redirect(w, r, app.withBase("/")+"?host="+url.QueryEscape(h.ID)+"&job="+url.QueryEscape(j.ID), http.StatusSeeOther)
+	destination := app.withBase("/") + "?host=" + url.QueryEscape(h.ID)
+	if a.Kind != "container" {
+		destination += "&view=cleanup"
+	}
+	http.Redirect(w, r, destination+"&job="+url.QueryEscape(j.ID), http.StatusSeeOther)
 }
