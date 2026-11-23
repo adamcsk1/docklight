@@ -13,7 +13,7 @@ import (
 	"docklight/internal/management"
 )
 
-func presentationApp(t *testing.T) (*App, chan management.Action) {
+func presentationApp(t *testing.T, uniqueJobs ...bool) (*App, chan management.Action) {
 	t.Helper()
 	a := newTestApp(t)
 	actions := make(chan management.Action, 32)
@@ -72,7 +72,11 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 			}
 			actions <- action
 			w.WriteHeader(http.StatusAccepted)
-			_ = json.NewEncoder(w).Encode(management.Job{ID: "presentation-job"})
+			id := "presentation-job"
+			if len(uniqueJobs) > 0 && uniqueJobs[0] {
+				id = r.Header.Get("X-Docklight-Request")
+			}
+			_ = json.NewEncoder(w).Encode(management.Job{ID: id})
 		case r.URL.Path == "/v1/jobs/current":
 			_ = json.NewEncoder(w).Encode(nil)
 		case r.URL.Path == "/v1/jobs":
@@ -115,7 +119,7 @@ func presentationApp(t *testing.T) (*App, chan management.Action) {
 			}
 			_ = json.NewEncoder(w).Encode(management.Job{ID: strings.TrimPrefix(r.URL.Path, "/v1/jobs/"), Status: status, Action: management.Action{Kind: "container", Operation: "build"}, Output: output})
 		default:
-			_ = json.NewEncoder(w).Encode(management.Job{ID: "presentation-job", Status: "success", Output: strings.Repeat("long-output-without-spaces", 30) + "\n<script>not executable</script>"})
+			_ = json.NewEncoder(w).Encode(management.Job{ID: strings.TrimPrefix(r.URL.Path, "/v1/jobs/"), Status: "success", Output: strings.Repeat("long-output-without-spaces", 30) + "\n<script>not executable</script>"})
 		}
 	}))
 	t.Cleanup(agent.Close)
@@ -195,7 +199,7 @@ func TestBrowserPresentation(t *testing.T) {
 	}
 	for _, base := range []string{"/", "/docklight"} {
 		t.Run(base, func(t *testing.T) {
-			a, actions := presentationApp(t)
+			a, actions := presentationApp(t, true)
 			a.cfg.BaseURL = base
 			server := httptest.NewServer(a.routes())
 			defer server.Close()

@@ -138,15 +138,40 @@ if (operation) {
   window.addEventListener("pageshow", scrollToEnd);
   new ResizeObserver(scrollToEnd).observe(output);
   const reopen = document.querySelector("[data-operation-reopen]");
+  const acknowledgement = operation.querySelector("[data-operation-acknowledge]");
+  acknowledgement.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = acknowledgement.querySelector("button");
+    button.disabled = true;
+    try {
+      const response = await fetch(acknowledgement.action, { method: "POST", headers: { Accept: "application/json" }, body: new URLSearchParams(new FormData(acknowledgement)) });
+      if (response.redirected && new URL(response.url).pathname.endsWith("/login")) {
+        window.location.replace(response.url);
+        return;
+      }
+      if (response.status !== 204) throw new Error("Acknowledgement failed");
+      if (uiStatus.textContent.startsWith("Cannot confirm output acknowledgement.")) showStatus("");
+      operation.hidden = true;
+      reopen.hidden = false;
+      const destination = new URL(reopen.querySelector("a").href);
+      destination.searchParams.set("output", "hidden");
+      window.history.replaceState(null, "", destination);
+      reopen.querySelector("a").focus({ preventScroll: true });
+    } catch {
+      showStatus("Cannot confirm output acknowledgement. Output remains visible; try again.");
+    } finally {
+      button.disabled = false;
+    }
+  });
   for (const link of document.querySelectorAll("[data-operation-toggle]")) {
     link.addEventListener("click", event => {
       if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
       event.preventDefault();
-      operation.hidden = link.dataset.operationToggle === "hide";
-      reopen.hidden = !operation.hidden;
+      operation.hidden = false;
+      reopen.hidden = true;
       window.history.replaceState(null, "", link.href);
-      (operation.hidden ? reopen.querySelector("a") : operation.querySelector("[data-operation-toggle]")).focus({ preventScroll: true });
-      if (!operation.hidden) scrollToEnd();
+      operation.querySelector("button").focus({ preventScroll: true });
+      scrollToEnd();
     });
   }
   const active = status => status === "running" || status === "updating";

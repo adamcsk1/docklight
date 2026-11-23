@@ -35,6 +35,11 @@ const path = require("node:path");
           }
         }
       };
+      let jobID;
+      const waitForJob = async (view = "") => {
+        await page.waitForURL(url => url.searchParams.get("host") === "pi" && url.searchParams.get("job") && url.searchParams.get("job") !== jobID && (url.searchParams.get("view") || "") === view);
+        jobID = new URL(page.url()).searchParams.get("job");
+      };
       await page.goto(`${base}/login`);
       await assertLayout();
       const loginPanel = await page.locator(".login-panel").boundingBox();
@@ -118,12 +123,12 @@ const path = require("node:path");
       assert.equal(await page.locator('[data-build-component="agent"]').textContent(), "bbbbbbb", "host switch retained old agent commit");
       await webGroup.locator(":scope > summary").click();
       await row("web-stopped").getByRole("button", { name: "Start", exact: true }).click();
-      await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
+      await waitForJob();
       await assertLayout();
       assert((await page.getByLabel("Operation output").textContent()).includes("<script>not executable</script>"));
       const title = await page.locator("#operation-title").boundingBox();
       const status = await page.locator("[data-operation-status]").boundingBox();
-      const close = await page.getByRole("link", { name: "Close output", exact: true }).boundingBox();
+      const close = await page.getByRole("button", { name: "Acknowledge output", exact: true }).boundingBox();
       if (width >= 900) {
         assert(Math.abs(title.y + title.height / 2 - status.y - status.height / 2) <= 2, "operation title/status not vertically aligned");
         assert(status.x - title.x - title.width <= 25, "status pill separated from operation title");
@@ -131,14 +136,14 @@ const path = require("node:path");
       } else {
         assert(close.y >= Math.max(title.y + title.height, status.y + status.height), "mobile close control overlaps operation heading");
       }
-      await page.getByRole("link", { name: "Close output", exact: true }).click();
-      await page.waitForURL(`${base}/?host=pi&job=presentation-job&output=hidden`);
+      await page.getByRole("button", { name: "Acknowledge output", exact: true }).click();
+      await page.waitForURL(url => url.searchParams.get("job") === jobID && url.searchParams.get("output") === "hidden");
       assert.equal(await page.getByLabel("Operation output").isVisible(), false);
       assert.equal(await page.getByRole("link", { name: "Show output", exact: true }).isVisible(), true);
       await webGroup.locator(":scope > summary").click();
       await row("web-stopped").locator(".secondary-actions > summary").click();
       await row("web-stopped").getByRole("button", { name: "Build", exact: true }).click();
-      await page.waitForURL(`${base}/?host=pi&job=presentation-job`);
+      await waitForJob();
       assert.equal(await page.getByLabel("Operation output").isVisible(), true, "new operation must reopen output");
       // Required confirmation must stop an unchecked resource delete in the browser.
       await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "cleanup", exact: true }).click();
@@ -150,7 +155,7 @@ const path = require("node:path");
       assert.equal(await unused.getByRole("checkbox").evaluate(input => input.validity.valueMissing), true);
       await unused.getByRole("checkbox").check();
       await unused.getByRole("button", { name: "Delete", exact: true }).click();
-      await page.waitForURL(`${base}/?host=pi&view=cleanup&job=presentation-job`);
+      await waitForJob("cleanup");
       assert.equal(await page.getByRole("heading", { level: 1 }).textContent(), "Cleanup");
       await assertLayout();
       for (const [kind, title] of [["image", "Images"], ["volume", "Volumes"], ["network", "Networks"]]) {
@@ -162,7 +167,7 @@ const path = require("node:path");
         assert.equal(await cleanup.getByRole("checkbox").evaluate(input => input.validity.valueMissing), true);
         await cleanup.getByRole("checkbox").check();
         await cleanup.getByRole("button").click();
-        await page.waitForURL(`${base}/?host=pi&view=cleanup&job=presentation-job`);
+        await waitForJob("cleanup");
       }
       await page.goto(`${base}/?host=pi&view=cleanup`);
       for (const section of ["images", "networks"]) {
@@ -206,7 +211,7 @@ const path = require("node:path");
         const response = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname.endsWith("/action"));
         await cleanup.getByRole("button").click();
         await response;
-        await page.waitForURL(`${base}/?host=pi&view=cleanup&job=presentation-job`);
+        await page.waitForURL(url => url.searchParams.get("host") === "pi" && url.searchParams.get("view") === "cleanup" && url.searchParams.has("job"));
         assert.equal(await page.getByRole("heading", { level: 1 }).textContent(), "Cleanup");
         assert.equal(submissions, 1, "cleanup submitted more than once");
         page.off("request", count);
@@ -424,7 +429,8 @@ const path = require("node:path");
         const log = document.querySelector(".operation-output");
         return log.scrollHeight - log.clientHeight - log.scrollTop <= 2;
       }, null, { timeout: 1000 });
-      await page.getByRole("link", { name: "Close output", exact: true }).click();
+      await page.getByRole("button", { name: "Acknowledge output", exact: true }).click();
+      await page.waitForURL(url => url.searchParams.get("output") === "hidden");
       await page.waitForFunction(() => document.querySelector("[data-operation-message]").textContent.includes("Retrying automatically"));
       assert.equal(await page.locator("[data-ui-status]").isVisible(), true, "hidden output concealed connection feedback");
       assert((await page.locator("[data-ui-status]").textContent()).includes("Reconnecting to agent"));
@@ -435,14 +441,16 @@ const path = require("node:path");
       assert.equal(await output.locator("script").count(), 0, "polled output executed as markup");
       assert((await output.textContent()).includes("<script>not executable</script>"));
       assert.equal(navigations, 0, "running operation navigated page");
-      await page.getByRole("link", { name: "Close output", exact: true }).click();
+      await page.getByRole("button", { name: "Acknowledge output", exact: true }).click();
+      await page.waitForURL(url => url.searchParams.get("output") === "hidden");
       assert.equal(await output.isVisible(), false, "Close output did not hide panel");
       assert.equal(navigations, 0, "closing output navigated page");
       await page.getByRole("link", { name: "Show output", exact: true }).click();
       assert.equal(await output.isVisible(), true, "Show output did not restore panel");
       assert.equal(await atEnd(), true, "reopened output lost auto-scroll");
       assert.equal(navigations, 0, "reopening output navigated page");
-      await page.getByRole("link", { name: "Close output", exact: true }).click();
+      await page.getByRole("button", { name: "Acknowledge output", exact: true }).click();
+      await page.waitForURL(url => url.searchParams.get("output") === "hidden");
       await page.waitForFunction(status => document.querySelector("[data-operation-status]").textContent === status, terminal);
       assert.equal(navigations, 0, "completion must update inventory without page navigation");
       assert.equal(await output.isVisible(), false, "completion reopened dismissed panel");

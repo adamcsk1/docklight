@@ -495,7 +495,7 @@ func TestOperationProgressSurvivesHistoryRemoval(t *testing.T) {
 			if strings.Contains(body, "activity") || strings.Contains(body, "Activity") {
 				t.Fatal("activity feature still rendered")
 			}
-			if !strings.Contains(body, `data-operation-reopen hidden`) || !strings.Contains(body, `>Close output</a>`) {
+			if !strings.Contains(body, `data-operation-reopen hidden`) || !strings.Contains(body, `>Acknowledge output</button>`) {
 				t.Fatal("new operation must show output with close control")
 			}
 			r = httptest.NewRequest("GET", "https://docklight.local/docklight/?host=local&job=test-job&output=hidden", nil)
