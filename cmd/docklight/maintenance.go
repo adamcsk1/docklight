@@ -517,8 +517,21 @@ func (app *App) preflight(v masterView, previous *maintenanceRun) (*maintenanceR
 				blockers = append(blockers, fmt.Errorf("%s: invalid management target metadata", h.ID))
 				continue
 			}
-			if t.Error != "" || t.Service == "" || t.State != "running" || (t.Health != "" && t.Health != "healthy") {
-				blockers = append(blockers, fmt.Errorf("%s/%s: update target unavailable or unhealthy: %s", h.ID, t.Name, t.Error))
+			var reasons []string
+			if t.Error != "" {
+				reasons = append(reasons, t.Error)
+			}
+			if t.Service == "" {
+				reasons = append(reasons, "Compose service metadata missing")
+			}
+			if t.State != "running" {
+				reasons = append(reasons, fmt.Sprintf("container state=%q (expected running)", t.State))
+			}
+			if t.Health != "" && t.Health != "healthy" {
+				reasons = append(reasons, fmt.Sprintf("health=%q (expected healthy)", t.Health))
+			}
+			if len(reasons) != 0 {
+				blockers = append(blockers, fmt.Errorf("%s/%s: update target unavailable or unhealthy: %s", h.ID, t.Name, strings.Join(reasons, "; ")))
 			}
 			if t.Role == "agent" {
 				agents++

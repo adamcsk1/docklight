@@ -92,6 +92,8 @@ docker compose up -d --no-deps docklight docklight-agent
 
 Inspect health with `docker ps`, or see the current status and recent probe results with `docker inspect --format '{{json .State.Health}}' <container>`. A starting or unhealthy management service delays coordinated maintenance; a healthy result removes the earlier warning that application health could not be verified.
 
+If coordinated maintenance reports `update target unavailable or unhealthy`, the message lists each failing check: container state, health status, missing Compose service metadata, or the agent's update diagnostic. Inspect the named container on the affected host with `docker inspect --format '{{json .State}}' <container>`. Resolve the reported condition before retrying; `starting` is not yet healthy. A container without a health check remains eligible if the other checks pass. Missing Compose metadata requires checking the agent's mounted Compose files and environment, not disabling health checks.
+
 ## Removing unused resources
 
 Open **Cleanup** to manage Images, Volumes and Networks. Each provides **Remove all unused**, with a required confirmation checkbox. The count excludes protected resources and anything referenced by a container, including stopped containers. Empty cleanup controls are disabled. Cleanup applies only to the selected host and resource type; individual deletion remains available.
