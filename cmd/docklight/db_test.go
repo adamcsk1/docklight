@@ -23,6 +23,9 @@ func TestSessionAndMaintenanceDatabasePersistsAcrossRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	coordinator := a.coordinator
+	if _, err = db.Exec(`INSERT INTO output_acknowledgements VALUES('local','http://agent','job-1')`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err = db.Exec(`INSERT INTO sessions(id_hash,expires_at) VALUES(?,?)`, a.sessionIDHash("persisted"), time.Now().Add(time.Hour).Format(time.RFC3339)); err != nil {
 		db.Close()
 		t.Fatal(err)
@@ -47,8 +50,12 @@ func TestSessionAndMaintenanceDatabasePersistsAcrossRestart(t *testing.T) {
 		t.Fatal("session lost on restart")
 	}
 	var tables string
-	if err = db.QueryRow(`SELECT group_concat(name, ',') FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'`).Scan(&tables); err != nil || tables != "sessions,maintenance" {
+	if err = db.QueryRow(`SELECT group_concat(name, ',') FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'`).Scan(&tables); err != nil || tables != "sessions,maintenance,output_acknowledgements" {
 		t.Fatalf("unexpected database tables: %q %v", tables, err)
+	}
+	var acknowledgements int
+	if err = db.QueryRow(`SELECT COUNT(*) FROM output_acknowledgements WHERE host='local' AND endpoint='http://agent' AND job='job-1'`).Scan(&acknowledgements); err != nil || acknowledgements != 1 {
+		t.Fatalf("acknowledgement lost after restart: %d %v", acknowledgements, err)
 	}
 	files, err := os.ReadDir(filepath.Dir(path))
 	if err != nil {
@@ -100,6 +107,25 @@ func TestUnsupportedDatabaseIsRefusedWithoutChanges(t *testing.T) {
 				t.Fatal("unexpected automatic database migration or backup")
 			}
 		})
+	}
+}
+
+func TestAcknowledgementMigrationPreservesExistingState(t *testing.T) {
+	a := newTestApp(t)
+	cookie := session(t, a)
+	coordinator := a.coordinator
+	if _, err := a.db.Exec(`DROP TABLE output_acknowledgements`); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.initDB(); err != nil {
+		t.Fatal(err)
+	}
+	if !a.validSession(cookie.Value) || a.coordinator != coordinator {
+		t.Fatal("migration changed existing session or coordinator")
+	}
+	var count int
+	if err := a.db.QueryRow(`SELECT COUNT(*) FROM output_acknowledgements`).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("migration: %d %v", count, err)
 	}
 }
 

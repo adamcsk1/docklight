@@ -5,14 +5,20 @@
 {{end}}
 
 {{with .Job}}
-<p data-operation-reopen {{if not $.HideOutput}}hidden{{end}}><a class="button button-ghost" data-operation-toggle="show" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}{{if $.View}}&amp;view={{$.View}}{{end}}&amp;job={{.ID}}">Show output</a></p>
+<p data-operation-reopen {{if not $.HideOutput}}hidden{{end}}><a class="button button-ghost" data-operation-toggle="show" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}{{if $.View}}&amp;view={{$.View}}{{end}}&amp;job={{.ID}}&amp;output=shown">Show output</a></p>
 <section id="operation-panel" class="panel" aria-labelledby="operation-title" data-operation-url="{{$.Base}}/operation?host={{$.HostID}}&amp;job={{.ID}}" data-status="{{.Status}}" {{if $.HideOutput}}hidden{{end}}>
   <div class="operation-head">
     <div class="operation-heading">
       <h2 id="operation-title">{{.Action.Kind}} {{.Action.Operation}}</h2>
       <span class="badge badge-{{.Status}}" data-operation-status>{{.Status}}</span>
     </div>
-    <a class="button button-ghost" data-operation-toggle="hide" aria-controls="operation-panel" href="{{$.Base}}/?host={{$.HostID}}{{if $.View}}&amp;view={{$.View}}{{end}}&amp;job={{.ID}}&amp;output=hidden">Close output</a>
+    <form method="post" action="{{$.Base}}/operation/acknowledge" data-operation-acknowledge>
+      <input type="hidden" name="csrf_token" value="{{$.CSRF}}">
+      <input type="hidden" name="host" value="{{$.HostID}}">
+      <input type="hidden" name="view" value="{{$.View}}">
+      <input type="hidden" name="job" value="{{.ID}}">
+      <button class="button button-ghost" type="submit" aria-controls="operation-panel">Acknowledge output</button>
+    </form>
   </div>
   <p class="muted resource-break">{{.Started}} · target={{.Action.ID}}</p>
   <p class="form-hint" role="status" data-operation-message>{{if eq .Status "running"}}{{if eq .Action.Operation "build"}}Build running; other mutations on this host are blocked. Builds may take up to two hours.{{else}}Operation running.{{end}} Output updates every three seconds; inventory refreshes when finished.{{else if eq .Status "updating"}}Management update running. Reconnecting automatically if the agent briefly disconnects.{{end}}</p>

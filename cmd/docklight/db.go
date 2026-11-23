@@ -23,7 +23,7 @@ func (app *App) initDB() error {
 		return err
 	}
 	var unknown int
-	if err := app.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT IN ('sessions','maintenance')`).Scan(&unknown); err != nil {
+	if err := app.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT IN ('sessions','maintenance','output_acknowledgements')`).Scan(&unknown); err != nil {
 		return err
 	}
 	if unknown != 0 || columns != "id_hash,expires_at" {
@@ -39,6 +39,16 @@ func (app *App) initDB() error {
 	}
 	if maintenanceColumns != "key,value" {
 		return errors.New("unsupported maintenance database schema")
+	}
+	if _, err := app.db.Exec(`CREATE TABLE IF NOT EXISTS output_acknowledgements (host TEXT NOT NULL, endpoint TEXT NOT NULL, job TEXT NOT NULL, PRIMARY KEY(host,endpoint,job))`); err != nil {
+		return err
+	}
+	var acknowledgementColumns string
+	if err := app.db.QueryRow(`SELECT group_concat(name, ',') FROM pragma_table_info('output_acknowledgements')`).Scan(&acknowledgementColumns); err != nil {
+		return err
+	}
+	if acknowledgementColumns != "host,endpoint,job" {
+		return errors.New("unsupported output acknowledgement database schema")
 	}
 	if _, err := app.db.Exec(`INSERT OR IGNORE INTO maintenance(key,value) VALUES('coordinator',?)`, uuid.NewString()); err != nil {
 		return err

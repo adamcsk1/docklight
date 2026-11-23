@@ -213,6 +213,7 @@ func (app *App) routes() http.Handler {
 	mux.Handle("POST "+app.withBase("/logout"), app.requireAuth(http.HandlerFunc(app.logout)))
 	mux.Handle("GET "+app.withBase("/{$}"), app.requireAuth(http.HandlerFunc(app.dashboard)))
 	mux.Handle("GET "+app.withBase("/operation"), app.requireAuth(http.HandlerFunc(app.operation)))
+	mux.Handle("POST "+app.withBase("/operation/acknowledge"), app.requireAuth(http.HandlerFunc(app.acknowledgeOutput)))
 	mux.Handle("GET "+app.withBase("/inventory"), app.requireAuth(http.HandlerFunc(app.inventory)))
 	mux.Handle("POST "+app.withBase("/action"), app.requireAuth(http.HandlerFunc(app.action)))
 	mux.Handle("POST "+app.withBase("/maintenance"), app.requireAuth(http.HandlerFunc(app.maintenanceStart)))
@@ -340,11 +341,41 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	if d.Job != nil && r.URL.Query().Get("output") != "shown" {
+		var acknowledged bool
+		if err := app.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM output_acknowledgements WHERE host=? AND endpoint=? AND job=?)`, h.ID, h.URL, d.Job.ID).Scan(&acknowledged); err != nil {
+			http.Error(w, "cannot read output acknowledgement", http.StatusInternalServerError)
+			return
+		}
+		d.HideOutput = d.HideOutput || acknowledged
+	}
 	// Read inventory after job status so a completed job cannot describe an earlier snapshot.
 	if err = app.loadInventory(r, h, &d); err != nil {
 		d.Error = err.Error()
 	}
 	app.render(w, r, "manage.html", d)
+}
+
+func (app *App) acknowledgeOutput(w http.ResponseWriter, r *http.Request) {
+	h, err := app.host(r.FormValue("host"))
+	id, view := r.FormValue("job"), r.FormValue("view")
+	if err != nil || !validID(id) || (view != "" && view != "cleanup" && view != "maintenance") {
+		http.Error(w, "invalid output acknowledgement", http.StatusBadRequest)
+		return
+	}
+	if _, err := app.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO output_acknowledgements(host,endpoint,job) VALUES(?,?,?)`, h.ID, h.URL, id); err != nil {
+		http.Error(w, "cannot save output acknowledgement", http.StatusInternalServerError)
+		return
+	}
+	if r.Header.Get("Accept") == "application/json" {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	query := url.Values{"host": {h.ID}, "job": {id}, "output": {"hidden"}}
+	if view != "" {
+		query.Set("view", view)
+	}
+	http.Redirect(w, r, app.withBase("/")+"?"+query.Encode(), http.StatusSeeOther)
 }
 
 func (app *App) loadInventory(r *http.Request, h *Host, d *PageData) error {
