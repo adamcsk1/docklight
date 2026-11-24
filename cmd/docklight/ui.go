@@ -321,33 +321,35 @@ func (app *App) dashboard(w http.ResponseWriter, r *http.Request) {
 		d.Hosts = append(d.Hosts, hostView{host.ID, host.Name})
 	}
 	app.populateMaintenance(r, &d)
-	if id := r.URL.Query().Get("job"); id != "" {
-		if !validID(id) {
-			http.Error(w, "invalid job ID", 400)
-			return
-		}
-		var job management.Job
-		if err = h.request(r, "GET", "/v1/jobs/"+url.PathEscape(id), nil, &job); err != nil {
-			d.Error = err.Error()
+	if view != "maintenance" {
+		if id := r.URL.Query().Get("job"); id != "" {
+			if !validID(id) {
+				http.Error(w, "invalid job ID", 400)
+				return
+			}
+			var job management.Job
+			if err = h.request(r, "GET", "/v1/jobs/"+url.PathEscape(id), nil, &job); err != nil {
+				d.Error = err.Error()
+			} else {
+				d.Job = &job
+			}
 		} else {
-			d.Job = &job
-		}
-	} else {
-		// Older agents return 404; their explicit job links remain usable.
-		if err := h.request(r, "GET", "/v1/jobs/current", nil, &d.Job); err != nil {
-			var rejection *agentRejection
-			if !errors.As(err, &rejection) {
-				d.Error = "Operation status unavailable; reconnect before submitting another action"
+			// Older agents return 404; their explicit job links remain usable.
+			if err := h.request(r, "GET", "/v1/jobs/current", nil, &d.Job); err != nil {
+				var rejection *agentRejection
+				if !errors.As(err, &rejection) {
+					d.Error = "Operation status unavailable; reconnect before submitting another action"
+				}
 			}
 		}
-	}
-	if d.Job != nil && r.URL.Query().Get("output") != "shown" {
-		var acknowledged bool
-		if err := app.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM output_acknowledgements WHERE host=? AND endpoint=? AND job=?)`, h.ID, h.URL, d.Job.ID).Scan(&acknowledged); err != nil {
-			http.Error(w, "cannot read output acknowledgement", http.StatusInternalServerError)
-			return
+		if d.Job != nil && r.URL.Query().Get("output") != "shown" {
+			var acknowledged bool
+			if err := app.db.QueryRowContext(r.Context(), `SELECT EXISTS(SELECT 1 FROM output_acknowledgements WHERE host=? AND endpoint=? AND job=?)`, h.ID, h.URL, d.Job.ID).Scan(&acknowledged); err != nil {
+				http.Error(w, "cannot read output acknowledgement", http.StatusInternalServerError)
+				return
+			}
+			d.HideOutput = d.HideOutput || acknowledged
 		}
-		d.HideOutput = d.HideOutput || acknowledged
 	}
 	// Read inventory after job status so a completed job cannot describe an earlier snapshot.
 	if err = app.loadInventory(r, h, &d); err != nil {
