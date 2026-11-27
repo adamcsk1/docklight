@@ -19,13 +19,14 @@ import (
 	"github.com/google/uuid"
 )
 
-func imageUpdateApp(t *testing.T) (*App, *atomic.Int32) {
+func imageUpdateApp(t *testing.T, extra ...management.Container) (*App, *atomic.Int32) {
 	t.Helper()
 	a := newTestApp(t)
 	calls := &atomic.Int32{}
 	maintenance := &maintenanceAgent{info: management.MaintenanceInfo{Version: 1, HostID: "host-nas", State: management.MaintenanceState{NodeID: uuid.NewString()}}}
 	old := "sha256:" + strings.Repeat("a", 64)
 	containers := []management.Container{{ID: "one", Name: "web-1", Image: "registry.example/web:latest", ImageID: old, Project: "web", Service: "app", State: "running"}, {ID: "two", Name: "web-2", Image: "registry.example/web:latest", ImageID: old, Project: "web", Service: "app", State: "running"}}
+	containers = append(containers, extra...)
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if (r.Method != "GET" && !(r.Method == "POST" && r.URL.Path == "/v1/maintenance")) || r.Header.Get("Authorization") != "Bearer "+strings.Repeat("s", 32) {
 			t.Error("unauthenticated/mutating background request")
@@ -82,7 +83,7 @@ func TestImageUpdateUIUsesCacheAndCountsServices(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	a.render(w, r, "inventory", d)
-	for _, part := range []string{"↑ 1 service with updates", "↑ Update available", "has-image-update", "Deployed: sha256:", "Registry: sha256:", "image-update-detail"} {
+	for _, part := range []string{`class="stack-status"`, "↑ 1 service with updates", "↑ Update available", "has-image-update", "Deployed: sha256:", "Registry: sha256:", "image-update-detail"} {
 		if !strings.Contains(w.Body.String(), part) {
 			t.Fatalf("missing UI %q: %s", part, w.Body.String())
 		}
@@ -186,7 +187,15 @@ func TestBrowserImageUpdates(t *testing.T) {
 	}
 	for _, base := range []string{"/", "/docklight"} {
 		t.Run(base, func(t *testing.T) {
-			a, _ := imageUpdateApp(t)
+			old, current := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)
+			a, _ := imageUpdateApp(t,
+				management.Container{ID: "current", Name: "current-1", Image: "registry.example/web:latest", ImageID: current, Project: "a", Service: "app", State: "running"},
+				management.Container{ID: "unknown", Name: "unknown-1", Image: "registry.example/web:latest", Project: "medium-stack-name", Service: "app", State: "running"},
+				management.Container{ID: "mixed-update", Name: "mixed-1", Image: "registry.example/web:latest", ImageID: old, Project: "stack-with-mixed-update-states", Service: "app", State: "running"},
+				management.Container{ID: "mixed-unknown", Name: "mixed-2", Image: "registry.example/web:latest", Project: "stack-with-mixed-update-states", Service: "worker", State: "exited"},
+				management.Container{ID: "long-name", Name: "long-1", Image: "registry.example/web:latest", ImageID: current, Project: strings.Repeat("longstack", 20), Service: "app", State: "running"},
+				management.Container{ID: "standalone", Name: "standalone-1", Image: "registry.example/web:latest", ImageID: current, State: "running"},
+			)
 			a.cfg.BaseURL = base
 			server := httptest.NewServer(a.routes())
 			defer server.Close()
