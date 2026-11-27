@@ -70,6 +70,67 @@ func TestConfigEnvironmentValidation(t *testing.T) {
 	}
 }
 
+func TestSMTPInsecureSkipVerifyYAML(t *testing.T) {
+	for _, tc := range []struct {
+		name, setting string
+		want, invalid bool
+	}{
+		{name: "omitted"},
+		{name: "false", setting: "insecure_skip_verify: false\n"},
+		{name: "true", setting: "insecure_skip_verify: true\n", want: true},
+		{name: "invalid", setting: "insecure_skip_verify: sensitive-value\n", invalid: true},
+		{name: "tls-required", setting: "insecure_skip_verify: true\nstarttls: false\nssl: false\n", invalid: true},
+		{name: "missing-ca", setting: "insecure_skip_verify: true\nca_file: missing.pem\n", invalid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			file := filepath.Join(root, "smtp.yml")
+			if err := os.WriteFile(file, []byte("host: smtp.example\nto: [admin@example.com]\n"+tc.setting), 0600); err != nil {
+				t.Fatal(err)
+			}
+			c, err := Load("true", "6h", file, filepath.Join(root, "mqtt.yml"))
+			if tc.invalid {
+				if err == nil || strings.Contains(err.Error(), "sensitive-value") {
+					t.Fatalf("invalid or unsanitized SMTP option error: %v", err)
+				}
+				return
+			}
+			if err != nil || c.SMTP.InsecureSkipVerify != tc.want {
+				t.Fatalf("SMTP insecure_skip_verify=%v, want %v; error=%v", c.SMTP.InsecureSkipVerify, tc.want, err)
+			}
+		})
+	}
+}
+
+func TestSMTPInsecureSkipVerifyIsolationAndCAValidation(t *testing.T) {
+	root := t.TempDir()
+	smtpFile, mqttFile := filepath.Join(root, "smtp.yml"), filepath.Join(root, "mqtt.yml")
+	if err := os.WriteFile(smtpFile, []byte("host: smtp.example\nto: [admin@example.com]\ninsecure_skip_verify: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mqttFile, []byte("broker: ssl://mqtt.example:8883\ntopic: updates\ninsecure_skip_verify: true\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load("true", "6h", smtpFile, mqttFile); err == nil {
+		t.Fatal("SMTP-only option accepted in MQTT configuration")
+	}
+	config, err := TLSConfig("mqtt.example", "")
+	if err != nil || config.InsecureSkipVerify {
+		t.Fatal("shared TLS helper must keep certificate verification enabled")
+	}
+	ca := filepath.Join(root, "invalid-ca.pem")
+	if err := os.WriteFile(ca, []byte("not a certificate"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	c := SMTPConfig{Host: "smtp.example", Port: 587, To: []string{"admin@example.com"}, StartTLS: true, InsecureSkipVerify: true, CAFile: ca}
+	if c.validate() == nil {
+		t.Fatal("SMTP opt-in bypassed configured CA validation")
+	}
+	if err := c.Send(t.Context(), notificationEvent()); err == nil || err.Error() != "invalid notification CA certificate" {
+		t.Fatalf("SMTP opt-in did not reject invalid CA before dialing: %v", err)
+	}
+}
+
 func TestNotificationValidation(t *testing.T) {
 	for _, c := range []SMTPConfig{
 		{Host: "mail.example", Port: 587, To: []string{"good@example.com\r\nBcc: bad@example.com"}, StartTLS: true},

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -42,7 +43,7 @@ func notificationEvent() Event {
 
 func TestSMTPTLSDeliveryAndPartialRefusal(t *testing.T) {
 	for _, implicit := range []bool{false, true} {
-		for _, mode := range []string{"ok", "recipient", "auth", "untrusted-tls"} {
+		for _, mode := range []string{"ok", "recipient", "auth", "untrusted-tls", "insecure-tls", "hostname-mismatch", "insecure-hostname", "tls-unavailable"} {
 			refuse := mode == "recipient"
 			t.Run(strconv.FormatBool(implicit)+"/"+mode, func(t *testing.T) {
 				tlsConfig, ca := testTLS(t)
@@ -51,7 +52,7 @@ func TestSMTPTLSDeliveryAndPartialRefusal(t *testing.T) {
 					t.Fatal(err)
 				}
 				defer listener.Close()
-				if implicit {
+				if implicit && mode != "tls-unavailable" {
 					listener = tls.NewListener(listener, tlsConfig)
 				}
 				messages := make(chan string, 1)
@@ -65,7 +66,7 @@ func TestSMTPTLSDeliveryAndPartialRefusal(t *testing.T) {
 					defer conn.Close()
 					_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
 					peer := textproto.NewConn(conn)
-					securedTransport := implicit
+					securedTransport := implicit && mode != "tls-unavailable"
 					_ = peer.PrintfLine("220 test SMTP")
 					for {
 						line, e := peer.ReadLine()
@@ -78,6 +79,10 @@ func TestSMTPTLSDeliveryAndPartialRefusal(t *testing.T) {
 							_ = peer.PrintfLine("250-AUTH PLAIN")
 							_ = peer.PrintfLine("250 STARTTLS")
 						case line == "STARTTLS":
+							if mode == "tls-unavailable" {
+								_ = peer.PrintfLine("454 TLS unavailable")
+								return
+							}
 							_ = peer.PrintfLine("220 ready")
 							secured := tls.Server(conn, tlsConfig)
 							if secured.Handshake() != nil {
@@ -121,19 +126,28 @@ func TestSMTPTLSDeliveryAndPartialRefusal(t *testing.T) {
 				host, port, _ := net.SplitHostPort(listener.Addr().String())
 				p, _ := strconv.Atoi(port)
 				c := SMTPConfig{Host: host, Port: p, User: "sender@example.com", Password: "test-password", From: "sender@example.com", To: []string{"first@example.com", "second@example.com"}, SSL: implicit, StartTLS: !implicit, CAFile: ca}
-				if mode == "untrusted-tls" {
+				if mode == "untrusted-tls" || mode == "insecure-tls" {
 					c.CAFile = ""
 				}
+				if mode == "hostname-mismatch" || mode == "insecure-hostname" {
+					c.Host = "localhost"
+					certificate, err := x509.ParseCertificate(tlsConfig.Certificates[0].Certificate[0])
+					if err != nil || certificate.VerifyHostname(c.Host) == nil {
+						t.Fatal("fixture must have a certificate with a mismatched hostname")
+					}
+				}
+				c.InsecureSkipVerify = mode == "insecure-tls" || mode == "insecure-hostname" || mode == "tls-unavailable"
 				event := notificationEvent()
 				event.Host.Name += " – árvíz"
 				err = c.Send(context.Background(), event)
-				if (err != nil) != (mode != "ok") {
+				accepted := mode == "ok" || mode == "insecure-tls" || mode == "insecure-hostname"
+				if (err == nil) != accepted {
 					t.Fatalf("SMTP result %v", err)
 				}
 				<-done
-				if mode != "ok" {
+				if !accepted {
 					if len(messages) != 0 {
-						t.Fatal("DATA sent despite partial recipient rejection")
+						t.Fatal("DATA sent despite SMTP or TLS failure")
 					}
 					return
 				}

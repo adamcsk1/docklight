@@ -23,6 +23,8 @@ func (c SMTPConfig) Send(ctx context.Context, event Event) error {
 	if err != nil {
 		return err
 	}
+	// Explicit SMTP-only opt-in; TLS remains required, but server identity is not verified.
+	tlsConfig.InsecureSkipVerify = c.InsecureSkipVerify
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", c.address())

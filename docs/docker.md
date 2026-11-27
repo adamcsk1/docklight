@@ -267,10 +267,13 @@ to:
   - admin@example.com
 starttls: true
 ssl: false
+insecure_skip_verify: false
 # ca_file: /data/certs/mail-ca.crt
 ```
 
-These fields correspond to elprotector's `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO`, `SMTP_STARTTLS` and `SMTP_SSL`. Recipients are a YAML list of plain email addresses rather than a comma-separated environment value. The sender falls back to the user, then the first recipient. Port 587 and STARTTLS are defaults. For port 465 set `ssl: true` and `starttls: false`. SMTP authentication uses PLAIN over verified TLS; servers that require other authentication mechanisms are not supported. An unauthenticated relay is supported by omitting user/password, but TLS remains required. Unlike elprotector's insecure-skip option, private certificates require `ca_file`; certificate verification cannot be bypassed.
+These fields correspond to elprotector's `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO`, `SMTP_STARTTLS` and `SMTP_SSL`. Recipients are a YAML list of plain email addresses rather than a comma-separated environment value. The sender falls back to the user, then the first recipient. Port 587 and STARTTLS are defaults. For port 465 set `ssl: true` and `starttls: false`. SMTP authentication uses PLAIN over TLS; servers that require other authentication mechanisms are not supported. An unauthenticated relay is supported by omitting user/password, but TLS remains required.
+
+Certificate verification is enabled by default. Prefer `ca_file` to trust a private CA or self-signed server certificate while retaining server identity checks. As an SMTP-only escape hatch, set `insecure_skip_verify: true` in `smtp.yml` to disable certificate-chain and hostname verification for either STARTTLS or implicit TLS. **Warning: TLS still encrypts the connection, but an attacker can impersonate the SMTP server and capture credentials or email.** Registry and MQTT TLS verification are unaffected. If `ca_file` is also configured, it must still be readable and contain a valid certificate. `SMTP_INSECURESKIPVERIFY` is not read from the environment; this setting is YAML-only. Restart the UI after changing it.
 
 All recipients must accept the envelope before any message body is sent. Successful SMTP DATA acceptance counts as delivery; it does not prove inbox arrival. No test message is sent on startup.
 
