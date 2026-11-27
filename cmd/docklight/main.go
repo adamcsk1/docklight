@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"docklight/internal/imageupdates"
+
 	_ "modernc.org/sqlite"
 )
 
@@ -31,6 +33,7 @@ type App struct {
 	verifiedAt     time.Time
 	coordinator    string
 	masterConflict string
+	imageMonitor   *imageupdates.Monitor
 }
 type loginAttempt struct {
 	Count     int
@@ -61,9 +64,13 @@ func main() {
 	if err = app.loadTemplates(); err != nil {
 		log.Fatal(err)
 	}
+	if err = app.initImageUpdates(); err != nil {
+		log.Fatal(err)
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go app.maintenanceLoop(ctx)
+	go app.imageUpdateLoop(ctx)
 	server := &http.Server{Addr: cfg.Addr, Handler: app.routes(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: time.Minute, IdleTimeout: time.Minute, MaxHeaderBytes: 16 << 10}
 	log.Printf("Docklight listening on %s%s", cfg.Addr, cfg.BaseURL)
 	if err = server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

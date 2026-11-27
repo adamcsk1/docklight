@@ -43,14 +43,15 @@ type maintenanceRun struct {
 	Steps                       []maintenanceStep
 }
 type masterView struct {
-	Selected    []string
-	Errors      map[string]string
-	Claim       management.MasterClaim
-	Infos       map[string]management.MaintenanceInfo
-	Skipped     []string
-	Error       string
-	Conflict    bool
-	OfflineOnly bool
+	Selected          []string
+	Errors            map[string]string
+	Claim             management.MasterClaim
+	Infos             map[string]management.MaintenanceInfo
+	Skipped           []string
+	Error             string
+	Conflict          bool
+	OfflineOnly       bool
+	OwnershipVerified bool
 }
 
 type maintenanceHostView struct {
@@ -423,6 +424,12 @@ func (app *App) checkMasterSelected(ctx context.Context, discovery bool, skipOff
 	}
 	v.OfflineOnly = offlineOnly && !v.Conflict && len(problems) == discoveryProblems
 	v.Error = strings.Join(problems, "; ")
+	v.OwnershipVerified = v.Error == "" && v.Claim.Coordinator == app.coordinator && v.Claim.Master != "" && len(v.Errors) == 0 && len(v.Skipped) == 0 && len(v.Infos) == len(app.cfg.Hosts)
+	for id, info := range v.Infos {
+		if !selectedHost(selected, id) && id != master.ID && (info.State.Owner.Coordinator != v.Claim.Coordinator || info.State.Owner.Master != v.Claim.Master) {
+			v.OwnershipVerified = false
+		}
+	}
 	return v
 }
 

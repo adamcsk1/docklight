@@ -178,7 +178,7 @@ if (operation) {
   const refreshInventory = async (remaining = 3) => {
     if (submitting) return;
     const current = document.querySelector("[data-inventory]");
-    if (current.contains(document.activeElement) && document.activeElement.closest("form")) {
+    if (current.contains(document.activeElement) && document.activeElement.closest("form, .image-update-detail")) {
       setMessage("Operation " + operation.dataset.status + ". Inventory refresh paused while controls have focus.");
       window.setTimeout(() => refreshInventory(remaining), 3000);
       return;
@@ -192,7 +192,7 @@ if (operation) {
       const next = new DOMParser().parseFromString(await response.text(), "text/html").querySelector("[data-inventory]");
       if (!next) throw new Error("Invalid inventory response");
       if (submitting) return;
-      if (current.contains(document.activeElement) && document.activeElement.closest("form")) {
+      if (current.contains(document.activeElement) && document.activeElement.closest("form, .image-update-detail")) {
         window.setTimeout(() => refreshInventory(remaining), 3000);
         return;
       }
@@ -200,6 +200,9 @@ if (operation) {
       initGroups(next, states);
       const expanded = new Set([...current.querySelectorAll(".secondary-actions[open]")].map(item => item.closest("form").elements.id.value));
       for (const item of next.querySelectorAll(".secondary-actions")) item.open = expanded.has(item.closest("form").elements.id.value);
+      const imageKey = item => JSON.stringify([item.closest("section").id, item.dataset.imageUpdateKey]);
+      const imageDetails = new Set([...current.querySelectorAll(".image-update-detail[open]")].map(imageKey));
+      for (const item of next.querySelectorAll(".image-update-detail")) item.open = imageDetails.has(imageKey(item));
       const scopes = new Map([...current.querySelectorAll('select[name="scope"]')].map(select => [select.form.elements.id.value, select.value]));
       for (const select of next.querySelectorAll('select[name="scope"]')) {
         if ([...select.options].some(option => option.value === scopes.get(select.form.elements.id.value))) select.value = scopes.get(select.form.elements.id.value);

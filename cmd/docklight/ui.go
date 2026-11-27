@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"docklight/internal/buildinfo"
+	"docklight/internal/imageupdates"
 	"docklight/internal/management"
 	"github.com/google/uuid"
 )
@@ -27,9 +28,10 @@ type agentRejection struct{ message string }
 func (e *agentRejection) Error() string { return e.message }
 
 type containerGroup struct {
-	Project    string
-	Containers []management.Container
-	Running    int
+	Project                 string
+	Containers              []management.Container
+	Running                 int
+	Updates, UnknownUpdates int
 }
 type resourceSection struct {
 	Kind, Title string
@@ -55,6 +57,9 @@ type PageData struct {
 	MaintenanceCanSkip               bool
 	MaintenanceHosts                 []maintenanceHostView
 	Blocked                          bool
+	UpdatesSummary                   string
+	ImageUpdates                     map[string]imageupdates.Result
+	ResourceUpdates                  map[string][]imageupdates.Result
 }
 
 func groupContainers(containers []management.Container) []containerGroup {
@@ -389,7 +394,9 @@ func (app *App) loadInventory(r *http.Request, h *Host, d *PageData) error {
 	if d.AgentCommit == "" {
 		d.AgentCommit = "unknown"
 	}
+	app.populateImageUpdates(h, d)
 	d.ContainerGroups = groupContainers(d.Inventory.Containers)
+	app.groupImageUpdates(d)
 	d.ResourceSections = []resourceSection{{Kind: "image", Title: "Images"}, {Kind: "volume", Title: "Volumes"}, {Kind: "network", Title: "Networks"}}
 	for _, resource := range d.Inventory.Resources {
 		for i := range d.ResourceSections {

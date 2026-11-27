@@ -50,7 +50,7 @@ func TestSessionAndMaintenanceDatabasePersistsAcrossRestart(t *testing.T) {
 		t.Fatal("session lost on restart")
 	}
 	var tables string
-	if err = db.QueryRow(`SELECT group_concat(name, ',') FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'`).Scan(&tables); err != nil || tables != "sessions,maintenance,output_acknowledgements" {
+	if err = db.QueryRow(`SELECT group_concat(name, ',') FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'`).Scan(&tables); err != nil || tables != "sessions,maintenance,output_acknowledgements,image_updates" {
 		t.Fatalf("unexpected database tables: %q %v", tables, err)
 	}
 	var acknowledgements int
@@ -63,6 +63,25 @@ func TestSessionAndMaintenanceDatabasePersistsAcrossRestart(t *testing.T) {
 	}
 	if len(files) != 1 || files[0].Name() != "sessions.db" {
 		t.Fatalf("unexpected automatic backup/storage files: %v", files)
+	}
+}
+
+func TestInvalidImageUpdateSchemaRefusedBeforeMigration(t *testing.T) {
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "invalid.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err = db.Exec(`CREATE TABLE sessions (id_hash TEXT PRIMARY KEY NOT NULL, expires_at TEXT NOT NULL); CREATE TABLE image_updates (unexpected TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	app := &App{db: db}
+	if err = app.initDB(); err == nil {
+		t.Fatal("invalid image update schema accepted")
+	}
+	var tables int
+	if err = db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*'`).Scan(&tables); err != nil || tables != 2 {
+		t.Fatalf("refused schema modified: %d %v", tables, err)
 	}
 }
 

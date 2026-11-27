@@ -581,6 +581,8 @@ func TestRoutesRequireAuthenticationAndRemovedFeaturesUnavailable(t *testing.T) 
 }
 
 func TestConfigurationValidation(t *testing.T) {
+	t.Setenv("IMAGE_UPDATES_ENABLED", "false")
+	t.Setenv("IMAGE_UPDATES_INTERVAL", "6h")
 	t.Setenv("DB_PATH", "")
 	t.Setenv("ADMIN_PASSWORD", "password")
 	t.Setenv("SESSION_SECRET", strings.Repeat("s", 32))

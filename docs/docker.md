@@ -43,6 +43,8 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
       SESSION_SECRET: ${SESSION_SECRET:?required}
       COOKIE_SECURE: "true" # Use HTTPS through a reverse proxy.
+      IMAGE_UPDATES_ENABLED: "${IMAGE_UPDATES_ENABLED:-false}"
+      IMAGE_UPDATES_INTERVAL: "${IMAGE_UPDATES_INTERVAL:-6h}"
     volumes:
       - ./ui-data:/data
       - ./ui-data/hosts.yml:/data/hosts.yml:ro
@@ -226,9 +228,81 @@ Keep `BUILDX_CONFIG: /data/buildx` in both local and remote agent environments. 
 
 After an update finishes, the agent saves its helper logs in the job result, then removes the exited helper so old images can become unused. If cleanup fails or no client reconnects to collect the result, inspect the helper manually (`docker logs docklight-update-...`, then `docker rm docklight-update-...` after it exits). Helpers have `io.docklight.role=updater` and are protected from ordinary Docklight deletion. Cleanup verifies ownership labels and never force-removes a helper.
 
+## Image update detection and notifications
+
+Image checks are **disabled by default**. Enable them only on the coordinating UI that has one `master: true` host in `hosts.yml`. No extra container is required. The UI queries every configured agent (including the master host) through authenticated `GET /v1/image-updates`, then checks registries itself. Child agents do not schedule checks, contact registries for detection, or send notifications. Upgrade both the UI and agents; older or unreachable agents show unknown status rather than current status. Master ownership must have been verified recently and no master conflict may be present before checks or delivery start.
+
+Ownership verification must succeed for the configured fleet; an unreachable host, invalid identity, or failed registration pauses checks and delivery rather than renewing permission from a failed attempt. Running scans stop starting new agent/registry requests when ownership is lost. Cached results eventually become stale while verification is blocked.
+
+The UI needs outbound connectivity to registries, SMTP and MQTT. In the local Compose example above, change the **UI** service's networks to `networks: [management, outbound]` when enabling this feature; keep the management network internal and do not publish any additional ports. The agent's outbound connection alone is not enough, because detection and delivery run in the UI.
+
+Set these values in the Compose project's `.env` file:
+
+```dotenv
+IMAGE_UPDATES_ENABLED=true
+IMAGE_UPDATES_INTERVAL=6h
+```
+
+The UI reads environment variables, not `.env` files directly. Compose uses `.env` for interpolation; the UI service's `environment` entries above explicitly pass these settings into the container. For an existing deployment, add those two entries before enabling checks. `IMAGE_UPDATES_ENABLED` defaults to `false`; `IMAGE_UPDATES_INTERVAL` defaults to `6h`. Both values are validated at startup, even when checks are disabled. Invalid booleans or intervals fail startup. Recreate the UI with `docker compose up -d --no-deps --force-recreate docklight` after changing environment values; `docker compose restart` does not refresh container environment. The earlier updates YAML file and its path override are no longer read; move any existing toggle/interval settings into these variables.
+
+The interval accepts Go durations from `1m` to `168h`; six hours is recommended to limit registry traffic. A scan runs after startup once master ownership has been verified (normally within a minute), then on the interval. Each agent request has a 35-second client budget, each distinct registry lookup has a 20-second budget, and an entire scan has a ten-minute budget. After an HTTP 429 response, remaining images on that registry are left unknown until the next scan rather than continuing to hit the rate limit. Checks run independently of browser requests and ordinary operation locks. A large or slow fleet can exhaust the scan budget; interrupted hosts remain unknown. Failed notification deliveries are retried on the next one-minute worker tick while their results are fresh, with a one-minute delivery budget per tick. Restart the UI after changing notification files.
+
+The configured tag is resolved for the deployed image's OS, architecture and variant. Missing deployed variant metadata is accepted only when the registry index has one matching candidate; ambiguous platform entries remain unknown rather than selecting the first image. Nested indexes are checked at each level, up to eight levels. Its remote configuration digest is compared with the container's actual image ID, **not** the mutable local tag, container ID, manifest digest or multi-platform index digest. Registry manifests and small image configuration blobs are read; image layers are never downloaded, and no pull, build, restart or upgrade is performed. Pulling a newer image without recreating its container therefore still reports an available update. A changed SHA means different content, not a guarantee of a newer or compatible application version. Version-tag discovery (such as `1.27` to `1.28`) is not implemented.
+
+Checks cover existing running and stopped containers, including management services. Digest-pinned references, raw image IDs, temporary update helpers and locally built images without registry provenance are explicitly marked not tracked. To exclude a container, set `io.docklight.updates: "false"` in its labels. Unused images are not monitored. HTTPS registries are required; there is no insecure-registry bypass.
+
+For private registries, the **UI** also needs a dedicated Docker authentication configuration. Authenticate it outside Docklight using `docker --config <directory> login <registry>`, then mount that directory read-only into the UI at `/root/.docker:ro` (or set `DOCKER_CONFIG` to another mounted directory). Keep the agent's existing credentials mount for manual upgrades; the UI's mount does not replace it. Docker Desktop/external credential helpers are unavailable unless their executable is installed in the UI image; use a dedicated file-backed login configuration instead. Do not mount unrelated host credentials. Private registry CA certificates must be trusted by the UI; TLS verification is never disabled.
+
+### Email: `smtp.yml`
+
+Create `/data/smtp.yml` on the coordinating UI to enable email independently of MQTT:
+
+```yaml
+host: smtp.example.com
+port: 587
+user: sender@example.com
+password: replace-with-smtp-password
+from: sender@example.com
+to:
+  - admin@example.com
+starttls: true
+ssl: false
+# ca_file: /data/certs/mail-ca.crt
+```
+
+These fields correspond to elprotector's `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`, `SMTP_TO`, `SMTP_STARTTLS` and `SMTP_SSL`. Recipients are a YAML list of plain email addresses rather than a comma-separated environment value. The sender falls back to the user, then the first recipient. Port 587 and STARTTLS are defaults. For port 465 set `ssl: true` and `starttls: false`. SMTP authentication uses PLAIN over verified TLS; servers that require other authentication mechanisms are not supported. An unauthenticated relay is supported by omitting user/password, but TLS remains required. Unlike elprotector's insecure-skip option, private certificates require `ca_file`; certificate verification cannot be bypassed.
+
+All recipients must accept the envelope before any message body is sent. Successful SMTP DATA acceptance counts as delivery; it does not prove inbox arrival. No test message is sent on startup.
+
+### MQTT: `mqtt.yml`
+
+Create `/data/mqtt.yml` on the coordinating UI:
+
+```yaml
+broker: ssl://mqtt.example.com:8883
+user: docklight
+password: replace-with-mqtt-password
+topic: docklight/image-updates
+# ca_file: /data/certs/mqtt-ca.crt
+```
+
+MQTT publishes non-retained JSON events using QoS 1 and requires broker acknowledgement before recording success. The broker must include an explicit port. `ssl://` uses verified TLS; `tcp://` is only appropriate on an isolated local network or encrypted VPN and exposes credentials and messages otherwise. URL credentials, wildcard topics and disabled TLS verification are not supported. The client publishes only; it does not subscribe, perform Home Assistant discovery or accept commands.
+
+Both notification channels identify the configured host name, agent-reported Docker hostname, agent address, image/tag, platform, deployed/available SHA, detection timestamp and affected container/stack/service names. Agent tokens, registry credentials and notification passwords are never included. Email subjects use `[Docklight] Updates available on <host name>`. MQTT payload fields are `id`, `type`, `host` (`id`, `name`, `address`, `hostname`), `image`, `platform`, `deployed_sha`, `available_sha`, `detected_at` and `targets` (each with `container`, `stack`, `service`).
+
+Notifications are grouped by host, image/tag, platform and deployed/available SHA. Replicas share one notification, as do aliases of the same agent identity. Each channel tracks success independently in SQLite, surviving UI replacement. Each receives half the one-minute delivery budget and rotates pending attempts between ticks, so a failing channel or event cannot indefinitely block the others. Rotation restarts when the UI restarts; successful acknowledgements remain durable. Resolved updates discard delivery state per image/platform; an unrelated unknown image does not block cleanup. A registry/agent failure does not mark images current or reset successful delivery state for the affected image. Older delivery records recover image identity from cached results where possible; records without recoverable identity keep conservative host-wide cleanup until a fully known scan. Delivery stops for stale results. A crash after external acceptance but before the SQLite write, or a lost acknowledgement, can still cause duplicate delivery: exactly-once SMTP/MQTT delivery is not possible. MQTT consumers can deduplicate using the stable event `id`.
+
+### UI and configuration safety
+
+Containers and referenced images show an accessible text/icon update badge with expandable SHA/check details. Containers with available updates also have an amber border. Collapsed stacks show a count of distinct affected services, not replicas; standalone groups count containers. Unknown, untracked and stale results are distinct from current status. Reconnect/page reload and existing post-operation inventory refreshes read the cached results without registry requests. A newly deployed image remains unknown until the next scheduled check; inventory rendering cannot label it from an older cached SHA.
+
+Image checks are enabled only through `IMAGE_UPDATES_ENABLED`. The notification-file defaults can be changed with UI environment variables `SMTP_FILE` and `MQTT_FILE`. When checks are enabled, a missing SMTP or MQTT file disables only that channel, while a present but malformed notification file fails startup rather than silently disabling alerts. Unknown keys and multiple YAML documents are rejected. Notification-file values are literal; no environment interpolation occurs. Keep files containing credentials outside Git, restrict filesystem access (for example, mode `0600`), and mount them read-only when using separate mounts. The repository and build context ignore `smtp.yml` and `mqtt.yml`. No secrets need to be installed on child agents.
+
+The UI adds an `image_updates` table without changing existing sessions. Back up the UI database before upgrading; older releases refuse the additional table, so downgrading requires restoring the backup. Losing the database loses deduplication history and may cause notifications to repeat. Schema versioning or corrupt persisted state fails startup instead of silently resetting alert history.
+
 ## Storage and recovery
 
-- UI `/data`: `sessions.db` for signed login sessions, host configuration and optional CA certificates.
+- UI `/data`: `sessions.db` for sessions, maintenance, output acknowledgements and image-check/delivery state; host configuration, optional notification configuration and CA certificates.
 - Agent `/data`: persisted jobs/results (latest 100 completed operations), temporary image overrides and Buildx state when `BUILDX_CONFIG=/data/buildx`.
 - Original Compose files and application volumes are never edited/deleted by Docklight.
 
@@ -238,7 +312,7 @@ With JavaScript enabled, running operations refresh their status and output ever
 
 The history-list API (`GET /v1/jobs`) has also been removed. Update the UI and agents together: older UIs still request that endpoint. Submitting operations (`POST /v1/jobs`) and retrieving a specific result (`GET /v1/jobs/{id}`) remain supported.
 
-The UI database contains only session hashes and expiry times, with no usernames, stack settings or activity history. There are no database migrations or automatic backups. Only the current session schema is accepted. If an explicit `DB_PATH` points to an incompatible database, startup refuses it without modifying its contents; select a fresh database path instead. The default `/data/sessions.db` does not read or replace other database files. Changing session databases requires signing in again and does not affect agent job history, host configuration or Docker resources.
+The UI database stores session hashes/expiry times, coordinator and maintenance state, output acknowledgements, and image-check/delivery state. It contains no usernames, stack configuration or notification credentials. Known schemas receive additive migrations; unknown schemas are refused. Backups are not automatic. The default `/data/sessions.db` does not read or replace other database files. Changing databases requires signing in again, loses acknowledgement/notification history and changes coordinator identity; do not replace a coordinating UI's database without reviewing its agent registrations and interrupted maintenance first.
 
 Operations continue after a browser/UI disconnect. Agent restart marks unfinished ordinary jobs failed with an **unknown outcome** warning; it does not retry destructive operations. Update jobs reconnect to their detached helper. While a management update is unresolved, further mutations are blocked. If a helper was manually removed or an agent died before launching it, inspect Docker manually; stop the agent, back up its data, remove the affected `job-<uuid>.json`, then restart. Do not clear uncertain jobs without checking the host.
 
@@ -246,7 +320,7 @@ Only one agent instance may use a given data directory and Docker daemon for mut
 
 ## Environment
 
-UI: `ADDR` (`:8080`), `BASE_URL` (`/`), required `ADMIN_PASSWORD`, `SESSION_SECRET`, `DB_PATH` (`/data/sessions.db`), `HOSTS_FILE` (`/data/hosts.yml`), `COOKIE_SECURE` (`false`). Login is password-only.
+UI: `ADDR` (`:8080`), `BASE_URL` (`/`), required `ADMIN_PASSWORD`, `SESSION_SECRET`, `DB_PATH` (`/data/sessions.db`), `HOSTS_FILE` (`/data/hosts.yml`), `COOKIE_SECURE` (`false`), `IMAGE_UPDATES_ENABLED` (`false`), `IMAGE_UPDATES_INTERVAL` (`6h`), `SMTP_FILE` (`/data/smtp.yml`), `MQTT_FILE` (`/data/mqtt.yml`), optional `DOCKER_CONFIG` for dedicated registry credentials. Login is password-only.
 
 Agent: `ADDR` (`:8081`), required `AGENT_TOKEN`, `STACKS_ROOT` (`/stacks`), `DATA_DIR` (`/data`), optional paired `TLS_CERT`/`TLS_KEY`. Operations have a ten-minute timeout, except Build (two hours). Compose paths must be absolute and resolve within `STACKS_ROOT`; symlink escapes are rejected.
 

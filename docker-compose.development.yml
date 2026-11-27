@@ -13,6 +13,8 @@ services:
     environment:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?required}
       SESSION_SECRET: ${SESSION_SECRET:?required}
+      IMAGE_UPDATES_ENABLED: "${IMAGE_UPDATES_ENABLED:-false}"
+      IMAGE_UPDATES_INTERVAL: "${IMAGE_UPDATES_INTERVAL:-6h}"
     volumes:
       - ./data:/data
       - ./data/hosts.yml:/data/hosts.yml:ro
