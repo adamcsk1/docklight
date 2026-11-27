@@ -63,6 +63,22 @@ func TestDockerIntegration(t *testing.T) {
 	// Move the mutable tag to a genuinely different image without changing the container.
 	docker("pull", "busybox:1.37")
 	docker("tag", "busybox:1.37", "docklight-test-image:mutable")
+	snapshot, err := e.ImageSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundDeployed := false
+	for _, c := range snapshot.Containers {
+		if c.ID == id {
+			foundDeployed = true
+			if c.ImageID != original || c.OS != "linux" || c.Architecture == "" || c.Error != "" {
+				t.Fatalf("deployed image snapshot followed mutable local tag: %+v", c)
+			}
+		}
+	}
+	if !foundDeployed {
+		t.Fatal("deployed container missing from image update snapshot")
+	}
 	var output bytes.Buffer
 	if err := e.Execute(ctx, Action{Kind: "container", ID: id, Operation: "recreate", Scope: "service"}, &output); err != nil {
 		t.Fatalf("recreate: %v\n%s", err, output.String())

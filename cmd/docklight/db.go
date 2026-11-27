@@ -23,11 +23,18 @@ func (app *App) initDB() error {
 		return err
 	}
 	var unknown int
-	if err := app.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT IN ('sessions','maintenance','output_acknowledgements')`).Scan(&unknown); err != nil {
+	if err := app.db.QueryRow(`SELECT COUNT(*) FROM sqlite_schema WHERE type='table' AND name NOT GLOB 'sqlite_*' AND name NOT IN ('sessions','maintenance','output_acknowledgements','image_updates')`).Scan(&unknown); err != nil {
 		return err
 	}
 	if unknown != 0 || columns != "id_hash,expires_at" {
 		return errors.New("unsupported UI database schema: set DB_PATH to a fresh sessions database (default /data/sessions.db); existing data has not been changed")
+	}
+	var updateColumns string
+	if err := app.db.QueryRow(`SELECT COALESCE(group_concat(name, ','),'') FROM pragma_table_info('image_updates')`).Scan(&updateColumns); err != nil {
+		return err
+	}
+	if updateColumns != "" && updateColumns != "id,value" {
+		return errors.New("unsupported image update database schema")
 	}
 	// Additive migration leaves existing sessions intact; refuse unknown schemas first.
 	if _, err := app.db.Exec(`CREATE TABLE IF NOT EXISTS maintenance (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)`); err != nil {
@@ -49,6 +56,9 @@ func (app *App) initDB() error {
 	}
 	if acknowledgementColumns != "host,endpoint,job" {
 		return errors.New("unsupported output acknowledgement database schema")
+	}
+	if _, err := app.db.Exec(`CREATE TABLE IF NOT EXISTS image_updates (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL)`); err != nil {
+		return err
 	}
 	if _, err := app.db.Exec(`INSERT OR IGNORE INTO maintenance(key,value) VALUES('coordinator',?)`, uuid.NewString()); err != nil {
 		return err

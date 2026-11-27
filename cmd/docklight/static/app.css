@@ -218,6 +218,11 @@ a { color: inherit; }
 .badge-stopped, .badge-partial, .badge-unused, .badge-updating { color: var(--color-amber); border-left-color: var(--color-amber); }
 .badge-failed, .badge-danger, .badge-exited, .badge-unhealthy, .badge-dead { color: var(--color-red); border-left-color: var(--color-red); }
 .badge-muted, .badge-unknown, .badge-none { color: var(--color-faint); }
+.badge-update-available { color: var(--color-amber); border-left-color: var(--color-amber); }
+.resource-row.has-image-update { border-inline-start: 3px solid var(--color-amber); }
+.image-update-detail { margin-top: var(--space-2); }
+.image-update-detail > summary { cursor: pointer; }
+.image-update-detail p { margin-block: var(--space-2); }
 .resource-row {
   display: grid;
   gap: var(--space-3);
@@ -353,7 +358,7 @@ input[type="checkbox"] { width: var(--checkbox-size); height: var(--checkbox-siz
   .resource-id { display: none; }
   .resource-row-containers { gap: var(--space-2); }
   .resource-row-containers > :nth-child(2), .resource-row-containers > :nth-child(4) { font-size: var(--font-size-sm); }
-  .stack-summary, .secondary-actions > summary { min-height: 2.75rem; }
+  .stack-summary, .secondary-actions > summary, .image-update-detail > summary { min-height: 2.75rem; }
   .switch-label { min-height: 2.75rem; align-items: center; }
   .nav a { min-height: 2.75rem; display: inline-flex; align-items: center; }
   .operation-output { min-height: 6rem; max-height: 35vh; }

@@ -16,3 +16,5 @@ __pycache__/
 *.db-wal
 coverage
 coverage.out
+smtp.yml
+mqtt.yml

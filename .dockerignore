@@ -24,3 +24,5 @@ cmd/docklight/static/htmx.min.js
 /stacks/
 /coverage
 /coverage.out
+**/smtp.yml
+**/mqtt.yml

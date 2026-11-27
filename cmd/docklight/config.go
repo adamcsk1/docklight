@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"docklight/internal/imageupdates"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -19,6 +21,7 @@ type Config struct {
 	Addr, BaseURL, AdminPassword, SessionSecret, DBPath string
 	CookieSecure                                        bool
 	Hosts                                               []Host
+	Updates                                             imageupdates.Config
 }
 type Host struct {
 	ID        string `yaml:"id"`
@@ -66,7 +69,23 @@ func loadConfig() (Config, error) {
 		return c, errors.New("unexpected hosts configuration data")
 	}
 	c.Hosts = hosts.Hosts
-	return c, configureHosts(c.Hosts)
+	if err = configureHosts(c.Hosts); err != nil {
+		return c, err
+	}
+	c.Updates, err = imageupdates.Load(env("IMAGE_UPDATES_ENABLED", "false"), env("IMAGE_UPDATES_INTERVAL", "6h"), env("SMTP_FILE", "/data/smtp.yml"), env("MQTT_FILE", "/data/mqtt.yml"))
+	if err != nil {
+		return c, err
+	}
+	if c.Updates.Enabled {
+		master := false
+		for _, host := range c.Hosts {
+			master = master || host.Master
+		}
+		if !master {
+			return c, errors.New("image update checks require one master host")
+		}
+	}
+	return c, nil
 }
 func validID(s string) bool {
 	if len(s) == 0 || len(s) > 64 {

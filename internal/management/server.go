@@ -97,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 		_, _ = io.WriteString(w, "ok")
 	})
 	mux.HandleFunc("GET /v1/inventory", s.inventory)
+	mux.HandleFunc("GET /v1/image-updates", s.imageUpdates)
 	mux.HandleFunc("POST /v1/jobs", s.submit)
 	mux.HandleFunc("GET /v1/jobs/current", s.currentJob)
 	mux.HandleFunc("GET /v1/jobs/{id}", s.job)
@@ -135,6 +136,20 @@ func (s *Server) inventory(w http.ResponseWriter, r *http.Request) {
 	}
 	inv.Commit = buildinfo.Commit
 	writeJSON(w, inv)
+}
+
+func (s *Server) imageUpdates(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	snapshot, err := s.Engine.ImageSnapshot(ctx)
+	if err != nil {
+		http.Error(w, "Deployed image snapshot unavailable", http.StatusBadGateway)
+		return
+	}
+	s.mu.Lock()
+	snapshot.NodeID = s.maintenance.NodeID
+	s.mu.Unlock()
+	writeJSON(w, snapshot)
 }
 
 func (s *Server) save(j *storedJob) error {
