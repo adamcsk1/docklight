@@ -26,15 +26,16 @@ type Config struct {
 }
 
 type SMTPConfig struct {
-	Host     string   `yaml:"host"`
-	Port     int      `yaml:"port"`
-	User     string   `yaml:"user"`
-	Password string   `yaml:"password"`
-	From     string   `yaml:"from"`
-	To       []string `yaml:"to"`
-	StartTLS bool     `yaml:"starttls"`
-	SSL      bool     `yaml:"ssl"`
-	CAFile   string   `yaml:"ca_file"`
+	Host               string   `yaml:"host"`
+	Port               int      `yaml:"port"`
+	User               string   `yaml:"user"`
+	Password           string   `yaml:"password"`
+	From               string   `yaml:"from"`
+	To                 []string `yaml:"to"`
+	StartTLS           bool     `yaml:"starttls"`
+	SSL                bool     `yaml:"ssl"`
+	CAFile             string   `yaml:"ca_file"`
+	InsecureSkipVerify bool     `yaml:"insecure_skip_verify"`
 }
 
 type MQTTConfig struct {
