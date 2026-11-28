@@ -158,6 +158,11 @@ func (m *Monitor) publish(state State) error {
 }
 
 func (m *Monitor) Check(ctx context.Context, now time.Time) error {
+	return m.CheckSelected(ctx, now, nil)
+}
+
+// CheckSelected refreshes only selected sources; nil retains the scheduled full-fleet scan.
+func (m *Monitor) CheckSelected(ctx context.Context, now time.Time, selected []string) error {
 	m.work.Lock()
 	defer m.work.Unlock()
 	state := m.copyState()
@@ -169,6 +174,9 @@ func (m *Monitor) Check(ctx context.Context, now time.Time) error {
 	throttled := map[string]error{}
 	var interrupted error
 	for _, source := range m.Sources {
+		if selected != nil && !slices.Contains(selected, source.ID) {
+			continue
+		}
 		if interrupted == nil {
 			interrupted = m.workAllowed(ctx)
 		}
@@ -260,6 +268,9 @@ func (m *Monitor) Check(ctx context.Context, now time.Time) error {
 		keys[event.ID] = true
 	}
 	for key, delivery := range state.Sent {
+		if selected != nil && !slices.Contains(selected, delivery.HostID) {
+			continue
+		}
 		host, ok := state.Hosts[delivery.HostID]
 		known := false
 		if ok && host.Error == "" && delivery.Image != "" {

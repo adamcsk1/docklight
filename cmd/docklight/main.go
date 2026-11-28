@@ -34,6 +34,9 @@ type App struct {
 	coordinator    string
 	masterConflict string
 	imageMonitor   *imageupdates.Monitor
+	imageCheckMu   sync.RWMutex
+	imageCheck     imageCheckRun
+	imageCheckWake chan struct{}
 }
 type loginAttempt struct {
 	Count     int

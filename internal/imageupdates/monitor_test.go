@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -28,6 +29,45 @@ func monitorFixture(t *testing.T) (*Monitor, *management.ImageSnapshot, *State) 
 		t.Fatal(err)
 	}
 	return m, snapshot, stored
+}
+
+func TestMonitorSelectedCheckLeavesOtherHostsAndHistoryUntouched(t *testing.T) {
+	m, snapshot, stored := monitorFixture(t)
+	other := *snapshot
+	other.NodeID = "other-node"
+	otherFetches := 0
+	m.Sources = append(m.Sources, Source{ID: "other", Address: "https://other.example", Fetch: func(context.Context) (management.ImageSnapshot, error) {
+		otherFetches++
+		return other, nil
+	}})
+	now := time.Now().UTC()
+	m.Email = func(context.Context, []Event) error { return nil }
+	if err := m.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Deliver(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Sent) != 2 {
+		t.Fatal("fixture missing acknowledgements")
+	}
+	before := m.Host("other", "https://other.example")
+	snapshot.Containers[0].ImageID = newSHA
+	// Unselected results expire, but must not resolve their delivery history.
+	if err := m.CheckSelected(context.Background(), now.Add(2*time.Hour), []string{"nas"}); err != nil {
+		t.Fatal(err)
+	}
+	if otherFetches != 1 || !reflect.DeepEqual(before, m.Host("other", "https://other.example")) {
+		t.Fatal("selected scan changed or contacted unselected host")
+	}
+	if len(stored.Sent) != 1 {
+		t.Fatal("selected scan erased unrelated history or retained resolved update")
+	}
+	for _, delivery := range stored.Sent {
+		if delivery.HostID != "other" || !delivery.Email {
+			t.Fatal("wrong acknowledgement retained")
+		}
+	}
 }
 
 func TestMonitorDeployedSHAGroupingAndIndependentDelivery(t *testing.T) {

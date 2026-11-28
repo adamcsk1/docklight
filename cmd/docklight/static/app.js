@@ -45,6 +45,7 @@ document.addEventListener("submit", event => {
   event.preventDefault();
   submitting = true;
   const button = event.submitter || form.querySelector('button[type="submit"]');
+  if (button.hasAttribute("formaction")) form.action = button.formAction;
   if (hostChange) setBuildCommit("agent", "unavailable");
   const select = hostForm.querySelector("select");
   showStatus(hostChange
@@ -103,6 +104,11 @@ if (document.querySelector("[data-maintenance]")) {
         }
         const verification = current.querySelector("[data-maintenance-verification]");
         verification.replaceChildren(...next.querySelector("[data-maintenance-verification]").childNodes);
+        const imageStatus = current.querySelector("[data-image-check-status]");
+        const nextImageStatus = next.querySelector("[data-image-check-status]");
+        if (imageStatus.innerHTML !== nextImageStatus.innerHTML) imageStatus.replaceChildren(...nextImageStatus.childNodes);
+        const imageButton = current.querySelector('button[formaction]');
+        if (imageButton) imageButton.disabled = next.querySelector('button[formaction]').disabled;
       }
       if (uiStatus.textContent.startsWith("Reconnecting to maintenance coordinator.")) showStatus("");
     } catch {

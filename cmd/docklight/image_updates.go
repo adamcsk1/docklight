@@ -60,6 +60,7 @@ func (app *App) initImageUpdates() error {
 		return err
 	}
 	app.imageMonitor = m
+	app.imageCheckWake = make(chan struct{}, 1)
 	return nil
 }
 
@@ -76,7 +77,8 @@ func (app *App) imageUpdateLoop(ctx context.Context) {
 			return
 		}
 		now := time.Now().UTC()
-		if app.imageUpdatesAllowed() && (checked.IsZero() || now.Sub(checked) >= m.Config.Interval) {
+		manual := app.runRequestedImageCheck(ctx)
+		if !manual && app.imageUpdatesAllowed() && (checked.IsZero() || now.Sub(checked) >= m.Config.Interval) {
 			checkCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 			if err := m.Check(checkCtx, now); err != nil {
 				log.Print("image update check incomplete or state persistence failed")
@@ -95,6 +97,7 @@ func (app *App) imageUpdateLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		case <-app.imageCheckWake:
 		}
 	}
 }
