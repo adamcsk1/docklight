@@ -5,20 +5,23 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"mime"
-	"mime/quotedprintable"
 	"net"
 	"net/smtp"
 	"net/url"
-	"strings"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/google/uuid"
 )
 
-func (c SMTPConfig) Send(ctx context.Context, event Event) error {
+func (c SMTPConfig) Send(ctx context.Context, events []Event) error {
+	if len(events) == 0 {
+		return nil
+	}
+	message, err := c.message(events)
+	if err != nil {
+		return errors.New("SMTP message encoding failed")
+	}
 	tlsConfig, err := TLSConfig(c.Host, c.CAFile)
 	if err != nil {
 		return err
@@ -46,7 +49,7 @@ func (c SMTPConfig) Send(ctx context.Context, event Event) error {
 			return errors.New("SMTP greeting failed")
 		}
 		defer client.Close()
-		return c.submit(client, event)
+		return c.submit(client, message)
 	}
 	client, err := smtp.NewClient(conn, c.Host)
 	if err != nil {
@@ -56,10 +59,10 @@ func (c SMTPConfig) Send(ctx context.Context, event Event) error {
 	if err = client.StartTLS(tlsConfig); err != nil {
 		return errors.New("SMTP STARTTLS failed")
 	}
-	return c.submit(client, event)
+	return c.submit(client, message)
 }
 
-func (c SMTPConfig) submit(client *smtp.Client, event Event) error {
+func (c SMTPConfig) submit(client *smtp.Client, message []byte) error {
 	if c.User != "" {
 		if err := client.Auth(smtp.PlainAuth("", c.User, c.Password, c.Host)); err != nil {
 			return errors.New("SMTP authentication failed")
@@ -78,28 +81,7 @@ func (c SMTPConfig) submit(client *smtp.Client, event Event) error {
 	if err != nil {
 		return errors.New("SMTP data rejected")
 	}
-	subject := mime.QEncoding.Encode("utf-8", "[Docklight] Updates available on "+strings.Map(func(r rune) rune {
-		if r == '\r' || r == '\n' {
-			return ' '
-		}
-		return r
-	}, event.Host.Name))
-	var body strings.Builder
-	fmt.Fprintf(&body, "Host: %s\nHostname: %s\nAddress: %s\nImage: %s\nPlatform: %s\nDeployed SHA: %s\nAvailable SHA: %s\nDetected: %s\nEvent: %s\n\nAffected containers:\n", event.Host.Name, event.Host.Hostname, event.Host.Address, event.Image, event.Platform, event.Deployed, event.Available, event.Detected.UTC().Format(time.RFC3339), event.ID)
-	for _, target := range event.Targets {
-		fmt.Fprintf(&body, "- %s (stack: %s, service: %s)\n", target.Container, target.Stack, target.Service)
-	}
-	body.WriteString("\nDifferent image content is available for the configured tag. No update was installed. Digest changes do not guarantee a newer application version.\n")
-	var encoded strings.Builder
-	encoder := quotedprintable.NewWriter(&encoded)
-	if _, err := encoder.Write([]byte(body.String())); err != nil {
-		return errors.New("SMTP message encoding failed")
-	}
-	if err := encoder.Close(); err != nil {
-		return errors.New("SMTP message encoding failed")
-	}
-	message := "From: " + c.From + "\r\nTo: " + strings.Join(c.To, ", ") + "\r\nSubject: " + subject + "\r\nDate: " + time.Now().UTC().Format(time.RFC1123Z) + "\r\nMessage-ID: <" + event.ID + "@docklight>\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n" + encoded.String()
-	if _, err = w.Write([]byte(message)); err != nil {
+	if _, err = w.Write(message); err != nil {
 		_ = w.Close()
 		return errors.New("SMTP message write failed")
 	}

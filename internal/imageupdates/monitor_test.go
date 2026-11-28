@@ -43,8 +43,12 @@ func TestMonitorDeployedSHAGroupingAndIndependentDelivery(t *testing.T) {
 	snapshot.Containers = append(snapshot.Containers, current)
 	resolves, emails, messages := 0, 0, 0
 	m.Resolve = func(context.Context, string, string, string, string) (string, error) { resolves++; return newSHA, nil }
-	m.Email = func(_ context.Context, e Event) error {
+	m.Email = func(_ context.Context, events []Event) error {
 		emails++
+		if len(events) != 1 {
+			t.Fatalf("expected one grouped event, got %d", len(events))
+		}
+		e := events[0]
 		if e.Host.Name != "Main NAS" || e.Host.Hostname != "nas-main" || e.Host.Address != "https://nas.example:8081" || len(e.Targets) != 2 || e.Targets[0].Stack != "web" || e.Targets[0].Service != "web" || e.Deployed != oldSHA || e.Available != newSHA {
 			t.Fatalf("incomplete event %+v", e)
 		}
@@ -127,7 +131,7 @@ func TestMonitorUnknownSkippedStaleAndHostReplacement(t *testing.T) {
 			if err := m.Check(context.Background(), now); err != nil {
 				t.Fatal(err)
 			}
-			m.Email = func(context.Context, Event) error { t.Fatal("notified unknown or untracked image"); return nil }
+			m.Email = func(context.Context, []Event) error { t.Fatal("notified unknown or untracked image"); return nil }
 			if err := m.Deliver(context.Background(), now); err != nil {
 				t.Fatal(err)
 			}
@@ -140,7 +144,7 @@ func TestMonitorUnknownSkippedStaleAndHostReplacement(t *testing.T) {
 	m, _, _ := monitorFixture(t)
 	now := time.Now().UTC()
 	_ = m.Check(context.Background(), now)
-	m.Email = func(context.Context, Event) error { t.Fatal("notified stale/moved host"); return nil }
+	m.Email = func(context.Context, []Event) error { t.Fatal("notified stale/moved host"); return nil }
 	_ = m.Deliver(context.Background(), now.Add(2*time.Hour))
 	m.Sources[0].Address = "https://different-host:8081"
 	_ = m.Deliver(context.Background(), now)
@@ -161,7 +165,7 @@ func TestMonitorPersistenceFailureAndConcurrentReaders(t *testing.T) {
 		return nil
 	}
 	calls := 0
-	m.Email = func(context.Context, Event) error { calls++; fail = true; return nil }
+	m.Email = func(context.Context, []Event) error { calls++; fail = true; return nil }
 	if err := m.Deliver(context.Background(), now); err == nil || calls != 0 {
 		t.Fatal("delivery before durable write")
 	}
@@ -196,7 +200,7 @@ func TestMonitorAliasDedupAndTransientFailureRetainsDelivery(t *testing.T) {
 	m.Sources = append(m.Sources, alias)
 	now := time.Now().UTC()
 	calls := 0
-	m.Email = func(context.Context, Event) error { calls++; return nil }
+	m.Email = func(context.Context, []Event) error { calls++; return nil }
 	_ = m.Check(context.Background(), now)
 	_ = m.Deliver(context.Background(), now)
 	if calls != 1 {
@@ -236,7 +240,7 @@ func TestMonitorCancellationAndOwnershipPause(t *testing.T) {
 	}
 	_ = m.Check(context.Background(), now)
 	m.Allowed = func() bool { return false }
-	m.Email = func(context.Context, Event) error { t.Fatal("unverified master sent email"); return nil }
+	m.Email = func(context.Context, []Event) error { t.Fatal("unverified master sent email"); return nil }
 	if m.Deliver(context.Background(), now) == nil {
 		t.Fatal("ownership pause hidden")
 	}
@@ -323,7 +327,18 @@ func TestMonitorDeliveryChannelsAndEventsMakeIndependentProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	emails, messages := map[string]int{}, map[string]int{}
-	m.Email = func(ctx context.Context, e Event) error { emails[e.ID]++; <-ctx.Done(); return ctx.Err() }
+	emailCalls := 0
+	m.Email = func(ctx context.Context, events []Event) error {
+		emailCalls++
+		if len(events) != 3 {
+			t.Fatalf("incomplete digest: %d events", len(events))
+		}
+		for _, e := range events {
+			emails[e.ID]++
+		}
+		<-ctx.Done()
+		return ctx.Err()
+	}
 	m.MQTT = func(ctx context.Context, e Event) error {
 		if ctx.Err() != nil {
 			t.Fatal("SMTP consumed MQTT budget")
@@ -338,7 +353,7 @@ func TestMonitorDeliveryChannelsAndEventsMakeIndependentProgress(t *testing.T) {
 		}
 		cancel()
 	}
-	if len(emails) != 3 || len(messages) != 3 {
+	if emailCalls != 3 || len(emails) != 3 || len(messages) != 3 {
 		t.Fatalf("starved events: email=%v mqtt=%v", emails, messages)
 	}
 	for _, count := range messages {
@@ -357,7 +372,7 @@ func TestMonitorPrunesResolvedImageDespiteUnrelatedUnknown(t *testing.T) {
 	snapshot.Containers = append(snapshot.Containers, broken)
 	now := time.Now().UTC()
 	calls := 0
-	m.Email = func(context.Context, Event) error { calls++; return nil }
+	m.Email = func(context.Context, []Event) error { calls++; return nil }
 	if err := m.Check(context.Background(), now); err != nil {
 		t.Fatal(err)
 	}
@@ -410,7 +425,7 @@ func TestMonitorPruningSeparatesPlatforms(t *testing.T) {
 			m, snapshot, stored := monitorFixture(t)
 			snapshot.Containers[0].Architecture, snapshot.Containers[0].Variant = "arm", "v7"
 			now := time.Now().UTC()
-			m.Email = func(context.Context, Event) error { return nil }
+			m.Email = func(context.Context, []Event) error { return nil }
 			if err := m.Check(context.Background(), now); err != nil {
 				t.Fatal(err)
 			}
@@ -453,7 +468,7 @@ func TestMonitorDeliveryStopsAfterOwnershipLoss(t *testing.T) {
 	}
 	allowed := true
 	m.Allowed = func() bool { return allowed }
-	m.Email = func(context.Context, Event) error { allowed = false; return nil }
+	m.Email = func(context.Context, []Event) error { allowed = false; return nil }
 	m.MQTT = func(context.Context, Event) error { t.Fatal("notification sent after ownership loss"); return nil }
 	if err := m.Deliver(context.Background(), now); err == nil {
 		t.Fatal("ownership loss hidden")
@@ -462,5 +477,154 @@ func TestMonitorDeliveryStopsAfterOwnershipLoss(t *testing.T) {
 		if !delivery.Email || delivery.MQTT {
 			t.Fatal("acknowledged email not preserved")
 		}
+	}
+}
+
+func TestMonitorDigestAcrossHostsRetriesAndRestarts(t *testing.T) {
+	m, snapshot, stored := monitorFixture(t)
+	other := *snapshot
+	other.NodeID, other.Hostname = "other-node", "other-host"
+	other.Containers = append([]management.ImageContainer(nil), snapshot.Containers...)
+	other.Containers[0].Image = "registry.example/other:latest"
+	m.Sources = append(m.Sources, Source{ID: "other", Name: "Other host", Address: "https://other.example:8081", Fetch: func(context.Context) (management.ImageSnapshot, error) { return other, nil }})
+	third := snapshot.Containers[0]
+	third.ID, third.Image = "third", "registry.example/third:latest"
+	snapshot.Containers = append(snapshot.Containers, third)
+	now := time.Now().UTC()
+	if err := m.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	events := m.events(m.copyState(), now)
+	// Already delivered email must not appear in a later digest, even while MQTT is pending.
+	state := m.copyState()
+	state.Sent[events[0].ID] = Delivery{HostID: events[0].Host.ID, Image: events[0].Image, Platform: events[0].Platform, Email: true}
+	if err := m.Restore(state); err != nil {
+		t.Fatal(err)
+	}
+	emails, messages, fail := 0, 0, true
+	m.Email = func(_ context.Context, batch []Event) error {
+		emails++
+		if len(batch) != 2 || batch[0].ID == events[0].ID || batch[1].ID == events[0].ID {
+			t.Fatalf("wrong pending batch: %+v", batch)
+		}
+		if fail {
+			return errors.New("SMTP unavailable")
+		}
+		return nil
+	}
+	m.MQTT = func(context.Context, Event) error { messages++; return nil }
+	if err := m.Deliver(context.Background(), now); err == nil {
+		t.Fatal("SMTP failure hidden")
+	}
+	for _, event := range events[1:] {
+		if stored.Sent[event.ID].Email || !stored.Sent[event.ID].MQTT {
+			t.Fatal("failed email acknowledged or independent MQTT blocked")
+		}
+	}
+	fail = false
+	if err := m.Deliver(context.Background(), now); err != nil || emails != 2 || messages != 3 {
+		t.Fatalf("batch retry repeated successful channel: emails=%d mqtt=%d err=%v", emails, messages, err)
+	}
+	for _, event := range events {
+		if !stored.Sent[event.ID].Email || !stored.Sent[event.ID].MQTT {
+			t.Fatal("batch acknowledgement incomplete")
+		}
+	}
+	if err := m.Restore(*stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Deliver(context.Background(), now); err != nil || emails != 2 || messages != 3 {
+		t.Fatal("restart repeated acknowledged digest", err)
+	}
+	// A subsequent cycle sends one fleet digest for the newly changed registry content.
+	m.Resolve = func(context.Context, string, string, string, string) (string, error) {
+		return "sha256:" + strings.Repeat("c", 64), nil
+	}
+	if err := m.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	m.Email = func(_ context.Context, batch []Event) error {
+		emails++
+		hosts := map[string]bool{}
+		for _, e := range batch {
+			hosts[e.Host.ID] = true
+		}
+		if len(batch) != 3 || len(hosts) != 2 {
+			t.Fatal("fleet digest omitted updates or hosts")
+		}
+		return nil
+	}
+	if err := m.Deliver(context.Background(), now); err != nil || emails != 3 || messages != 6 {
+		t.Fatal("new fleet cycle not delivered once", err)
+	}
+}
+
+func TestMonitorDigestPersistenceFailureKeepsWholeBatch(t *testing.T) {
+	m, snapshot, _ := monitorFixture(t)
+	second := snapshot.Containers[0]
+	second.ID, second.Image = "second", "registry.example/second:latest"
+	snapshot.Containers = append(snapshot.Containers, second)
+	now := time.Now().UTC()
+	if err := m.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	fail, emails, saves := false, 0, 0
+	m.Save = func(state State) error {
+		saves++
+		if fail {
+			for _, event := range m.events(state, now) {
+				if !state.Sent[event.ID].Email {
+					t.Fatal("partially acknowledged batch persisted")
+				}
+			}
+			return errors.New("disk full")
+		}
+		return nil
+	}
+	m.Email = func(_ context.Context, batch []Event) error {
+		emails++
+		if len(batch) != 2 {
+			t.Fatal("batch split")
+		}
+		fail = true
+		return nil
+	}
+	m.MQTT = func(context.Context, Event) error { t.Fatal("side effect after failed persistence"); return nil }
+	if err := m.Deliver(context.Background(), now); err == nil || emails != 1 || saves != 2 {
+		t.Fatal("batch persistence failure not handled", err)
+	}
+	fail = false
+	m.MQTT = nil
+	if err := m.Deliver(context.Background(), now); err != nil || emails != 1 {
+		t.Fatal("accepted batch repeated after persistence recovery", err)
+	}
+}
+
+func TestMonitorMQTTRotationSurvivesSlowEvent(t *testing.T) {
+	m, snapshot, _ := monitorFixture(t)
+	for _, name := range []string{"second", "third"} {
+		c := snapshot.Containers[0]
+		c.ID, c.Image = name, "registry.example/"+name+":latest"
+		snapshot.Containers = append(snapshot.Containers, c)
+	}
+	now := time.Now().UTC()
+	if err := m.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]bool{}
+	m.MQTT = func(ctx context.Context, e Event) error {
+		seen[e.ID] = true
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	for range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+		if err := m.Deliver(ctx, now); err == nil {
+			t.Fatal("MQTT timeout hidden")
+		}
+		cancel()
+	}
+	if len(seen) != 3 {
+		t.Fatal("slow MQTT event starved later events")
 	}
 }

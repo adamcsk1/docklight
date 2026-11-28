@@ -74,12 +74,13 @@ type Monitor struct {
 	Sources       []Source
 	Resolve       func(context.Context, string, string, string, string) (string, error)
 	Save          func(State) error
-	Email, MQTT   func(context.Context, Event) error
+	Email         func(context.Context, []Event) error
+	MQTT          func(context.Context, Event) error
 	Allowed       func() bool
 	mu            sync.RWMutex
 	work          sync.Mutex
 	state         State
-	deliveryAfter [2]string
+	deliveryAfter string
 }
 
 func (m *Monitor) Restore(state State) error {
@@ -356,48 +357,66 @@ func (m *Monitor) Deliver(ctx context.Context, now time.Time) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	deadline, _ := ctx.Deadline()
-	// Reserve half the tick for each channel; rotate attempts so failures cannot starve later events.
+	// Reserve half the tick for each channel; SMTP sends one digest, MQTT rotates individual events.
 	channelBudget := time.Until(deadline) / 2
-	for channelIndex, channel := range []string{"email", "mqtt"} {
+	var pending []Event
+	for _, event := range events {
+		if !state.Sent[event.ID].Email {
+			pending = append(pending, event)
+		}
+	}
+	if m.Email != nil && len(pending) != 0 {
+		if err := m.workAllowed(ctx); err != nil {
+			return err
+		}
 		channelCtx, stop := context.WithTimeout(ctx, channelBudget)
-		start := sort.Search(len(events), func(i int) bool { return events[i].ID > m.deliveryAfter[channelIndex] })
-		for offset := range len(events) {
-			if err := m.workAllowed(ctx); err != nil {
-				stop()
-				return err
-			}
-			if channelCtx.Err() != nil {
-				failures = append(failures, channelCtx.Err())
-				break
-			}
-			event := events[(start+offset)%len(events)]
-			delivery := state.Sent[event.ID]
-			delivery.HostID, delivery.Image, delivery.Platform = event.Host.ID, event.Image, event.Platform
-			send, done := m.Email, delivery.Email
-			if channel == "mqtt" {
-				send, done = m.MQTT, delivery.MQTT
-			}
-			if send == nil || done {
-				continue
-			}
-			m.deliveryAfter[channelIndex] = event.ID
-			if err := send(channelCtx, event); err != nil {
-				failures = append(failures, errors.New(channel+" notification failed"))
-				continue
-			}
-			if channel == "email" {
+		err := m.Email(channelCtx, pending)
+		stop()
+		if err != nil {
+			failures = append(failures, errors.New("email notification failed"))
+		} else {
+			for _, event := range pending {
+				delivery := state.Sent[event.ID]
+				delivery.HostID, delivery.Image, delivery.Platform = event.Host.ID, event.Image, event.Platform
 				delivery.Email = true
-			} else {
-				delivery.MQTT = true
+				state.Sent[event.ID] = delivery
 			}
-			state.Sent[event.ID] = delivery
-			// Keep successful delivery in memory even if saving fails; stop other side effects.
+			// Preserve the whole accepted batch in memory even if saving fails; stop other side effects.
 			if err := m.publish(state); err != nil {
-				stop()
 				return err
 			}
 		}
-		stop()
+	}
+	if m.MQTT == nil {
+		return errors.Join(failures...)
+	}
+	channelCtx, stop := context.WithTimeout(ctx, channelBudget)
+	defer stop()
+	start := sort.Search(len(events), func(i int) bool { return events[i].ID > m.deliveryAfter })
+	for offset := range len(events) {
+		if err := m.workAllowed(ctx); err != nil {
+			return err
+		}
+		if channelCtx.Err() != nil {
+			failures = append(failures, channelCtx.Err())
+			break
+		}
+		event := events[(start+offset)%len(events)]
+		delivery := state.Sent[event.ID]
+		if delivery.MQTT {
+			continue
+		}
+		m.deliveryAfter = event.ID
+		if err := m.MQTT(channelCtx, event); err != nil {
+			failures = append(failures, errors.New("mqtt notification failed"))
+			continue
+		}
+		delivery.HostID, delivery.Image, delivery.Platform = event.Host.ID, event.Image, event.Platform
+		delivery.MQTT = true
+		state.Sent[event.ID] = delivery
+		if err := m.publish(state); err != nil {
+			return err
+		}
 	}
 	return errors.Join(failures...)
 }

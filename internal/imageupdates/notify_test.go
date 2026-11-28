@@ -11,7 +11,6 @@ import (
 	"encoding/pem"
 	"io"
 	"mime"
-	"mime/quotedprintable"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -139,7 +138,9 @@ func TestSMTPTLSDeliveryAndPartialRefusal(t *testing.T) {
 				c.InsecureSkipVerify = mode == "insecure-tls" || mode == "insecure-hostname" || mode == "tls-unavailable"
 				event := notificationEvent()
 				event.Host.Name += " – árvíz"
-				err = c.Send(context.Background(), event)
+				second := notificationEvent()
+				second.ID, second.Host.ID, second.Host.Name = "second", "other", "Other host"
+				err = c.Send(context.Background(), []Event{event, second})
 				accepted := mode == "ok" || mode == "insecure-tls" || mode == "insecure-hostname"
 				if (err == nil) != accepted {
 					t.Fatalf("SMTP result %v", err)
@@ -159,19 +160,19 @@ func TestSMTPTLSDeliveryAndPartialRefusal(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				decoded, err := io.ReadAll(quotedprintable.NewReader(message.Body))
-				if err != nil {
-					t.Fatal(err)
-				}
+				plain, html := decodeEmail(t, message)
 				subject, err := (&mime.WordDecoder{}).DecodeHeader(message.Header.Get("Subject"))
 				if err != nil {
 					t.Fatal(err)
 				}
-				body := subject + "\n" + string(decoded)
-				for _, part := range []string{"Main NAS", "árvíz", "nas-main", "192.0.2.10", "web-1", "stack: web", "service: app", oldSHA, newSHA, "[Docklight] Updates available on Main NAS"} {
+				body := subject + "\n" + plain
+				for _, part := range []string{"Main NAS", "árvíz", "Other host", "nas-main", "192.0.2.10", "web-1", "Stack: web", "Service: app", oldSHA, newSHA, "[Docklight] 2 image updates across 2 hosts"} {
 					if !strings.Contains(body, part) {
 						t.Fatalf("email missing %q: %s", part, body)
 					}
+				}
+				if !strings.Contains(html, "Other host") || len(messages) != 0 {
+					t.Fatal("digest split across messages or omitted a host")
 				}
 			})
 		}

@@ -83,7 +83,7 @@ func TestImageUpdateUIUsesCacheAndCountsServices(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	a.render(w, r, "inventory", d)
-	for _, part := range []string{`class="stack-status"`, "↑ 1 service with updates", "↑ Update available", "has-image-update", "Deployed: sha256:", "Registry: sha256:", "image-update-detail"} {
+	for _, part := range []string{`class="stack-status"`, `aria-label="1 service with updates"`, "↑ 1 update", "↑ Update available", "has-image-update", "Deployed: sha256:", "Registry: sha256:", "image-update-detail"} {
 		if !strings.Contains(w.Body.String(), part) {
 			t.Fatalf("missing UI %q: %s", part, w.Body.String())
 		}
@@ -213,7 +213,7 @@ func TestImageUpdateWorkerStartupAndCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	delivered := make(chan struct{}, 1)
-	a.imageMonitor.Email = func(context.Context, imageupdates.Event) error { delivered <- struct{}{}; cancel(); return nil }
+	a.imageMonitor.Email = func(context.Context, []imageupdates.Event) error { delivered <- struct{}{}; cancel(); return nil }
 	done := make(chan struct{})
 	go func() { defer close(done); a.imageUpdateLoop(ctx) }()
 	select {

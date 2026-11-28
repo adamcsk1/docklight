@@ -126,7 +126,7 @@ func TestSMTPInsecureSkipVerifyIsolationAndCAValidation(t *testing.T) {
 	if c.validate() == nil {
 		t.Fatal("SMTP opt-in bypassed configured CA validation")
 	}
-	if err := c.Send(t.Context(), notificationEvent()); err == nil || err.Error() != "invalid notification CA certificate" {
+	if err := c.Send(t.Context(), []Event{notificationEvent()}); err == nil || err.Error() != "invalid notification CA certificate" {
 		t.Fatalf("SMTP opt-in did not reject invalid CA before dialing: %v", err)
 	}
 }

@@ -161,7 +161,7 @@ func TestRestoredPresentationAndEmbeddedAssets(t *testing.T) {
 				t.Fatalf("obsolete/inline content: %s", forbidden)
 			}
 		}
-		for _, label := range []string{`aria-label="Compose stack docklight"`, `aria-label="Compose stack web"`, `aria-label="Standalone containers"`, `1 / 2 running`} {
+		for _, label := range []string{`aria-label="Compose stack docklight"`, `aria-label="Compose stack web"`, `aria-label="Standalone containers"`, `1/2 running`} {
 			if !strings.Contains(body, label) {
 				t.Fatalf("missing stack grouping: %s", label)
 			}

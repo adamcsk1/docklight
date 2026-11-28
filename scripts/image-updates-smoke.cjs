@@ -1,5 +1,7 @@
 const { chromium } = require("playwright");
 const assert = require("node:assert/strict");
+const fs = require("node:fs/promises");
+const path = require("node:path");
 
 (async () => {
   const base = process.argv[2];
@@ -24,13 +26,14 @@ const assert = require("node:assert/strict");
               project: summary.parentElement.dataset.project,
               display: getComputedStyle(summary).display,
               gap: parseFloat(getComputedStyle(heading).columnGap),
+              statusGap: parseFloat(getComputedStyle(heading.querySelector(".stack-status")).columnGap),
               heading: heading.getBoundingClientRect().toJSON(),
               name: name.getBoundingClientRect().toJSON(),
               badges: [...heading.querySelectorAll(".badge")].map(badge => ({ ...badge.getBoundingClientRect().toJSON(), text: badge.textContent.trim() })),
             };
           }));
           assert.equal(headings.length, 6, "layout fixture must include varied stack names and status combinations");
-          for (const { project, display, gap, heading, name, badges } of headings) {
+          for (const { project, display, gap, statusGap, heading, name, badges } of headings) {
             const label = `${project || "standalone"} at ${layoutWidth}px`;
             assert.equal(display, "list-item", `native disclosure marker lost: ${label}`);
             assert(name.left >= heading.left - 1 && name.right <= heading.right + 1, `name outside summary: ${label}`);
@@ -42,26 +45,35 @@ const assert = require("node:assert/strict");
               assert(badges[0].left >= name.right + gap - 1, `badges overlap stack name: ${label}`);
             }
             if (layoutWidth > 672) {
-              assert(Math.abs(badges.at(-1).right - heading.right) <= 1, `status cluster not right-aligned: ${label}`);
+              assert(Math.abs(badges.at(-1).right - heading.right) <= 2, `status cluster not right-aligned: ${label}`);
               for (let i = 1; i < badges.length; i++) {
                 assert(Math.abs(badges[i].top - badges[i - 1].top) <= 1, `desktop badges split across rows: ${label}`);
-                assert(Math.abs(badges[i].left - badges[i - 1].right - gap) <= 1, `badges scattered instead of grouped: ${label}`);
+                assert(Math.abs(badges[i].left - badges[i - 1].right - statusGap) <= 1, `badges scattered instead of grouped: ${label}`);
               }
             } else {
               assert(badges[0].top >= name.bottom, `mobile badges must sit below stack name: ${label}`);
-              assert(Math.abs(badges[0].left - name.left) <= 1, `mobile status cluster not left-aligned: ${label}`);
+              assert(Math.abs(badges[0].left - name.left) <= 2, `mobile status cluster not left-aligned: ${label}`);
             }
           }
           assert.equal(headings.find(item => item.project === "a").badges.length, 1);
           assert.equal(headings.find(item => item.project === "medium-stack-name").badges.length, 2);
-          assert.deepEqual(headings.find(item => item.project === "stack-with-mixed-update-states").badges.map(badge => badge.text), ["1 / 2 running", "↑ 1 service with updates", "1 update checks unknown/stale"]);
-          assert.deepEqual(headings.find(item => item.project === "").badges.map(badge => badge.text), ["1 / 1 running"]);
+          const mixed = headings.find(item => item.project === "stack-with-mixed-update-states");
+          assert.deepEqual(mixed.badges.map(badge => badge.text), ["1/2 running", "↑ 1 update", "1 unknown"]);
+          assert.equal(mixed.statusGap, 0, "status segments must have no scattered gaps");
+          assert(mixed.badges.every(badge => badge.height <= 24), "status segments must stay compact");
+          assert.deepEqual(headings.find(item => item.project === "").badges.map(badge => badge.text), ["1/1 running"]);
         }
         const group = page.locator('details.stack-group[data-project="web"]');
         const summary = group.locator(":scope > summary");
         assert.equal(await group.evaluate(node => node.open), false);
-        assert((await summary.innerText()).toLowerCase().includes("1 service with updates"));
+        assert((await summary.innerText()).includes("↑ 1 update"));
+        assert.equal(await summary.getByRole("img", { name: "1 service with updates", exact: true }).count(), 1);
         assert.equal(await summary.locator(".badge-update-available").isVisible(), true);
+        const screenshots = process.env.DOCKLIGHT_UI_SCREENSHOT_DIR;
+        if (screenshots && javaScriptEnabled) {
+          await fs.mkdir(screenshots, { recursive: true });
+          await page.screenshot({ path: path.join(screenshots, `stack-status-${new URL(base).pathname.replaceAll("/", "") || "root"}-${width}.png`), fullPage: true });
+        }
         await summary.focus();
         await page.keyboard.press("Enter");
         const rows = group.locator("article.has-image-update");

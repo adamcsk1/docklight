@@ -1,0 +1,20 @@
+DOCKLIGHT — Image update digest
+{{count .Updates "image update"}} · {{count (len .Hosts) "host"}} · {{count .Stacks "stack group"}} · {{count .Services "service"}} · {{count .Containers "container"}}
+{{range .Hosts}}
+Host: {{.Name}}
+Hostname: {{.Hostname}}
+Address: {{.Address}}
+{{range .Stacks}}
+Stack: {{if .Name}}{{.Name}}{{else}}Standalone containers{{end}}
+{{range .Updates}}
+Service: {{if .Service}}{{.Service}}{{else}}Standalone container{{end}}
+Image: {{.Image}}
+Platform: {{.Platform}}
+Containers: {{join .Containers ", "}}
+Deployed SHA: {{.Deployed}}
+Available SHA: {{.Available}}
+Detected: {{utc .Detected}}
+Event: {{.ID}}
+{{end}}{{end}}{{end}}
+Different image content is available for the configured tags. No update was installed.
+Digest changes do not guarantee a newer application version.
