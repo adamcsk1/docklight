@@ -80,6 +80,10 @@ func (app *App) populateMaintenance(r *http.Request, d *PageData) {
 		return
 	}
 	d.Master = d.HostID == master.ID
+	d.ImageChecksEnabled = app.imageMonitor != nil
+	app.imageCheckMu.RLock()
+	d.ImageCheck = app.imageCheck
+	app.imageCheckMu.RUnlock()
 	app.verificationMu.RLock()
 	v, checked := app.verification, app.verifiedAt
 	app.verificationMu.RUnlock()

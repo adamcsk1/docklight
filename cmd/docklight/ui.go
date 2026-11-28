@@ -60,6 +60,8 @@ type PageData struct {
 	UpdatesSummary                   string
 	ImageUpdates                     map[string]imageupdates.Result
 	ResourceUpdates                  map[string][]imageupdates.Result
+	ImageChecksEnabled               bool
+	ImageCheck                       imageCheckRun
 }
 
 func groupContainers(containers []management.Container) []containerGroup {
@@ -223,6 +225,7 @@ func (app *App) routes() http.Handler {
 	mux.Handle("POST "+app.withBase("/action"), app.requireAuth(http.HandlerFunc(app.action)))
 	mux.Handle("POST "+app.withBase("/maintenance"), app.requireAuth(http.HandlerFunc(app.maintenanceStart)))
 	mux.Handle("GET "+app.withBase("/maintenance"), app.requireAuth(http.HandlerFunc(app.maintenanceStatus)))
+	mux.Handle("POST "+app.withBase("/image-updates/check"), app.requireAuth(http.HandlerFunc(app.imageCheckStart)))
 	if app.cfg.BaseURL != "/" {
 		mux.HandleFunc("GET "+app.cfg.BaseURL, func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != app.cfg.BaseURL {
