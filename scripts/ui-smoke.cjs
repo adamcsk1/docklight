@@ -95,7 +95,7 @@ const path = require("node:path");
       for (const name of ["Containers in docklight", "Containers in web", "Standalone containers"]) assert.equal(await page.getByRole("table", { name, exact: true }).count(), 1);
       assert.equal(await page.locator("#volumes").isVisible(), false, "cleanup should not crowd container screen");
       const webGroup = page.locator('details.stack-group[aria-label="Compose stack web"]');
-      assert((await webGroup.locator(":scope > summary").textContent()).includes("1 / 2 running"));
+      assert((await webGroup.locator(":scope > summary").textContent()).includes("1/2 running"));
       assert.equal(await webGroup.getByRole("row").count(), 3);
       assert.equal(await page.locator('#activity, [href="#activity"], .activity-list, .activity-item').count(), 0);
       await webGroup.locator(":scope > summary").click();

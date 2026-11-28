@@ -302,8 +302,10 @@ pre {
 .stack-group[open] > .stack-summary { border-bottom: var(--line-width) solid var(--color-line); }
 .stack-heading { display: inline-flex; width: calc(100% - 1.25rem); flex-wrap: wrap; align-items: center; gap: var(--space-2); vertical-align: middle; }
 .stack-heading .stack-name { min-width: 0; overflow-wrap: anywhere; }
-.stack-status { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); margin-inline-start: auto; min-width: 0; max-width: 100%; }
-.stack-status .badge { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.stack-status { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0; margin-inline-start: auto; min-width: 0; max-width: 100%; border: var(--line-width) solid var(--color-line); border-radius: var(--radius-sm); background: var(--color-input); }
+.stack-status .badge { min-width: 0; max-width: 100%; min-height: 0; border: 0; padding: var(--space-1) var(--space-2); background: transparent; overflow-wrap: anywhere; font-size: var(--font-size-xs); letter-spacing: 0; text-transform: none; white-space: nowrap; }
+.stack-status .badge + .badge { border-inline-start: var(--line-width) solid var(--color-line); }
+.stack-status .badge-unknown { color: var(--color-muted); }
 .stack-group > .resource-table { border: 0; }
 .login-body { display: grid; place-items: center; padding: var(--space-4); }
 .login-panel { width: min(100%, var(--login-panel-max)); padding: var(--space-5); border-top: var(--badge-border-width) solid var(--color-blue); }

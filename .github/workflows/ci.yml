@@ -33,7 +33,7 @@ jobs:
           check-latest: true
           cache: true
       - name: Check formatting
-        run: test -z "$(gofmt -l cmd internal)"
+        run: test -z "$(gofmt -l cmd internal assets)"
       - run: go test -race -coverprofile=coverage.out ./...
       - name: Require Compose symlink regressions
         env:
@@ -53,7 +53,7 @@ jobs:
         env:
           NODE_PATH: ${{ runner.temp }}/docklight-browser/node_modules
           DOCKLIGHT_UI_BROWSER_TEST: '1'
-        run: go test -v ./cmd/docklight -run TestBrowser -count=1 -timeout=6m
+        run: go test -v ./cmd/docklight ./internal/imageupdates -run TestBrowser -count=1 -timeout=6m
       - name: Build native images for management-update integration tests
         run: |
           docker build --build-arg BUILD_COMMIT="${{ github.sha }}" --target ui -t docklight:refactor .
