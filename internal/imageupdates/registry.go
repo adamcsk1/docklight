@@ -73,9 +73,17 @@ func (b *boundedBody) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// Resolve fetches metadata only. Config digest is the image ID used by Docker;
-// comparing manifest/index digests directly with that ID would always differ.
+// Resolve fetches the config digest used as the image ID by Docker's classic store.
 func (r Registry) Resolve(ctx context.Context, image, os, architecture, variant string) (string, error) {
+	return r.resolve(ctx, image, os, architecture, variant, false)
+}
+
+// ResolveManifest fetches the selected platform manifest digest used by containerd containers.
+func (r Registry) ResolveManifest(ctx context.Context, image, os, architecture, variant string) (string, error) {
+	return r.resolve(ctx, image, os, architecture, variant, true)
+}
+
+func (r Registry) resolve(ctx context.Context, image, os, architecture, variant string, manifestDigest bool) (string, error) {
 	if os == "" || architecture == "" || strings.Contains(image, "@") || strings.HasPrefix(image, "sha256:") {
 		return "", errors.New("Image tag or deployed platform unavailable")
 	}
@@ -154,6 +162,12 @@ func (r Registry) Resolve(ctx context.Context, image, os, architecture, variant 
 	}
 	if file.OS != os || file.Architecture != architecture || variant != "" && file.Variant != "" && file.Variant != variant {
 		return "", errors.New("Registry image platform does not match deployed image")
+	}
+	if manifestDigest {
+		if !imageSHA.MatchString(descriptor.Digest.String()) {
+			return "", errors.New("Invalid registry manifest digest")
+		}
+		return descriptor.Digest.String(), nil
 	}
 	return config.String(), nil
 }

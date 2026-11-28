@@ -144,6 +144,6 @@
 {{define "image_update"}}
 {{if .Status}}<details class="image-update-detail" data-image-update-key="{{.ID}}/{{.ImageID}}/{{.Available}}">
 <summary><span class="badge {{if eq .Status "available"}}badge-update-available{{else if eq .Status "current"}}badge-success{{else}}badge-unknown{{end}}">{{if eq .Status "available"}}↑ Update available{{else if eq .Status "current"}}Image current{{else if eq .Status "untracked"}}Image not tracked{{else if eq .Status "stale"}}Update check stale{{else}}Update check unknown{{end}}</span></summary>
-<div class="resource-break">{{if .Image}}<p>{{.Image}}</p>{{end}}{{if .Detail}}<p>{{.Detail}}</p>{{end}}{{if not .Checked.IsZero}}<p>Checked: {{.Checked.UTC.Format "2006-01-02T15:04:05Z"}}</p>{{end}}{{if .ImageID}}<p>Deployed: {{.ImageID}}</p>{{end}}{{if .Available}}<p>Registry: {{.Available}}</p>{{end}}{{if eq .Status "available"}}<p>Different content for the configured tag. No automatic update.</p>{{end}}</div>
+<div class="resource-break">{{if .Image}}<p>{{.Image}}</p>{{end}}{{if .Detail}}<p>{{.Detail}}</p>{{end}}{{if not .Checked.IsZero}}<p>Checked: {{.Checked.UTC.Format "2006-01-02T15:04:05Z"}}</p>{{end}}{{if .ImageID}}<p>Deployed: {{.DeployedDigest}}</p>{{end}}{{if .Available}}<p>Registry: {{.Available}}</p>{{end}}{{if eq .Status "available"}}<p>Different content for the configured tag. No automatic update.</p>{{end}}</div>
 </details>{{end}}
 {{end}}

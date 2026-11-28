@@ -22,7 +22,7 @@ func TestImageSnapshotReadOnlyUsesDeployedID(t *testing.T) {
 	f.e.Run = func(ctx context.Context, dir string, out io.Writer, args ...string) error {
 		switch {
 		case args[0] == "info":
-			_, err := io.WriteString(out, "docker-host\n")
+			_, err := io.WriteString(out, `{"Name":"docker-host"}`)
 			return err
 		case args[0] == "image" && args[1] == "inspect":
 			inspects++
@@ -41,7 +41,7 @@ func TestImageSnapshotReadOnlyUsesDeployedID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if inspects != 1 || snapshot.Version != 1 || snapshot.Hostname != "docker-host" || len(snapshot.Containers) != 2 || snapshot.Containers[0].Architecture != "arm" || snapshot.Containers[0].Variant != "v7" || snapshot.Containers[0].Error != "" || snapshot.Containers[0].Skip != "" {
+	if inspects != 1 || snapshot.Version != ImageSnapshotVersion || snapshot.Hostname != "docker-host" || len(snapshot.Containers) != 2 || snapshot.Containers[0].Architecture != "arm" || snapshot.Containers[0].Variant != "v7" || snapshot.Containers[0].Error != "" || snapshot.Containers[0].Skip != "" {
 		t.Fatalf("wrong snapshot %+v", snapshot)
 	}
 	s, err := NewServer(f.e, testToken)
@@ -85,7 +85,7 @@ func TestImageSnapshotSkipsAndMetadataFailure(t *testing.T) {
 			}
 			f.e.Run = func(ctx context.Context, dir string, out io.Writer, args ...string) error {
 				if args[0] == "info" {
-					_, err := io.WriteString(out, "host")
+					_, err := io.WriteString(out, `{"Name":"host"}`)
 					return err
 				}
 				if args[0] == "image" {
@@ -112,5 +112,81 @@ func TestImageSnapshotSkipsAndMetadataFailure(t *testing.T) {
 				t.Fatal("untracked image not marked")
 			}
 		})
+	}
+}
+
+func TestImageSnapshotContainerdPlatformManifests(t *testing.T) {
+	for _, mode := range []string{"index", "manifest", "missing-manifest", "missing-descriptors", "missing-platform", "wrong-media-type"} {
+		t.Run(mode, func(t *testing.T) {
+			f := newFixture(t)
+			base := f.e.Run
+			selected := "sha256:" + strings.Repeat("c", 64)
+			descriptor := &imageDescriptor{Digest: selected, MediaType: "application/vnd.oci.image.manifest.v1+json", Platform: &struct{ OS, Architecture, Variant string }{OS: "linux", Architecture: "arm", Variant: "v7"}}
+			f.containers[0].ImageManifestDescriptor = descriptor
+			target := &imageDescriptor{Digest: f.containers[0].Image, MediaType: "application/vnd.oci.image.index.v1+json"}
+			switch mode {
+			case "manifest":
+				target.MediaType = "application/vnd.docker.distribution.manifest.v2+json"
+				target.Digest = selected
+				f.containers[0].Image = selected
+				f.containers[0].ImageManifestDescriptor = nil
+			case "missing-manifest":
+				f.containers[0].ImageManifestDescriptor = nil
+			case "missing-descriptors":
+				f.containers[0].ImageManifestDescriptor = nil
+				target = nil
+			case "missing-platform":
+				descriptor.Platform = nil
+			case "wrong-media-type":
+				descriptor.MediaType = target.MediaType
+			}
+			f.e.Run = func(ctx context.Context, dir string, out io.Writer, args ...string) error {
+				if args[0] == "info" {
+					_, err := io.WriteString(out, `{"Name":"host","DriverStatus":[["driver-type","io.containerd.snapshotter.v1"]]}`)
+					return err
+				}
+				if args[0] == "image" {
+					if len(args) != 3 || args[2] != f.containers[0].Image {
+						t.Fatal("inspected a mutable tag instead of deployed image")
+					}
+					return json.NewEncoder(out).Encode([]map[string]any{{"Id": f.containers[0].Image, "Os": "linux", "Architecture": "amd64", "RepoDigests": []string{"registry.example/web@" + f.containers[0].Image}, "Descriptor": target}})
+				}
+				return base(ctx, dir, out, args...)
+			}
+			snapshot, err := f.e.ImageSnapshot(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			result := snapshot.Containers[0]
+			valid := mode == "index" || mode == "manifest"
+			if valid {
+				if result.Error != "" || result.ManifestDigest != selected || result.ImageID != f.containers[0].Image || result.DeployedDigest() != selected {
+					t.Fatalf("wrong deployed manifest: %+v", result)
+				}
+				if mode == "index" && (result.Architecture != "arm" || result.Variant != "v7") {
+					t.Fatal("default image-inspect platform overrode container's actual platform")
+				}
+			} else if result.Error == "" {
+				t.Fatalf("ambiguous containerd metadata accepted: %+v", result)
+			}
+		})
+	}
+}
+
+func TestImageSnapshotRejectsUnknownStoreMetadata(t *testing.T) {
+	f := newFixture(t)
+	base := f.e.Run
+	f.e.Run = func(ctx context.Context, dir string, out io.Writer, args ...string) error {
+		if args[0] == "info" {
+			_, err := io.WriteString(out, "malformed private daemon metadata")
+			return err
+		}
+		if args[0] == "image" {
+			t.Fatal("inspected image without identifying image store")
+		}
+		return base(ctx, dir, out, args...)
+	}
+	if _, err := f.e.ImageSnapshot(context.Background()); err == nil || err.Error() != "Docker image store metadata unavailable" {
+		t.Fatalf("unknown image store accepted or metadata leaked: %v", err)
 	}
 }
