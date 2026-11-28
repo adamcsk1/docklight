@@ -20,7 +20,7 @@ func (app *App) initImageUpdates() error {
 	if app.masterHost() == nil {
 		return errors.New("image update checks require one master host")
 	}
-	m := &imageupdates.Monitor{Config: app.cfg.Updates, Resolve: imageupdates.Registry{}.Resolve, Allowed: app.imageUpdatesAllowed}
+	m := &imageupdates.Monitor{Config: app.cfg.Updates, Resolve: imageupdates.Registry{}.Resolve, ResolveManifest: imageupdates.Registry{}.ResolveManifest, Allowed: app.imageUpdatesAllowed}
 	for _, host := range app.cfg.Hosts {
 		host := host
 		m.Sources = append(m.Sources, imageupdates.Source{ID: host.ID, Name: host.Name, Address: host.URL, Fetch: func(ctx context.Context) (management.ImageSnapshot, error) {
@@ -122,14 +122,18 @@ func (app *App) populateImageUpdates(h *Host, d *PageData) {
 	d.UpdatesSummary = "Image updates checked " + state.Checked.UTC().Format(time.RFC3339)
 	if state.Error != "" {
 		d.UpdatesSummary = state.Error
+	} else if state.SnapshotVersion != management.ImageSnapshotVersion {
+		d.UpdatesSummary = "Image update metadata pending; upgrade agent if checks remain unavailable"
 	}
 	stale := state.Checked.IsZero() || time.Since(state.Checked) > app.cfg.Updates.Interval+5*time.Minute || time.Now().Before(state.Checked)
-	if stale && state.Error == "" {
+	if stale && state.Error == "" && state.SnapshotVersion == management.ImageSnapshotVersion {
 		d.UpdatesSummary = "Image update results stale; last check " + state.Checked.UTC().Format(time.RFC3339)
 	}
 	results := make(map[string]imageupdates.Result, len(state.Results))
-	for _, result := range state.Results {
-		results[result.ID] = result
+	if state.SnapshotVersion == management.ImageSnapshotVersion {
+		for _, result := range state.Results {
+			results[result.ID] = result
+		}
 	}
 	for _, container := range d.Inventory.Containers {
 		result := imageupdates.Result{ImageContainer: management.ImageContainer{ID: container.ID, Name: container.Name, Image: container.Image, ImageID: container.ImageID}, Status: "unknown", Detail: "Update check pending for deployed image"}

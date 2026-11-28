@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -34,7 +35,7 @@ func imageUpdateApp(t *testing.T, extra ...management.Container) (*App, *atomic.
 		switch r.URL.Path {
 		case "/v1/image-updates":
 			calls.Add(1)
-			snapshot := management.ImageSnapshot{Version: 1, NodeID: "node-one", Hostname: "nas-main"}
+			snapshot := management.ImageSnapshot{Version: management.ImageSnapshotVersion, NodeID: "node-one", Hostname: "nas-main"}
 			for _, c := range containers {
 				snapshot.Containers = append(snapshot.Containers, management.ImageContainer{ID: c.ID, Name: c.Name, Image: c.Image, ImageID: c.ImageID, Project: c.Project, Service: c.Service, OS: "linux", Architecture: "amd64"})
 			}
@@ -106,6 +107,141 @@ func TestImageUpdateUIUsesCacheAndCountsServices(t *testing.T) {
 	}
 }
 
+func TestImageUpdateDiskRestartDeliveryAndBadges(t *testing.T) {
+	for _, pending := range []bool{false, true} {
+		t.Run(fmt.Sprintf("pending=%t", pending), func(t *testing.T) {
+			a, _ := imageUpdateApp(t)
+			var dbPath string
+			if err := a.db.QueryRow(`SELECT file FROM pragma_database_list WHERE name='main'`).Scan(&dbPath); err != nil {
+				t.Fatal(err)
+			}
+			old, current, next := "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64), "sha256:"+strings.Repeat("c", 64)
+			emails, messages := 0, 0
+			send := func(_ context.Context, events []imageupdates.Event) error {
+				emails++
+				if len(events) != 1 || len(events[0].Targets) != 2 {
+					t.Fatal("replicas not grouped in one digest")
+				}
+				if pending && emails == 1 {
+					return fmt.Errorf("SMTP unavailable")
+				}
+				return nil
+			}
+			wire := func() {
+				a.imageMonitor.Resolve = func(context.Context, string, string, string, string) (string, error) { return current, nil }
+				a.imageMonitor.Email = send
+				a.imageMonitor.MQTT = func(context.Context, imageupdates.Event) error { messages++; return nil }
+			}
+			reopen := func() {
+				t.Helper()
+				cfg := a.cfg
+				if err := a.db.Close(); err != nil {
+					t.Fatal(err)
+				}
+				db, err := sql.Open("sqlite", dbPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				db.SetMaxOpenConns(1)
+				t.Cleanup(func() { _ = db.Close() })
+				a = &App{db: db, cfg: cfg}
+				if err := a.initDB(); err != nil {
+					t.Fatal(err)
+				}
+				if err := a.loadTemplates(); err != nil {
+					t.Fatal(err)
+				}
+				if v := a.checkMaster(context.Background(), false); v.Error != "" {
+					t.Fatal(v.Error)
+				}
+				if err := a.initImageUpdates(); err != nil {
+					t.Fatal(err)
+				}
+				wire()
+			}
+			scan := func() {
+				t.Helper()
+				if err := a.imageMonitor.Check(context.Background(), time.Now().UTC()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			deliver := func() error { return a.imageMonitor.Deliver(context.Background(), time.Now().UTC()) }
+			wire()
+			if err := deliver(); (err != nil) != pending {
+				t.Fatalf("initial delivery: %v", err)
+			}
+			reopen()
+			scan()
+			if err := deliver(); err != nil {
+				t.Fatal(err)
+			}
+			wantEmails := 1
+			if pending {
+				wantEmails++
+			}
+			if emails != wantEmails || messages != 1 {
+				t.Fatalf("restart lost channel acknowledgements: emails=%d mqtt=%d", emails, messages)
+			}
+			// A successful empty startup snapshot must not erase the accepted digest.
+			host := a.imageMonitor.Host("nas", a.cfg.Hosts[0].URL)
+			a.imageMonitor.Sources[0].Fetch = func(context.Context) (management.ImageSnapshot, error) {
+				return management.ImageSnapshot{Version: management.ImageSnapshotVersion, NodeID: host.NodeID, Hostname: host.Hostname}, nil
+			}
+			scan()
+			reopen()
+			scan()
+			if err := deliver(); err != nil || emails != wantEmails || messages != 1 {
+				t.Fatalf("returning inventory repeated accepted digest: emails=%d mqtt=%d err=%v", emails, messages, err)
+			}
+			d := PageData{HostID: "nas"}
+			r := httptest.NewRequest("GET", "/docklight/", nil)
+			if err := a.loadInventory(r, &a.cfg.Hosts[0], &d); err != nil {
+				t.Fatal(err)
+			}
+			if d.ImageUpdates["one"].Status != "available" || d.ContainerGroups[0].Updates != 1 {
+				t.Fatal("restart hid a genuine deployed-image difference")
+			}
+			deployed := management.ImageSnapshot{Version: management.ImageSnapshotVersion, NodeID: host.NodeID, Hostname: host.Hostname}
+			for _, result := range host.Results {
+				container := result.ImageContainer
+				container.ImageID = current
+				deployed.Containers = append(deployed.Containers, container)
+			}
+			useDeployment := func() {
+				a.imageMonitor.Sources[0].Fetch = func(context.Context) (management.ImageSnapshot, error) { return deployed, nil }
+			}
+			useDeployment()
+			scan()
+			for i := range d.Inventory.Containers {
+				if d.Inventory.Containers[i].ImageID != old {
+					t.Fatal("fixture did not start with old deployed images")
+				}
+				d.Inventory.Containers[i].ImageID = current
+			}
+			// Also prove a completed deployment remains current after another disk reopen.
+			reopen()
+			useDeployment()
+			scan()
+			a.populateImageUpdates(&a.cfg.Hosts[0], &d)
+			d.ContainerGroups = groupContainers(d.Inventory.Containers)
+			a.groupImageUpdates(&d)
+			w := httptest.NewRecorder()
+			a.render(w, r, "inventory", d)
+			if d.ImageUpdates["one"].Status != "current" || d.ContainerGroups[0].Updates != 0 || strings.Contains(w.Body.String(), "↑ Update available") || strings.Contains(w.Body.String(), "↑ 1 update") {
+				t.Fatal("matching deployed SHA still shows update badges")
+			}
+			if err := deliver(); err != nil || emails != wantEmails || messages != 1 {
+				t.Fatal("matching image triggered a notification", err)
+			}
+			a.imageMonitor.Resolve = func(context.Context, string, string, string, string) (string, error) { return next, nil }
+			scan()
+			if err := deliver(); err != nil || emails != wantEmails+1 || messages != 2 {
+				t.Fatal("new registry content did not produce one new digest", err)
+			}
+		})
+	}
+}
+
 func TestStandaloneUpdateCountDoesNotMergeServiceLabels(t *testing.T) {
 	d := PageData{ContainerGroups: groupContainers([]management.Container{{ID: "one", Service: "shared"}, {ID: "two", Service: "shared"}}), ImageUpdates: map[string]imageupdates.Result{"one": {Status: "available"}, "two": {Status: "available"}}}
 	(&App{}).groupImageUpdates(&d)
@@ -114,10 +250,42 @@ func TestStandaloneUpdateCountDoesNotMergeServiceLabels(t *testing.T) {
 	}
 }
 
+func TestImageUpdateLegacyCacheWaitsForStorageAwareSnapshot(t *testing.T) {
+	a, _ := imageUpdateApp(t)
+	var text string
+	if err := a.db.QueryRow(`SELECT value FROM image_updates WHERE id=1`).Scan(&text); err != nil {
+		t.Fatal(err)
+	}
+	var state imageupdates.State
+	if err := json.Unmarshal([]byte(text), &state); err != nil {
+		t.Fatal(err)
+	}
+	host := state.Hosts["nas"]
+	host.SnapshotVersion = 0
+	state.Hosts["nas"] = host
+	if err := a.imageMonitor.Restore(state); err != nil {
+		t.Fatal(err)
+	}
+	d := PageData{}
+	if err := a.loadInventory(httptest.NewRequest("GET", "/", nil), &a.cfg.Hosts[0], &d); err != nil {
+		t.Fatal(err)
+	}
+	if d.ImageUpdates["one"].Status != "unknown" || d.ContainerGroups[0].Updates != 0 || !strings.Contains(d.UpdatesSummary, "metadata pending") {
+		t.Fatal("legacy cache produced unverified update badges")
+	}
+	a.imageMonitor.Email = func(context.Context, []imageupdates.Event) error {
+		t.Fatal("legacy cache triggered notification")
+		return nil
+	}
+	if err := a.imageMonitor.Deliver(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestImageUpdateUIStaleErrorAndEscaping(t *testing.T) {
 	a, _ := imageUpdateApp(t)
 	m := a.imageMonitor
-	state := imageupdates.State{Version: 1, Sent: map[string]imageupdates.Delivery{}, Hosts: map[string]imageupdates.HostState{"nas": {Address: a.cfg.Hosts[0].URL, Checked: time.Now().Add(-3 * time.Hour), Results: []imageupdates.Result{{ImageContainer: management.ImageContainer{ID: "one", Image: "<script>bad</script>", ImageID: "old"}, Status: "available", Available: "new"}}}}}
+	state := imageupdates.State{Version: 1, Sent: map[string]imageupdates.Delivery{}, Hosts: map[string]imageupdates.HostState{"nas": {SnapshotVersion: management.ImageSnapshotVersion, Address: a.cfg.Hosts[0].URL, Checked: time.Now().Add(-3 * time.Hour), Results: []imageupdates.Result{{ImageContainer: management.ImageContainer{ID: "one", Image: "<script>bad</script>", ImageID: "old"}, Status: "available", Available: "new"}}}}}
 	if err := m.Restore(state); err != nil {
 		t.Fatal(err)
 	}

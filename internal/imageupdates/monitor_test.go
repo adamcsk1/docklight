@@ -17,7 +17,7 @@ var newSHA = "sha256:" + strings.Repeat("b", 64)
 
 func monitorFixture(t *testing.T) (*Monitor, *management.ImageSnapshot, *State) {
 	t.Helper()
-	snapshot := &management.ImageSnapshot{Version: 1, NodeID: "docker-node", Hostname: "nas-main", Containers: []management.ImageContainer{{ID: "one", Name: "web-1", Image: "registry.example/web:latest", ImageID: oldSHA, OS: "linux", Architecture: "amd64", Project: "web", Service: "web"}}}
+	snapshot := &management.ImageSnapshot{Version: management.ImageSnapshotVersion, NodeID: "docker-node", Hostname: "nas-main", Containers: []management.ImageContainer{{ID: "one", Name: "web-1", Image: "registry.example/web:latest", ImageID: oldSHA, OS: "linux", Architecture: "amd64", Project: "web", Service: "web"}}}
 	stored := &State{}
 	m := &Monitor{Config: Config{Interval: time.Hour}, Sources: []Source{{ID: "nas", Name: "Main NAS", Address: "https://nas.example:8081", Fetch: func(context.Context) (management.ImageSnapshot, error) { return *snapshot, nil }}}, Resolve: func(context.Context, string, string, string, string) (string, error) { return newSHA, nil }, Save: func(state State) error {
 		b, _ := json.Marshal(state)
@@ -104,7 +104,7 @@ func TestMonitorDeployedSHAGroupingAndIndependentDelivery(t *testing.T) {
 }
 
 func TestMonitorUnknownSkippedStaleAndHostReplacement(t *testing.T) {
-	for _, failure := range []string{"registry", "agent", "old-agent", "bad-sha", "pinned", "local", "metadata"} {
+	for _, failure := range []string{"registry", "agent", "old-agent", "bad-sha", "bad-manifest", "missing-manifest-resolver", "pinned", "local", "metadata"} {
 		t.Run(failure, func(t *testing.T) {
 			m, snapshot, _ := monitorFixture(t)
 			switch failure {
@@ -117,9 +117,13 @@ func TestMonitorUnknownSkippedStaleAndHostReplacement(t *testing.T) {
 					return management.ImageSnapshot{}, errors.New("offline")
 				}
 			case "old-agent":
-				snapshot.Version = 0
+				snapshot.Version = 1
 			case "bad-sha":
 				snapshot.Containers[0].ImageID = "bad"
+			case "bad-manifest":
+				snapshot.Containers[0].ManifestDigest = "bad"
+			case "missing-manifest-resolver":
+				snapshot.Containers[0].ManifestDigest = oldSHA
 			case "pinned":
 				snapshot.Containers[0].Skip = "Digest-pinned image"
 			case "local":
@@ -626,5 +630,191 @@ func TestMonitorMQTTRotationSurvivesSlowEvent(t *testing.T) {
 	}
 	if len(seen) != 3 {
 		t.Fatal("slow MQTT event starved later events")
+	}
+}
+
+func TestMonitorRestartRetainsDeliveryAcrossInventoryGaps(t *testing.T) {
+	for _, gap := range []string{"empty", "other-image", "untracked", "unknown", "offline"} {
+		t.Run(gap, func(t *testing.T) {
+			m, snapshot, stored := monitorFixture(t)
+			now := time.Now().UTC()
+			emails, messages := 0, 0
+			m.Email = func(context.Context, []Event) error { emails++; return nil }
+			m.MQTT = func(context.Context, Event) error {
+				messages++
+				if messages == 1 {
+					return errors.New("broker offline")
+				}
+				return nil
+			}
+			if err := m.Check(context.Background(), now); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.Deliver(context.Background(), now); err == nil {
+				t.Fatal("MQTT failure hidden")
+			}
+			original, fetch := snapshot.Containers, m.Sources[0].Fetch
+			missing := original[0]
+			switch gap {
+			case "empty":
+				snapshot.Containers = nil
+			case "other-image":
+				missing.Image, missing.ImageID = "registry.example/other:latest", newSHA
+				snapshot.Containers = []management.ImageContainer{missing}
+			case "untracked":
+				missing.Skip = "Disabled by container label"
+				snapshot.Containers = []management.ImageContainer{missing}
+			case "unknown":
+				missing.Error = "Image metadata unavailable"
+				snapshot.Containers = []management.ImageContainer{missing}
+			case "offline":
+				m.Sources[0].Fetch = func(context.Context) (management.ImageSnapshot, error) {
+					return management.ImageSnapshot{}, errors.New("offline")
+				}
+			}
+			if err := m.Check(context.Background(), now.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if len(stored.Sent) != 1 {
+				t.Fatal("inventory gap discarded notification history")
+			}
+			for _, delivery := range stored.Sent {
+				if !delivery.Email || delivery.MQTT {
+					t.Fatal("inventory gap changed independent channel acknowledgements")
+				}
+			}
+			restarted, _, _ := monitorFixture(t)
+			if err := restarted.Restore(*stored); err != nil {
+				t.Fatal(err)
+			}
+			snapshot.Containers = original
+			restarted.Sources[0].Fetch = fetch
+			restarted.Email, restarted.MQTT = m.Email, m.MQTT
+			if err := restarted.Check(context.Background(), now.Add(2*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if err := restarted.Deliver(context.Background(), now.Add(2*time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if emails != 1 || messages != 2 || restarted.Host("nas", m.Sources[0].Address).Results[0].Status != "available" {
+				t.Fatalf("restart repeated email, lost retry or hid real update: email=%d mqtt=%d", emails, messages)
+			}
+		})
+	}
+}
+
+func TestMonitorUntrackedReplicaDoesNotResolveHistory(t *testing.T) {
+	m, snapshot, stored := monitorFixture(t)
+	now := time.Now().UTC()
+	m.Email = func(context.Context, []Event) error { return nil }
+	if err := m.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Deliver(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	current := snapshot.Containers[0]
+	current.ID, current.Name, current.ImageID = "current", "web-2", newSHA
+	snapshot.Containers[0].Skip = "Disabled by container label"
+	snapshot.Containers = append(snapshot.Containers, current)
+	if err := m.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if len(stored.Sent) != 1 {
+		t.Fatal("current replica discarded untracked replica delivery history")
+	}
+}
+
+func TestMonitorSeparatesClassicAndManifestDigests(t *testing.T) {
+	m, snapshot, _ := monitorFixture(t)
+	snapshot.Containers[0].ImageID = newSHA
+	containerd := snapshot.Containers[0]
+	manifest := "sha256:" + strings.Repeat("c", 64)
+	containerd.ID, containerd.Name, containerd.ImageID, containerd.ManifestDigest = "containerd", "containerd", "sha256:"+strings.Repeat("d", 64), manifest
+	snapshot.Containers = append(snapshot.Containers, containerd)
+	configs, manifests := 0, 0
+	m.Resolve = func(context.Context, string, string, string, string) (string, error) { configs++; return newSHA, nil }
+	m.ResolveManifest = func(context.Context, string, string, string, string) (string, error) {
+		manifests++
+		return manifest, nil
+	}
+	if err := m.Check(context.Background(), time.Now().UTC()); err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range m.Host("nas", m.Sources[0].Address).Results {
+		if result.Status != "current" {
+			t.Fatalf("compared different digest kinds: %+v", result)
+		}
+	}
+	if configs != 1 || manifests != 1 {
+		t.Fatal("different digest kinds shared registry cache")
+	}
+}
+
+func TestMonitorContainerdRestartUsesPlatformIdentity(t *testing.T) {
+	m, snapshot, stored := monitorFixture(t)
+	snapshot.Containers[0].ManifestDigest = oldSHA
+	snapshot.Containers[0].ImageID = "sha256:" + strings.Repeat("c", 64)
+	m.Resolve = func(context.Context, string, string, string, string) (string, error) {
+		t.Fatal("containerd used config digest")
+		return "", nil
+	}
+	m.ResolveManifest = func(context.Context, string, string, string, string) (string, error) { return newSHA, nil }
+	emails := 0
+	m.Email = func(_ context.Context, events []Event) error {
+		emails++
+		if len(events) != 1 || events[0].Deployed != oldSHA || events[0].Available != newSHA {
+			t.Fatal("notification mixed index and manifest digests")
+		}
+		return nil
+	}
+	now := time.Now().UTC()
+	if err := m.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Deliver(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	restarted, _, _ := monitorFixture(t)
+	if err := restarted.Restore(*stored); err != nil {
+		t.Fatal(err)
+	}
+	// Index identity can change while this container still runs the same platform manifest.
+	snapshot.Containers[0].ImageID = "sha256:" + strings.Repeat("d", 64)
+	restarted.Sources, restarted.Resolve, restarted.ResolveManifest, restarted.Email = m.Sources, m.Resolve, m.ResolveManifest, m.Email
+	if err := restarted.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if err := restarted.Deliver(context.Background(), now); err != nil || emails != 1 {
+		t.Fatal("index identity change repeated platform notification", err)
+	}
+	snapshot.Containers[0].ManifestDigest = newSHA
+	if err := restarted.Check(context.Background(), now); err != nil {
+		t.Fatal(err)
+	}
+	if result := restarted.Host("nas", m.Sources[0].Address).Results[0]; result.Status != "current" {
+		t.Fatalf("matching platform manifest marked outdated: %+v", result)
+	}
+	if err := restarted.Deliver(context.Background(), now); err != nil || emails != 1 {
+		t.Fatal("matching manifest triggered email", err)
+	}
+}
+
+func TestMonitorReplacementNodeHasIndependentHistory(t *testing.T) {
+	m, snapshot, _ := monitorFixture(t)
+	emails := 0
+	m.Email = func(context.Context, []Event) error { emails++; return nil }
+	now := time.Now().UTC()
+	for _, node := range []string{snapshot.NodeID, "replacement-node"} {
+		snapshot.NodeID = node
+		if err := m.Check(context.Background(), now); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Deliver(context.Background(), now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if emails != 2 {
+		t.Fatal("replacement node silently reused another node's acknowledgements")
 	}
 }

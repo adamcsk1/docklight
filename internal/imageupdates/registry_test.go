@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"docklight/internal/management"
+
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/google/go-containerregistry/pkg/registry"
@@ -100,6 +102,11 @@ func TestRegistryPlatformSHAAndNoLayerPulls(t *testing.T) {
 		if err != nil || got != want.String() {
 			t.Fatalf("%s/%s got %s want %s: %v", tc.arch, tc.variant, got, want, err)
 		}
+		manifest, err := r.ResolveManifest(context.Background(), ref.String(), "linux", tc.arch, tc.variant)
+		wantManifest, _ := tc.image.Digest()
+		if err != nil || manifest != wantManifest.String() {
+			t.Fatalf("platform manifest got %s want %s: %v", manifest, wantManifest, err)
+		}
 	}
 	if _, err := r.Resolve(context.Background(), ref.String(), "linux", "arm64", ""); err == nil {
 		t.Fatal("missing platform accepted")
@@ -125,6 +132,82 @@ func TestRegistryPlatformSHAAndNoLayerPulls(t *testing.T) {
 	private := Registry{Transport: transport, Keychain: testKeychain{authn.FromConfig(authn.AuthConfig{Username: "reader", Password: "test-password"})}}
 	if _, err := private.Resolve(context.Background(), ref.String(), "linux", "amd64", ""); err != nil {
 		t.Fatalf("private registry credentials failed: %v", err)
+	}
+}
+
+func TestRegistryContainerdComparisonTracksOnlyDeployedPlatform(t *testing.T) {
+	transport := registryFixtureTransport(t, map[string]http.Handler{"registry.example": registry.New()})
+	ref, err := name.NewTag("registry.example/test:latest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	amd, arm := configImage(t, "amd64", "", "amd"), configImage(t, "arm", "v7", "arm")
+	indexFor := func(arm v1.Image) v1.ImageIndex {
+		return mutate.AppendManifests(empty.Index,
+			mutate.IndexAddendum{Add: amd, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "amd64"}}},
+			mutate.IndexAddendum{Add: arm, Descriptor: v1.Descriptor{Platform: &v1.Platform{OS: "linux", Architecture: "arm", Variant: "v7"}}})
+	}
+	index := indexFor(arm)
+	if err := remote.WriteIndex(ref, index, remote.WithTransport(transport)); err != nil {
+		t.Fatal(err)
+	}
+	root, _ := index.Digest()
+	amdDigest, _ := amd.Digest()
+	armDigest, _ := arm.Digest()
+	m, snapshot, stored := monitorFixture(t)
+	snapshot.Containers[0].Image = ref.String()
+	snapshot.Containers[0].ImageID, snapshot.Containers[0].ManifestDigest = root.String(), amdDigest.String()
+	armSnapshot := *snapshot
+	armSnapshot.NodeID = "arm-node"
+	armSnapshot.Containers = append([]management.ImageContainer(nil), snapshot.Containers...)
+	armSnapshot.Containers[0].Architecture, armSnapshot.Containers[0].Variant, armSnapshot.Containers[0].ManifestDigest = "arm", "v7", armDigest.String()
+	m.Sources = append(m.Sources, Source{ID: "arm", Name: "ARM host", Address: "https://arm.example:8081", Fetch: func(context.Context) (management.ImageSnapshot, error) { return armSnapshot, nil }})
+	r := Registry{Transport: transport, Keychain: testKeychain{authn.Anonymous}}
+	m.Resolve, m.ResolveManifest = r.Resolve, r.ResolveManifest
+	emails := 0
+	m.Email = func(_ context.Context, events []Event) error {
+		emails++
+		if len(events) != 1 || events[0].Host.ID != "arm" || events[0].Deployed != armDigest.String() {
+			t.Fatalf("unaffected platform included in digest: %+v", events)
+		}
+		return nil
+	}
+	check := func() {
+		t.Helper()
+		if err := m.Check(context.Background(), time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+		if err := m.Deliver(context.Background(), time.Now().UTC()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check()
+	if emails != 0 || m.Host("nas", m.Sources[0].Address).Results[0].Status != "current" || m.Host("arm", m.Sources[1].Address).Results[0].Status != "current" {
+		t.Fatal("matching containerd images incorrectly marked outdated")
+	}
+	newArm := configImage(t, "arm", "v7", "new-arm")
+	if err := remote.WriteIndex(ref, indexFor(newArm), remote.WithTransport(transport)); err != nil {
+		t.Fatal(err)
+	}
+	check()
+	if emails != 1 || m.Host("nas", m.Sources[0].Address).Results[0].Status != "current" || m.Host("arm", m.Sources[1].Address).Results[0].Status != "available" {
+		t.Fatal("another platform's index change triggered wrong status")
+	}
+	restarted, _, _ := monitorFixture(t)
+	if err := restarted.Restore(*stored); err != nil {
+		t.Fatal(err)
+	}
+	restarted.Sources, restarted.Resolve, restarted.ResolveManifest, restarted.Email = m.Sources, m.Resolve, m.ResolveManifest, m.Email
+	m = restarted
+	check()
+	if emails != 1 {
+		t.Fatal("registry-backed restart repeated digest")
+	}
+	deployed, _ := newArm.Digest()
+	armSnapshot.Containers[0].ManifestDigest = deployed.String()
+	check()
+	if emails != 1 || m.Host("arm", m.Sources[1].Address).Results[0].Status != "current" {
+		t.Fatal("deployment did not clear update status")
 	}
 }
 

@@ -56,8 +56,9 @@ func (e *Engine) capture(ctx context.Context, args ...string) (string, error) {
 }
 
 type inspectContainer struct {
-	ID, Name, Image string
-	Config          struct {
+	ID, Name, Image         string
+	ImageManifestDescriptor *imageDescriptor
+	Config                  struct {
 		Image  string
 		Labels map[string]string
 	}
@@ -67,6 +68,11 @@ type inspectContainer struct {
 	}
 	Mounts          []struct{ Type, Name string }
 	NetworkSettings struct{ Networks map[string]struct{} }
+}
+
+type imageDescriptor struct {
+	Digest, MediaType string
+	Platform          *struct{ OS, Architecture, Variant string }
 }
 
 func (e *Engine) containers(ctx context.Context) ([]inspectContainer, error) {

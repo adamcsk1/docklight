@@ -27,6 +27,7 @@ type Result struct {
 }
 
 type HostState struct {
+	SnapshotVersion                  int
 	Address, NodeID, Hostname, Error string
 	Checked                          time.Time
 	Results                          []Result
@@ -70,17 +71,18 @@ type State struct {
 }
 
 type Monitor struct {
-	Config        Config
-	Sources       []Source
-	Resolve       func(context.Context, string, string, string, string) (string, error)
-	Save          func(State) error
-	Email         func(context.Context, []Event) error
-	MQTT          func(context.Context, Event) error
-	Allowed       func() bool
-	mu            sync.RWMutex
-	work          sync.Mutex
-	state         State
-	deliveryAfter string
+	Config          Config
+	Sources         []Source
+	Resolve         func(context.Context, string, string, string, string) (string, error)
+	ResolveManifest func(context.Context, string, string, string, string) (string, error)
+	Save            func(State) error
+	Email           func(context.Context, []Event) error
+	MQTT            func(context.Context, Event) error
+	Allowed         func() bool
+	mu              sync.RWMutex
+	work            sync.Mutex
+	state           State
+	deliveryAfter   string
 }
 
 func (m *Monitor) Restore(state State) error {
@@ -177,8 +179,8 @@ func (m *Monitor) Check(ctx context.Context, now time.Time) error {
 		hostCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
 		snapshot, err := source.Fetch(hostCtx)
 		cancel()
-		host := HostState{Address: source.Address, Checked: now, NodeID: snapshot.NodeID, Hostname: snapshot.Hostname}
-		if err != nil || snapshot.Version != 1 || snapshot.NodeID == "" {
+		host := HostState{SnapshotVersion: snapshot.Version, Address: source.Address, Checked: now, NodeID: snapshot.NodeID, Hostname: snapshot.Hostname}
+		if err != nil || snapshot.Version != management.ImageSnapshotVersion || snapshot.NodeID == "" {
 			host.Error = "Agent image metadata unavailable; update agent or check connection"
 			state.Hosts[source.ID] = host
 			continue
@@ -193,9 +195,11 @@ func (m *Monitor) Check(ctx context.Context, now time.Time) error {
 			case container.Skip != "":
 				result.Status = "untracked"
 				result.Detail = container.Skip
-			case !imageSHA.MatchString(container.ImageID):
+			case !imageSHA.MatchString(container.ImageID) || !imageSHA.MatchString(container.DeployedDigest()):
 				result.Status = "unknown"
 				result.Detail = "Invalid deployed image ID"
+			case container.ManifestDigest != "" && m.ResolveManifest == nil:
+				result.Status, result.Detail = "unknown", "Platform manifest resolver unavailable"
 			default:
 				if interrupted == nil {
 					interrupted = m.workAllowed(ctx)
@@ -206,6 +210,11 @@ func (m *Monitor) Check(ctx context.Context, now time.Time) error {
 					continue
 				}
 				key := container.Image + "\x00" + container.OS + "\x00" + container.Architecture + "\x00" + container.Variant
+				resolve := m.Resolve
+				if container.ManifestDigest != "" {
+					resolve = m.ResolveManifest
+					key += "\x00manifest"
+				}
 				r, ok := cache[key]
 				if !ok {
 					domain := registryDomain(container.Image)
@@ -213,7 +222,7 @@ func (m *Monitor) Check(ctx context.Context, now time.Time) error {
 						r.err = blocked
 					} else {
 						resolveCtx, stop := context.WithTimeout(ctx, 20*time.Second)
-						r.digest, r.err = m.Resolve(resolveCtx, container.Image, container.OS, container.Architecture, container.Variant)
+						r.digest, r.err = resolve(resolveCtx, container.Image, container.OS, container.Architecture, container.Variant)
 						stop()
 						var limited RegistryHTTPError
 						if errors.As(r.err, &limited) && limited.Status == 429 {
@@ -235,7 +244,7 @@ func (m *Monitor) Check(ctx context.Context, now time.Time) error {
 				} else {
 					result.Available = r.digest
 					result.Status = "current"
-					if r.digest != container.ImageID {
+					if r.digest != container.DeployedDigest() {
 						result.Status = "available"
 					}
 				}
@@ -244,7 +253,7 @@ func (m *Monitor) Check(ctx context.Context, now time.Time) error {
 		}
 		state.Hosts[source.ID] = host
 	}
-	// Unrelated unknown images must not retain resolved delivery history.
+	// Only a comparable observed image can resolve history; absence during startup is not proof.
 	active := m.events(state, now)
 	keys := map[string]bool{}
 	for _, event := range active {
@@ -252,14 +261,20 @@ func (m *Monitor) Check(ctx context.Context, now time.Time) error {
 	}
 	for key, delivery := range state.Sent {
 		host, ok := state.Hosts[delivery.HostID]
-		known := ok && host.Error == ""
-		for _, result := range host.Results {
-			if result.Status != "unknown" || delivery.Image != "" && result.Image != delivery.Image {
-				continue
-			}
-			platform := resultPlatform(result)
-			if delivery.Image == "" || result.OS == "" || result.Architecture == "" || platform == delivery.Platform || result.Variant == "" && strings.HasPrefix(delivery.Platform, platform+"/") {
-				known = false
+		known := false
+		if ok && host.Error == "" && delivery.Image != "" {
+			for _, result := range host.Results {
+				if result.Image != delivery.Image {
+					continue
+				}
+				platform := resultPlatform(result)
+				if result.Status != "current" && result.Status != "available" && (result.OS == "" || result.Architecture == "" || platform == delivery.Platform || result.Variant == "" && strings.HasPrefix(delivery.Platform, platform+"/")) {
+					known = false
+					break
+				}
+				if platform == delivery.Platform && (result.Status == "current" || result.Status == "available") {
+					known = true
+				}
 			}
 		}
 		if known && !keys[key] {
@@ -302,7 +317,7 @@ func resultPlatform(r Result) string {
 }
 
 func eventID(node string, r Result) string {
-	key := node + "\x00" + r.Image + "\x00" + resultPlatform(r) + "\x00" + r.ImageID + "\x00" + r.Available
+	key := node + "\x00" + r.Image + "\x00" + resultPlatform(r) + "\x00" + r.DeployedDigest() + "\x00" + r.Available
 	hash := sha256.Sum256([]byte(key))
 	return hex.EncodeToString(hash[:])
 }
@@ -311,7 +326,7 @@ func (m *Monitor) events(state State, now time.Time) []Event {
 	groups := map[string]Event{}
 	for _, source := range m.Sources {
 		host := state.Hosts[source.ID]
-		if host.Address != source.Address || host.Error != "" || host.Checked.IsZero() || now.Sub(host.Checked) > m.Config.Interval+5*time.Minute || now.Before(host.Checked) {
+		if host.SnapshotVersion != management.ImageSnapshotVersion || host.Address != source.Address || host.Error != "" || host.Checked.IsZero() || now.Sub(host.Checked) > m.Config.Interval+5*time.Minute || now.Before(host.Checked) {
 			continue
 		}
 		for _, r := range host.Results {
@@ -322,7 +337,7 @@ func (m *Monitor) events(state State, now time.Time) []Event {
 			id := eventID(host.NodeID, r)
 			e, ok := groups[id]
 			if !ok {
-				e = Event{ID: id, Type: "image_update_available", Host: HostIdentity{ID: source.ID, Name: source.Name, Address: source.Address, Hostname: host.Hostname}, Image: r.Image, Platform: platform, Deployed: r.ImageID, Available: r.Available, Detected: r.Checked}
+				e = Event{ID: id, Type: "image_update_available", Host: HostIdentity{ID: source.ID, Name: source.Name, Address: source.Address, Hostname: host.Hostname}, Image: r.Image, Platform: platform, Deployed: r.DeployedDigest(), Available: r.Available, Detected: r.Checked}
 			}
 			// Aliases of the same Docker daemon must not duplicate targets or notifications.
 			if e.Host.ID != source.ID {
